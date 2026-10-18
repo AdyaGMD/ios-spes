@@ -12,7 +12,11 @@
 - 8 host tests pass. All shim units compile to AArch64 ELF objects using Clang;
   no link performed. Patch 0088 applies after reconstructing touch/UFS through
   0087. Full XNU build and every hardware test remain pending; no CI run ID.
-- No phone attached in adb devices. No boot, flashing or partition changes.
+- Phone connected and authorized over ADB (2026-10-18). Read-only checks
+  confirm ro.product.device=spes, ro.boot.flash.locked=0, verifiedbootstate=orange,
+  MemTotal=5789436 kB. Android shell has no su; SELinux denies /sys/firmware/fdt,
+  individual DT properties and /proc/iomem. Need compatible recovery with root
+  ADB for the live map. No reboot, flashing or partition changes.
 - Next: read live /sys/firmware/fdt (root/recovery), select memory, build XNU
   in user's fork. Local gh and AArch64 GNU toolchain absent. No Apple root or
   D22AP ADT is present. Do not claim a usable iOS build or touch success.
