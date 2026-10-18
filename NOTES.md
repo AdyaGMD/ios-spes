@@ -25,10 +25,14 @@
 - Live partition check: active slot _a, no recovery partition. Fastboot product
   spes, max-download-size 796917760. Temporary fastboot boot of recovery image
   accepted: sending OKAY (3.156s), booting OKAY (0.287s). No flash commands or
-  installer run. Recovery ADB not yet connected; screen status requested.
-  IMPORTANT: acceptance alone does not confirm recovery successfully booted.
-- Next: read live /sys/firmware/fdt (root/recovery), select memory, build XNU
-  in user's fork. Local gh and AArch64 GNU toolchain absent. No Apple root or
+  installer run. User confirms OrangeFox screen; recovery ADB connected and
+  uid=0 confirmed. Captured live FDT to ignored dtb/spes-live.dtb (402350 bytes).
+  RAM banks: 0x40000000 + 0x3cc00000; 0xc0000000 + 0x100000000;
+  0x80000000 + 0x40000000. Selector yields 0x100000000 + 0xc0000000
+  (3 GiB). Touch live DT confirms AVDD98, IRQ80, 1080x2400 coordinates.
+  Generated shim/out/spes.adt (6872 bytes), missing Apple /product warning
+  remains expected until D22AP ADT supplied. Android reboot requested afterward.
+- Next: full XNU build in user's fork and obtain Apple D22AP/root artifacts. Local gh and AArch64 GNU toolchain absent. No Apple root or
   D22AP ADT is present. Do not claim a usable iOS build or touch success.
 - Source reference commit 6c2b3e7528a0778cd80c95eabb490746b5422f8c in
   /tmp/iospes-kernel-reference; patch reconstruction /tmp/iospes-patched.

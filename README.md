@@ -47,7 +47,18 @@ Source reference: [Jabiyeff/kernel_xiaomi_sm6225 at
 The GPIO98 SOUTH tile and integer touch decoding come from that source;
 the exact touch IC, protocol and power sequencing remain hardware-unverified.
 
-## Next: capture the live memory map
+## Verified temporary recovery / live memory capture
+
+On 2026-10-18 the official OrangeFox R11.1_2 MIUI recovery booted temporarily
+via `fastboot boot` on this handset, with root ADB. No recovery installer or
+flash command was run. The live FDT is saved locally in ignored
+`dtb/spes-live.dtb`; it is not published because it can contain device identifiers.
+The selected XNU RAM range is **0x100000000 + 0xc0000000 (3 GiB)**. The live
+DT also confirms AVDD GPIO98, IRQ80 and 1080×2400 touch coordinates.
+`shim/out/spes.adt` was generated successfully. This verifies recovery access
+and memory-map extraction, not an XNU or iOS boot.
+
+## Capturing the live memory map again
 
 Connect the phone with USB debugging enabled and authorize the computer.
 Reading `/sys/firmware/fdt` generally needs root or a compatible recovery:
