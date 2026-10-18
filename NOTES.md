@@ -1,3 +1,26 @@
+# Active spes handoff — 2026-10-18
+
+- Workspace cloned from MakrSas/ios-topaz branch topaz. Previous notes below
+  refer to other devices/users; their destructive-operation approvals do not
+  apply to this handset.
+- User confirms spes, 6 GB physical RAM (+2 GB Android expansion), unlocked.
+- Supplied firmware: /Users/adya/Downloads/spes_global_images_OS1.0.8.0.TGCMIXM_13.0.
+  Extracted DTBs in ignored research/spes. Stock boot and vendor_boot are v3;
+  base DTB index 8 is khaje, SPES overlays 6/15. Memory node is a placeholder.
+- Implemented --device spes with live-FDT memory selection, patch 0088 touch
+  wiring/coordinates (off by default), keys/USB guard, configurable v3 packaging.
+- 8 host tests pass. All shim units compile to AArch64 ELF objects using Clang;
+  no link performed. Patch 0088 applies after reconstructing touch/UFS through
+  0087. Full XNU build and every hardware test remain pending; no CI run ID.
+- No phone attached in adb devices. No boot, flashing or partition changes.
+- Next: read live /sys/firmware/fdt (root/recovery), select memory, build XNU
+  in user's fork. Local gh and AArch64 GNU toolchain absent. No Apple root or
+  D22AP ADT is present. Do not claim a usable iOS build or touch success.
+- Source reference commit 6c2b3e7528a0778cd80c95eabb490746b5422f8c in
+  /tmp/iospes-kernel-reference; patch reconstruction /tmp/iospes-patched.
+
+---
+
 # iOS 16 on sweet (Redmi Note 10 Pro, SM7150) - working notes
 
 ## Agent handoff / active work (2026-10-15, latest)

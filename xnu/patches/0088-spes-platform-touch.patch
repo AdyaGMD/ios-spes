@@ -1,0 +1,81 @@
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -16,6 +16,7 @@
+ #include <kern/sched_prim.h>
+ #include <machine/machine_routines.h>
+ #include <pexpert/pexpert.h>
++#include <pexpert/device_tree.h>
+ 
+ extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
+ /* Mach MIG declaration is not included by BSD's exported thread.h. */
+@@ -32,7 +33,7 @@
+ #define TOUCH_RCG       0x1f3a8u    /* QUP0 S2 CMD; CFG +4, CBCR -4 (gcc-khaje.c) */
+ #define TOUCH_PIN_RESET  86u
+ #define TOUCH_PIN_IRQ    80u
+-#define TOUCH_PIN_AVDD   36u
++#define TOUCH_PIN_AVDD   (st.spes ? 98u : 36u)
+ #define TOUCH_GPIO_CFG(n) ((uint32_t)(n) * 0x1000u)
+ #define TOUCH_GPIO_IO(n)  (TOUCH_GPIO_CFG(n) + 4u)
+ #define TOUCH_MAX        10u
+@@ -79,6 +80,7 @@
+ 
+ static struct {
+ 	vm_offset_t se, gcc, west, east;
++	bool spes;
+ 	bool started, dead, probing;
+ 	int kind, irq_hint;
+ 	uint32_t irq_status, irq_last, active;
+@@ -512,11 +514,14 @@
+ 		unsigned px = ((unsigned)(p[0] & 15u) << 8) | p[1];
+ 		unsigned py = ((unsigned)(p[2] & 15u) << 8) | p[3];
+ 		/* topaz: raw 0..1349 x 0..2999 (1.25x the panel) + 2-bit fractions */
+-		if (px > 1349 || py > 2999) {
++		if (px > (st.spes ? 1079u : 1349u) || py > (st.spes ? 2399u : 2999u)) {
+ 			return EIO;
+ 		}
+-		px = (px * 4u + (p[4] >> 6)) / 5u;
+-		py = (py * 4u + ((p[4] >> 4) & 3u)) / 5u;
++		/* spes Linux FT3418 reports integer panel coordinates. */
++		if (!st.spes) {
++			px = (px * 4u + (p[4] >> 6)) / 5u;
++			py = (py * 4u + ((p[4] >> 4) & 3u)) / 5u;
++		}
+ 		px = px > 1079 ? 1079 : px;
+ 		py = py > 2399 ? 2399 : py;
+ 		mask |= 1u << id;
+@@ -608,7 +613,9 @@
+ 	printf("SWEET TOUCH: mapping GCC/TLMM/SE2\n");
+ 	st.gcc = ml_io_map(TOUCH_GCC_PA, 0x80000);
+ 	st.west = ml_io_map(TOUCH_WEST_PA, 0x58000);
+-	st.east = ml_io_map(TOUCH_EAST_PA, 0x25000);
++	/* spes GPIO98 is on SOUTH, topaz GPIO36 is on EAST. */
++	st.east = ml_io_map(st.spes ? 0x00900000u : TOUCH_EAST_PA,
++	    st.spes ? 0x99000 : 0x25000);
+ 	st.se = ml_io_map(TOUCH_SE_PA, 0x4000);
+ 	if (!st.gcc || !st.west || !st.east || !st.se) {
+ 		printf("SWEET TOUCH: MMIO mapping failed\n");
+@@ -715,6 +722,9 @@
+ 	if (st.started) {
+ 		return;
+ 	}
++	DTEntry platform;
++	st.spes = SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess;
++	if (st.spes) enabled = 0; /* opt in after initial boot diagnostics */
+ 	st.started = true;
+ 	(void)PE_parse_boot_argn("sweettouch", &enabled, sizeof(enabled));
+ 	st.irq_hint = 1; /* topaz: read on IRQ GPIO80 low, while touching, else every 100 ms */
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -665,6 +665,12 @@
+ 	int hw = 0;
+ 	(void)PE_parse_boot_argn("sweethw", &hw, sizeof(hw));
+ 	sweet_touch_init();
++	/* PMIC keys need separate spes validation; never start the USB driver. */
++	DTEntry platform;
++	if (SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess) {
++		printf("SPES: keys/USB disabled during bring-up\n");
++		return 0;
++	}
+ 	sweet_keys_init();
+ 	if (hw == 1) {
+ 		sweet_usb_probe();
