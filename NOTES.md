@@ -16,7 +16,17 @@
   confirm ro.product.device=spes, ro.boot.flash.locked=0, verifiedbootstate=orange,
   MemTotal=5789436 kB. Android shell has no su; SELinux denies /sys/firmware/fdt,
   individual DT properties and /proc/iomem. Need compatible recovery with root
-  ADB for the live map. No reboot, flashing or partition changes.
+  ADB for the live map.
+- Downloaded official OrangeFox R11.1_2 MIUI beta for spes from
+  https://orangefox.download/release/65e398eba7139ce4e7e1f424 (MIUI/HyperOS variant).
+  Archive: /Users/adya/Downloads/OrangeFox-spes-betaR11.1_2_MIUI.zip.
+  Extracted recovery/orangefox-spes-miui.img (ignored), Android boot header v3,
+  SHA256 41bfb05287b59ade1a751acc08abae507b39076414ce90c99fefe44d4938b9ba.
+- Live partition check: active slot _a, no recovery partition. Fastboot product
+  spes, max-download-size 796917760. Temporary fastboot boot of recovery image
+  accepted: sending OKAY (3.156s), booting OKAY (0.287s). No flash commands or
+  installer run. Recovery ADB not yet connected; screen status requested.
+  IMPORTANT: acceptance alone does not confirm recovery successfully booted.
 - Next: read live /sys/firmware/fdt (root/recovery), select memory, build XNU
   in user's fork. Local gh and AArch64 GNU toolchain absent. No Apple root or
   D22AP ADT is present. Do not claim a usable iOS build or touch success.
