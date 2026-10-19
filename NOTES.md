@@ -1,3 +1,19 @@
+# Active update — 2026-10-19
+
+- Confirmed Android returned after temporary OrangeFox boot; no partitions flashed.
+- User selected GitHub account AdyaGMD and authorized GitHub CLI. Created fork
+  https://github.com/AdyaGMD/ios-spes. Kernel Actions run pending push/dispatch.
+- Verified all 88 numbered patches apply to xnu-8796.141.3 with staged pinned
+  dependencies and dxb preprocessing. Four applicable dxb patches also apply;
+  four nonmatching dxb patches skip as expected. Log: research/patch-validation.txt.
+- Workflow now treats skipped numbered port patches as a fatal build failure.
+- Installed gh, AArch64 ELF GCC/binutils and lld through Homebrew. Full Xcode
+  remains absent locally. Build shim using CROSS_COMPILE=aarch64-elf-.
+- Downloaded only DeviceTree.d22ap.im4p from Apple's 20H392 IPSW via HTTP ranges
+  and CRC checked; decompressed using macOS libcompression to ignored
+  research/ipsw-x/d22ap.adt (186084 bytes). Generated spes.adt now 9556 bytes
+  including /product, without missing-product warning. Apple files stay ignored.
+
 # Active spes handoff — 2026-10-18
 
 - Workspace cloned from MakrSas/ios-topaz branch topaz. Previous notes below
@@ -31,7 +47,10 @@
   0x80000000 + 0x40000000. Selector yields 0x100000000 + 0xc0000000
   (3 GiB). Touch live DT confirms AVDD98, IRQ80, 1080x2400 coordinates.
   Generated shim/out/spes.adt (6872 bytes), missing Apple /product warning
-  remains expected until D22AP ADT supplied. Android reboot requested afterward.
+  remains expected until D22AP ADT supplied. Android reboot completed afterward:
+  user confirms boot, ADB sys.boot_completed=1 and ro.product.device=spes.
+  Full Xcode is not installed (only CommandLineTools); kernel CI needs a
+  user-owned GitHub fork/repository and authenticated access.
 - Next: full XNU build in user's fork and obtain Apple D22AP/root artifacts. Local gh and AArch64 GNU toolchain absent. No Apple root or
   D22AP ADT is present. Do not claim a usable iOS build or touch success.
 - Source reference commit 6c2b3e7528a0778cd80c95eabb490746b5422f8c in
