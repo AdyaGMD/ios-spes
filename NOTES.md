@@ -6,6 +6,16 @@
 - Verified all 88 numbered patches apply to xnu-8796.141.3 with staged pinned
   dependencies and dxb preprocessing. Four applicable dxb patches also apply;
   four nonmatching dxb patches skip as expected. Log: research/patch-validation.txt.
+- Kernel CI baseline 39273191844 started at commit 879db6f. During final audit,
+  found four inherited sweet early-framebuffer references to 0x9c000000.
+  Patch 0089 changes start.s stage-0/bootstrap mapping, sweet_early.c and final
+  VM mapping to verified khaje splash 0x5c000000. Restart build before testing.
+  Patch applies on the fully patched source. No hardware test of XNU yet.
+- Local no-payload shim compiles/links/packages: boot v3, kernel 184320 bytes,
+  image 192512 bytes, SHA256 ecd41bb859cfc6ac20cfef396537050c387c9032988ed84818c02af51c205db6.
+  Boot image unpack matches Image, including image_size. Not boot-tested.
+- Added tools/build-spes-diagnostic.sh: tiny mockfs PID1 root entirely in RAM;
+  storage write/log flags off, no touch/keys/USB; no flash or boot in script.
 - Workflow now treats skipped numbered port patches as a fatal build failure.
 - Installed gh, AArch64 ELF GCC/binutils and lld through Homebrew. Full Xcode
   remains absent locally. Build shim using CROSS_COMPILE=aarch64-elf-.

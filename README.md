@@ -103,6 +103,21 @@ Only after reviewing the generated image and memory map should a temporary
 flashed or modified by this work. Installing an iOS root into userdata would
 erase Android data and is a separate, explicitly confirmed step.
 
+## RAM-only first-boot diagnostic
+
+Once the kernel artifact is available, build a small diagnostic that runs the
+project's static test program as PID 1 from RAM. It needs no iOS filesystem
+and requests no storage writes:
+
+```sh
+CROSS_COMPILE=aarch64-elf- MKBOOTIMG="$PWD/research/mkbootimg/mkbootimg.py" \
+  tools/build-spes-diagnostic.sh xnu/out/kernel.development.sweet dtb/spes-live.dtb
+```
+
+Output: `shim/out/spes-diagnostic.img` and its SHA-256 file. This tests XNU boot,
+userspace execution and the console, not SpringBoard. No phone action is
+performed by the script. Successful hardware execution remains unconfirmed.
+
 ## Checks
 
 ```sh
