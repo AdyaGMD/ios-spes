@@ -5,10 +5,11 @@ to **Redmi Note 11 (`spes`, SM6225 / Snapdragon 680)**. Target handset: 6 GB
 physical RAM, unlocked bootloader. The Android “+2 GB” expansion is not RAM
 available to this kernel.
 
-**Status: full kernel build passed; first spes diagnostic boot shows an error screen.**
-There is no tested installable iOS image. XNU compilation and bootloader acceptance are verified. The reported error
-still needs a photo or exact text; userspace, storage and input are unverified. The upstream
-lock-screen results are for topaz, not this device.
+**Status: XNU boots and runs a test program as PID 1 on spes.**
+Photos from the 2026-10-19 temporary RAM-only boot confirm framebuffer output,
+one initialized CPU and repeated `SWEET init: still alive` messages.
+There is no tested installable iOS image or SpringBoard boot on this device.
+Storage, touch and additional CPU cores remain unverified.
 
 ## Changes
 
@@ -24,7 +25,7 @@ lock-screen results are for topaz, not this device.
   Keys and the inherited USB driver remain disabled on spes.
 - The shim accepts `BOOT_HEADER_VERSION=3`, matching the supplied stock firmware.
   Version 4 remains the upstream default. Embedded payload packaging is retained;
-  acceptance by the spes bootloader has not been tested.
+  temporary bootloader acceptance and RAM-only userspace execution are verified.
 
 ## Evidence
 
@@ -70,7 +71,7 @@ adb exec-out su -c 'cat /sys/firmware/fdt' > dtb/spes-live.dtb
 
 In an already-running recovery with root ADB, omit `su -c`.
 Do not substitute the stock vendor_boot DTB: it has no usable memory map.
-The tool intentionally refuses it. No recovery image is supplied or tested.
+The tool intentionally refuses it. No recovery image is supplied in this repository.
 
 ## Build preparation
 
@@ -116,7 +117,8 @@ CROSS_COMPILE=aarch64-elf- MKBOOTIMG="$PWD/research/mkbootimg/mkbootimg.py" \
 
 Output: `shim/out/spes-diagnostic.img` and its SHA-256 file. This tests XNU boot,
 userspace execution and the console, not SpringBoard. No phone action is
-performed by the script. Successful hardware execution remains unconfirmed.
+performed by the script. Hardware execution was confirmed by photos showing
+PID 1 and repeated heartbeat messages on 2026-10-19.
 
 ## Checks
 
@@ -129,5 +131,5 @@ Eight host tests cover memory selection, reserved regions, malformed input,
 stock-map rejection, spes ADT contents and preservation of the topaz profile.
 All shim C/assembly translation units cross-compile with Clang for Cortex-A53.
 All 89 port patches apply to the pinned XNU tree and the full kernel builds in CI.
-The first RAM-only phone boot was accepted but shows a user-reported error;
-these checks do not establish usable hardware support.
+The RAM-only phone boot reached PID 1 and repeated heartbeat messages;
+this does not establish a working iOS interface or full hardware support.

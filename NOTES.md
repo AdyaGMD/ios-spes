@@ -14,9 +14,20 @@
   sweettouch=0/sweetkeys=0/sweethw=0. No partition flashing, no iOS installation.
 - Phone was confirmed in Android (spes, boot_completed=1), rebooted to bootloader,
   product rechecked spes. fastboot boot accepted diagnostic: send 0.402s, boot
-  0.286s, total 0.693s. USER REPORT: "Panic or error text". Exact text/photo
-  REQUIRED next; do not claim XNU userspace success or guess a diagnosis.
-  Phone currently in diagnostic error state. No automatic reboot or retry.
+  0.286s, total 0.693s. Initial user report of an error was corrected: red
+  shim text was followed by successful XNU startup. Two photos on 2026-10-19
+  confirm framebuffer output, 1/1 CPU initialized with SGI1 verified, RAM root
+  md0, "SWEET userspace: init running as PID 1" and repeated
+  "SWEET init: still alive". This is observed RAM-only userspace success,
+  not an iOS GUI boot. Phone remains in the diagnostic; no reboot requested.
+- Next: audit/test spes UFS read-only and touch, and prepare the iOS root on
+  the host. No full Apple root is present. tools/mkiosroot.sh currently needs
+  Linux apfs-fuse/HFS+ mounts; adapt or provide a suitable host environment
+  before constructing it. Preserve this successful diagnostic as a baseline.
+  Storage, touch, SMP and SpringBoard remain unverified on spes. Obtain and
+  verify this handset's partition backups before any installation; inherited
+  sweet backup/installation claims below are not evidence for this handset.
+  Any userdata overwrite needs separate explicit user confirmation.
 - Logs: research/kernel-ci-spes.log, research/spes-kernel-disassembly.txt,
   research/spes-boot-header.txt (ignored). Source fork default branch now spes.
 
