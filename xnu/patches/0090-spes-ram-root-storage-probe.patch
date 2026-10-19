@@ -1,0 +1,91 @@
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -49,6 +49,7 @@
+ extern void thread_deallocate(thread_t);
+ extern int hz;
+ static void sweet_log_start(void);
++static bool spes_readonly_probe;
+ extern void sweet_sample_start(void);
+ extern void sweet_keys_init(void);
+ extern void sweet_touch_init(void);
+@@ -148,6 +149,10 @@
+ static int
+ ufs_scsi(const uint8_t *cdb, unsigned cdb_len, uint32_t len, bool write)
+ {
++	/* Diagnostic permits only TEST UNIT READY and READ(10), even if flags change. */
++	if (spes_readonly_probe && (write || (cdb[0] != 0x00 && cdb[0] != 0x28))) {
++		return EROFS;
++	}
+ 	struct utrd *utrd = (struct utrd *)(su.dma + DMA_UTRL);
+ 	struct ucd *ucd = (struct ucd *)(su.dma + DMA_UCD);
+ 	uint64_t ucd_pa = su.dma_pa + DMA_UCD, bounce_pa = su.dma_pa + DMA_BOUNCE;
+@@ -316,7 +321,7 @@
+ 	memcpy(&entry_lba, b + 72, 8);
+ 	memcpy(&nent, b + 80, 4);
+ 	memcpy(&esz, b + 84, 4);
+-	if (esz != 128 || nent == 0 || nent * esz > BOUNCE_SIZE) {
++	if (esz != 128 || nent == 0 || nent > BOUNCE_SIZE / esz) {
+ 		printf("SWEET UFS: unsupported GPT entries %u x %u\n", nent, esz);
+ 		return ENXIO;
+ 	}
+@@ -649,11 +654,14 @@
+ 	devfs_make_node(su.bdev, DEVFS_BLOCK, UID_ROOT, GID_OPERATOR, 0640, "ufsroot0");
+ 	devfs_make_node(makedev(su.cmajor, 0), DEVFS_CHAR, UID_ROOT, GID_OPERATOR, 0640, "rufsroot0");
+ 	/* Only now, with the partition bounds known, can writes be allowed. */
+-	su.writable = (rw != 0);
++	su.writable = !spes_readonly_probe && (rw != 0);
+ 	su.ready = true;
+ 	printf("SWEET UFS: \"%s\" on LUN %u: first block 0x%llx, %llu MiB, %s, DMA at 0x%llx\n",
+ 	    want, su.lun, su.first_block, su.nblocks * UFS_BLOCK >> 20,
+ 	    su.writable ? "read-write" : "read-only", su.dma_pa);
++	if (spes_readonly_probe) {
++		return 0; /* no log, sampling or input drivers during this probe */
++	}
+ 	sweet_log_start();
+ 	sweet_sample_start();
+ 	/*
+@@ -822,6 +830,31 @@
+ 	}
+ }
+ 
++/* Called before RAM-backed init; never mounts or writes the Android volume. */
++void spes_ufs_probe(void);
++
++void
++spes_ufs_probe(void)
++{
++	DTEntry platform;
++	int enabled = 0;
++	char root[32] = { 0 };
++	(void)PE_parse_boot_argn("spesufsprobe", &enabled, sizeof(enabled));
++	(void)PE_parse_boot_argn("rd", root, sizeof(root));
++	if (enabled != 1 ||
++	    SecureDTLookupEntry(NULL, "/spes-platform", &platform) != kSuccess) {
++		return;
++	}
++	if (strcmp(root, "md0") != 0 || su.ready) {
++		printf("SPES UFS PROBE: refused; requires unused UFS and rd=md0\n");
++		return;
++	}
++	spes_readonly_probe = true;
++	printf("SPES UFS PROBE: starting, disk writes blocked\n");
++	int error = sweet_ufs_init();
++	printf("SPES UFS PROBE: result=%d; continuing RAM init\n", error);
++}
++
+ /* Root device for rd=ufsroot0 (IOFindBSDRoot). */
+ int sweet_ufs_rootdev(dev_t *dev);
+ 
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1098,6 +1098,10 @@
+ 
+ 	bsd_init_kprintf("bsd_do_post - done");
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	extern void spes_ufs_probe(void);
++	spes_ufs_probe();
++#endif
+ 	load_init_program(p);
+ 	lock_trace = 1;
+ }

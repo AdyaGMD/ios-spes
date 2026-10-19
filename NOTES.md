@@ -1,3 +1,18 @@
+# Storage probe preparation — 2026-10-19
+
+- Baseline RAM/PID1 milestone recorded in commit 89ac8c8.
+- Patch 0090 adds opt-in spesufsprobe=1 before RAM init. Requires spes and
+  rd=md0; forces read-only device, allows only SCSI TEST UNIT READY/READ(10),
+  skips persistent logging and input drivers. Prints result then runs RAM init.
+  Also bounds GPT entry count before multiplication to prevent overflow.
+- Builder accepts optional storage profile, producing spes-storage-probe.img
+  separately from the verified baseline. New kernel/build/hardware test pending.
+- Audit: baseline rd=md0 never invokes sweet_ufs_init, which also starts touch;
+  therefore baseline provides no storage/input evidence. FT3418 source ID
+  mapping is 54:52, matching current driver, but touch remains untested.
+- Next: build 0090 in CI, validate/package storage profile, then temporary boot.
+  No Android partition mounts or writes are part of this diagnostic.
+
 # Latest hardware test — 2026-10-19
 
 - Successful full kernel CI: https://github.com/AdyaGMD/ios-spes/actions/runs/39273597179
