@@ -1,3 +1,25 @@
+# Latest hardware test — 2026-10-19
+
+- Successful full kernel CI: https://github.com/AdyaGMD/ios-spes/actions/runs/39273597179
+  Source commit 7f915dbaca276b1ab95c21bdd12b50947b56fae2. All 89 port patches applied,
+  including 0088/0089 (verified log). Earlier run 39273191844 deliberately cancelled.
+- Kernel: xnu/out/kernel.development.sweet; artifact SHA256SUMS verified. No
+  LSE/LDAPR instruction matches in llvm-objdump disassembly. Plain arm64 subtype0.
+- RAM-only diagnostic built with tools/build-spes-diagnostic.sh. Boot-v3 image
+  shim/out/spes-diagnostic.img, 17227776 bytes, SHA256
+  61e9a6213ce45907d782f82c8ed6cc8887baaaede68b420045a40b2b18e138f8.
+  Kernel entry PA 0x1014a6488; all segments/ADT/boot args within captured 3GiB RAM.
+  Embedded payload exactly matches unpacked kernel Image suffix; image_size valid.
+  Root rd=md0 contains static sweet-init. cpus=1, ufsrw=0/rootrw=0/sweetlog=0,
+  sweettouch=0/sweetkeys=0/sweethw=0. No partition flashing, no iOS installation.
+- Phone was confirmed in Android (spes, boot_completed=1), rebooted to bootloader,
+  product rechecked spes. fastboot boot accepted diagnostic: send 0.402s, boot
+  0.286s, total 0.693s. USER REPORT: "Panic or error text". Exact text/photo
+  REQUIRED next; do not claim XNU userspace success or guess a diagnosis.
+  Phone currently in diagnostic error state. No automatic reboot or retry.
+- Logs: research/kernel-ci-spes.log, research/spes-kernel-disassembly.txt,
+  research/spes-boot-header.txt (ignored). Source fork default branch now spes.
+
 # Active update — 2026-10-19
 
 - Confirmed Android returned after temporary OrangeFox boot; no partitions flashed.

@@ -5,9 +5,9 @@ to **Redmi Note 11 (`spes`, SM6225 / Snapdragon 680)**. Target handset: 6 GB
 physical RAM, unlocked bootloader. The Android “+2 GB” expansion is not RAM
 available to this kernel.
 
-**Status: source adaptations and host checks only; no successful spes boot yet.**
-There is no tested installable iOS image. Full XNU compilation, bootloader
-acceptance, display, storage and input still require validation. The upstream
+**Status: full kernel build passed; first spes diagnostic boot shows an error screen.**
+There is no tested installable iOS image. XNU compilation and bootloader acceptance are verified. The reported error
+still needs a photo or exact text; userspace, storage and input are unverified. The upstream
 lock-screen results are for topaz, not this device.
 
 ## Changes
@@ -75,8 +75,8 @@ The tool intentionally refuses it. No recovery image is supplied or tested.
 ## Build preparation
 
 Build XNU with `.github/workflows/xnu.yml` in your own fork (manual dispatch).
-It retains the SWEET machine name and applies patches 0001–0088. Download the
-`xnu-kernel` artifact into `xnu/out`. The workflow has not been run for this port.
+It retains the SWEET machine name and applies patches 0001–0089. Download the
+`xnu-kernel` artifact into `xnu/out`. The [first corrected kernel build passed](https://github.com/AdyaGMD/ios-spes/actions/runs/39273597179) at source commit `7f915db`.
 
 The shim needs an AArch64 GNU toolchain and an executable AOSP `mkbootimg`.
 For full iOS, obtain the iPhone X D22AP tree/root separately; Apple artifacts
@@ -128,5 +128,6 @@ bash -n shim/build.sh
 Eight host tests cover memory selection, reserved regions, malformed input,
 stock-map rejection, spes ADT contents and preservation of the topaz profile.
 All shim C/assembly translation units cross-compile with Clang for Cortex-A53.
-Patch 0088 applies to the touch/UFS sources reconstructed through patch 0087.
-These checks do not establish full kernel build success or hardware support.
+All 89 port patches apply to the pinned XNU tree and the full kernel builds in CI.
+The first RAM-only phone boot was accepted but shows a user-reported error;
+these checks do not establish usable hardware support.
