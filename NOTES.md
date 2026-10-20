@@ -1,3 +1,21 @@
+# First root boot panic corrected; second boot dispatched — 2026-10-20
+
+- User photo confirms userdata found read-write and iOSRoot HFS mounted. Then
+  launchd SIGKILL/CS_KILLED namespace 9 code 0xe. Source reason.h decodes this
+  as EXEC_EXIT_REASON_WRONG_PLATFORM, NOT invalid signature/page corruption.
+- Cause: first full boot cmdline omitted unentitled_ios_sim_launch=1. Historical
+  SWEET notes already documented this requirement; omission was our error.
+- Added required platform flag plus ignition_level=1 launchd_unsecure_cache=1
+  wdt_test=no_user_checkin wdt=-1 from known working upstream boot configuration.
+  No filesystem rewrite. Built shim/out/spes-ios-0093-fixed.img, 17227776 bytes,
+  SHA256 2922dd1bb75b09f20fd8d47ea5cf0f5521bec27700bb644f77d37d7d776d480a.
+  Header/payload/RAM bounds/required bootargs verified. User returned to Fastboot;
+  temporary boot accepted send0.414s boot0.287s total0.705s. Await screen result.
+- Added tools/build-spes-ios.sh to preserve full-root boot options, host-only,
+  outputs shim/out/spes-ios.img. Shell syntax checked. Kernel still CI0093.
+- Do not use original shim/out/spes-ios-0093.img: it lacks required boot options.
+  Installed root unchanged except for writes during first kernel mount.
+
 # iOS root installed and first full boot dispatched — 2026-10-20
 
 - Explicit user confirmation received: "Yes, erase userdata and install iOS".
