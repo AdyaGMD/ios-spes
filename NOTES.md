@@ -32,6 +32,14 @@
   but lacks EGPIO_ENABLE bit12. khaje pinctrl-msm.c msm_pinmux_set_mux sets
   bit12 whenever bit11 is present. Existing touch_gpio omitted that step.
 - Patch 0093 now adds this behavior on spes only. Expected AVDD cfg=0x1ac3.
+  Source commit 317d2ab, CI 39392615893 succeeded. Kernel xnu/out-0093
+  SHA256SUMS passed; image/header/payload/RAM/flags validated.
+  Image shim/out/spes-touch-probe.img, 17244160 bytes, SHA256
+  a6563a1c448ad8592189f707bc2a63b384f9d75005120aa05d79278801952b74.
+  Prior image preserved as spes-touch-probe-0092.img.
+  User returned to Fastboot, product spes checked; temporary boot accepted
+  send 0.395s/boot 0.287s/total 0.685s. No flash. Awaiting chip ID, input
+  counters and post-power AVDD cfg from user; expected cfg=0x1ac3.
   This is a verified code mismatch, not yet a verified cause of touch failure.
   Retest before implementing RPM requests; missing L9 request remains open.
 
