@@ -1,3 +1,41 @@
+# Ready for userdata installation confirmation — 2026-10-20
+
+- User explicitly declined preserving Android personal data; retain boot/modem/
+  calibration backups. User said go ahead with continued work after discussing
+  hard-brick risk, but exact userdata write confirmation is still pending.
+- Phone observed in Android, then adb reboot bootloader and temporary verified
+  OrangeFox boot succeeded (send 3.073s, boot 0.287s). User entered recovery
+  password. Root ADB works. Device spes, slot _a. Unmounted /sdcard, /data and
+  /metadata successfully; latest /proc/mounts confirms all remain unmounted.
+- 29 recovery-related partitions backed up in ignored backup/spes-20261020:
+  both boot/vendor_boot/dtbo/vbmeta/vbmeta_system, persist, modemst1/2, fsg/fsc,
+  metadata, misc, devinfo, frp, keystore, secdata, both xbl/xbl_config/abl/modem.
+  Total 976912384 bytes. Every image matched device SHA256 and was independently
+  rehashed locally against manifest.json. Personal userdata copy stopped; its
+  incomplete .partial deleted. No complete personal-data backup exists.
+- Exact target: /dev/block/by-name/userdata -> /dev/block/sda16,
+  109802500096 bytes. sysfs start 22700352 512-byte sectors = 2837544 UFS
+  4096-byte blocks, matches stock XML. No partition writes performed.
+- Built shim/out/spes-ios-0093.img (17227776 bytes) with CI kernel 0093:
+  SHA256 bcda473b9128e630723a3d925b4d1ba5321c576c0cf102f54da9d0bec9860f12.
+  Payload shim/out/spes-ios.payload, ADT shim/out/spes-ios.adt. Host checks passed
+  Android v3 header, embedded payload equality, segment/RAM bounds and bootargs.
+  cmdline: debug=0xc serial=3 cpus=1 keepsyms=1 -enable_kprintf_spam -noprogress
+  rd=ufsroot0 ufsroot=userdata ufsrw=1 rootrw=1 sweetlog=1 ufslogsecs=10
+  sweettouch=1 sweettouchdelay=5 sweettouchdiag=3 sweetkeys=0 sweethw=0
+  sweetfb_stayon=1. No RAM disk. Entry PA 0x1014a6488.
+- Proposed next destructive step: stream verified 16GiB research/spes-ios-root.img
+  into userdata start only; sync and SHA256-readback exactly 16GiB before boot.
+  This destroys Android user data. Do NOT erase/resize GPT, flash boot/recovery,
+  or touch modem/persist. Subsequent temporary XNU boot writes HFS root and a
+  console ring in last 4MiB+4KiB of userdata (sweetlog=1); include in confirmation.
+- Missing activation-state container is an untested first-boot concern, not fsck
+  corruption. Upstream tweaks only seed an already-existing container. Do not
+  fabricate container metadata; inspect actual first-boot logs if needed.
+- After successful write/readback, reboot bootloader and fastboot boot the above
+  image. Observe screen; retrieve tail console ring in recovery if needed.
+  tools/sweet-log-pull.sh uses GNU stat -c (not native macOS); adapt before use.
+
 # Local iOS root finalized — 2026-10-20
 
 - User completed finish-ios-root-macos.sh successfully; their fsck output says
