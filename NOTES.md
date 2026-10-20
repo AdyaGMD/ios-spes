@@ -1,3 +1,24 @@
+# Diagnostic copy inspected; longer unchanged boot started — 2026-10-20
+
+- Readback completed exactly16GiB: research/spes-ios-after-boot.img.
+  Readonly mount failed; readonly fsck_hfs -fn reported volume OK. Mounted with
+  disposable /tmp/iospes-inspection.shadow to permit journal replay without
+  changing original copy; inspected /Volumes/iOSRoot then detached disk4.
+- Installed migration LastSystemVersion=20H392 and SyntheticDidUpgrade=false;
+  SetupDone/SetupFinishedAllSteps true; SpringBoard SBLastSystemVersion20H392.
+- mobileactivationd log confirms container created automatically and state
+  Activated. Earlier missing-container warning does not require fabricated data.
+- launchd.log shows datamigrator invocations exiting normally exit(0), not crash
+  loops. Earlier repeated exec observation was insufficient to blame migration.
+- OTAUpdate report repeatedly waits for EmbeddedDeviceTypeRoot missing service;
+  potential delay, not established UI blocker. Saved launchd/activation/OTA logs
+  in research/spes-after-boot-logs. No filesystem fixes applied to phone.
+- User suggested insufficient runtime; started unchanged longer test via adb
+  reboot bootloader and fastboot boot shim/out/spes-ios.img. Accepted send0.398s,
+  boot0.287s total0.693s. Same hash68bc9b8c...; keep running15–20min and observe.
+  No confirmed SpringBoard screen yet. If still logo, retrieve fresh console
+  and consider targeted SpringBoard/backboardd stack sampling rather than reflash.
+
 # Diagnostic copy resumed after stall — 2026-10-20
 
 - Status check found copy stalled at 3007315968 bytes for ~12 minutes, though
