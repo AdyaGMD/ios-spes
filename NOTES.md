@@ -1,3 +1,25 @@
+# macOS filesystem preparation — 2026-10-20
+
+- Confirmed touch milestone committed as 2942f74. Phone stays in 0093 RAM test.
+- Downloaded Apple AppOS 087-86715-047.dmg and SystemOS 087-86593-047.dmg
+  with ZIP CRC validation. Base OS 087-86698-044.dmg download still running
+  (session 53518, log research/ios-os-download.log). Files stay ignored.
+- Native hdiutil read-only mounts work; SystemOS cache header reads dyld_v1
+  arm64. Active mounts /Volumes/AppCryptex and
+  /Volumes/SydneyUpdate20H392.D22D221SystemCryptex; detach after checks.
+- Added native Mac builder tools/mkiosroot-macos.sh and prepare-ios-root.py.
+  Preserves numeric ownership/hardlinks, merges cryptexes, applies upstream
+  root tweaks, checks raw HFSX and journal, publishes only after fsck success.
+- Disposable 64MiB UDTO/NONE image proves HX header at offset1024, journal
+  bit set, raw size exact. fsck_hfs requires attached unmounted virtual disk;
+  verified successful on /dev/rdisk8 then detached it. Regular-file fsck fails.
+- 11 host tests pass (including hardlinks, symlinks, wrong-build rejection and
+  preventing destination symlink escape); bash syntax passes. Full image
+  assembly not yet run. sudo -n requires password; need native admin prompt
+  or user-run sudo for ownership-preserving copy. Never request password in chat.
+- Next: finish base download, verify and mount read-only, assemble local root
+  with admin authorization, inspect/fsck/hash; do not flash userdata.
+
 # Confirmed touchscreen milestone — 2026-10-20
 
 - User photo confirms 0093: AVDD cfg=0x1ac3 io=3, FocalTech probe err=0/0,

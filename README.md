@@ -169,3 +169,25 @@ GPIO98. A photo confirms chip ID 54:52 and changing HID touch events and
 coordinates. Six report errors were recorded, stable across the visible
 samples; further reliability testing remains. No RPM voltage request was
 needed for that boot.
+
+## Prepare an iOS root on macOS
+
+`tools/mkiosroot-macos.sh` builds a local 16 GiB raw case-sensitive journaled
+HFS+ image from the three iPhone X 16.7.16/20H392 filesystem components. It
+mounts source images read-only, preserves numeric owners and hard links,
+merges cryptex content, applies the existing bring-up tweaks and runs fsck.
+It refuses to overwrite an existing output. Administrator access is required
+for file ownership. It never connects to or flashes the phone.
+
+```sh
+sudo tools/mkiosroot-macos.sh \
+  research/ipsw-x/087-86698-044.dmg \
+  research/ipsw-x/087-86593-047.dmg \
+  research/ipsw-x/087-86715-047.dmg \
+  research/spes-ios-root.img
+```
+
+The raw image is published only after successful assembly and filesystem
+validation. The temporary workspace is retained for diagnosis; source mounts
+are detached on exit. This host preparation does not authorize installation
+or validate that SpringBoard will boot on spes.
