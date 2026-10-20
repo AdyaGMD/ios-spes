@@ -1,3 +1,21 @@
+# iOS root installed and first full boot dispatched — 2026-10-20
+
+- Explicit user confirmation received: "Yes, erase userdata and install iOS".
+- Installation completed: exactly 17179869184 bytes to userdata in 510.399s.
+  Device readback SHA256 over exactly those bytes matched source:
+  6617f1b3988fe86940b7bf09d01868330f39b4601c4e842bdec6269bb1e84111.
+  Verification took 76.407s. Log research/spes-ios-install.log and result
+  research/spes-ios-install-result.json. Android userdata is now overwritten;
+  no other partition was written by the installer. Recovery backups retained.
+- Reverified shim/out/spes-ios-0093.img checksum, adb reboot bootloader, then
+  fastboot boot succeeded: send 0.407s, boot 0.287s, total 0.699s.
+  This is first full iOS-root boot on spes; screen result not known yet.
+- Boot enables HFS writes and console ring at userdata tail. Do not claim
+  SpringBoard success without observation. Await screen/photo from user.
+- If stalled/panic, return to Fastboot, temporarily boot OrangeFox, then pull
+  console using tools/sweet-log-pull.sh (now macOS compatible) with Android SDK
+  platform-tools on PATH. Do not format userdata or boot stock Android.
+
 # Userdata install in progress — 2026-10-20
 
 - User explicitly confirmed: "Yes, erase userdata and install iOS" after the
