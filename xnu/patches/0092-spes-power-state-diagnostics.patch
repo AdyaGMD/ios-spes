@@ -1,0 +1,71 @@
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -596,6 +596,43 @@
+ 	return true;
+ }
+ 
++/* Khaje live FDT: RPM message RAM at 0x045f0000, 0x7000 bytes.
++ * Read-only GLINK TOC/ring inspection, as qcom_glink_rpm.c. No FIFO ownership
++ * or PMIC request is taken until the inherited bootloader state is known.
++ */
++static void
++spes_rpm_inspect(void)
++{
++	vm_offset_t ram = ml_io_map(0x045f0000u, 0x7000u);
++	if (!ram) {
++		printf("SPES RPM: mapping failed\n");
++		return;
++	}
++	uint32_t magic = touch_rd(ram, 0x6f00u);
++	uint32_t count = touch_rd(ram, 0x6f04u);
++	printf("SPES RPM: TOC magic=%#x count=%u (read-only)\n", magic, count);
++	if (magic != 0x67727430u || count > 20u) {
++		printf("SPES RPM: invalid TOC; stopping inspection\n");
++		return;
++	}
++	for (uint32_t i = 0; i < count; ++i) {
++		uint32_t pos = 0x6f08u + 12u * i;
++		uint32_t id = touch_rd(ram, pos);
++		if (id != 0x61703272u && id != 0x72326170u) continue;
++		uint32_t off = touch_rd(ram, pos + 4u);
++		uint32_t size = touch_rd(ram, pos + 8u);
++		if ((off & 3u) || (size & 7u) || size < 16u ||
++		    off > 0x6f00u - 8u || size > 0x6f00u - off - 8u) {
++			printf("SPES RPM: invalid ring id=%#x off=%#x size=%#x\n", id, off, size);
++			continue;
++		}
++		uint32_t tail = touch_rd(ram, off), head = touch_rd(ram, off + 4u);
++		printf("SPES RPM: %s off=%#x size=%#x head=%#x tail=%#x valid=%d\n",
++		    id == 0x61703272u ? "TX" : "RX", off, size, head, tail,
++		    head < size && tail < size && !(head & 7u) && !(tail & 7u));
++	}
++}
++
+ static void
+ touch_thread(void *arg, wait_result_t result)
+ {
+@@ -609,6 +646,7 @@
+ 	(void)PE_parse_boot_argn("sweettouchdelay", &delay_s, sizeof(delay_s));
+ 	printf("SWEET TOUCH: starting in %u s\n", delay_s);
+ 	touch_wait(delay_s * 1000u);
++	if (st.spes && st.diag == 3) spes_rpm_inspect();
+ 	st.stage = "map";
+ 	printf("SWEET TOUCH: mapping GCC/TLMM/SE2\n");
+ 	st.gcc = ml_io_map(TOUCH_GCC_PA, 0x80000);
+@@ -643,6 +681,16 @@
+ 	touch_wait(20);
+ 	touch_gpio(TOUCH_PIN_RESET, 0, 3, 3, true, true);
+ 	touch_wait(250);
++	if (st.spes) {
++		printf("SPES TOUCH: post-power avdd cfg=%#x io=%#x reset cfg=%#x io=%#x\n",
++		    touch_rd(st.east, TOUCH_GPIO_CFG(TOUCH_PIN_AVDD)),
++		    touch_rd(st.east, TOUCH_GPIO_IO(TOUCH_PIN_AVDD)),
++		    touch_rd(st.west, TOUCH_GPIO_CFG(TOUCH_PIN_RESET)),
++		    touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_RESET)));
++		printf("SPES TOUCH: SDA cfg=%#x io=%#x SCL cfg=%#x io=%#x\n",
++		    touch_rd(st.west, TOUCH_GPIO_CFG(6)), touch_rd(st.west, TOUCH_GPIO_IO(6)),
++		    touch_rd(st.west, TOUCH_GPIO_CFG(7)), touch_rd(st.west, TOUCH_GPIO_IO(7)));
++	}
+ 	st.stage = "probe";
+ 	uint8_t gid[32], legacy[32], fid1 = 0, fid2 = 0;
+ 	st.probing = true;

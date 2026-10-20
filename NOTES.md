@@ -1,3 +1,19 @@
+# Power-control investigation — 2026-10-20
+
+- Recovery remains running, L9 verified again at 1800000 uV/enabled/users=1.
+- Actual RPM transport is GLINK (despite rpm-smd driver name), verified live
+  rpmsg device soc:rpm-glink.rpm_requests.-1.-1. Live FDT RPM message RAM
+  0x045f0000 size 0x7000. Source qcom_glink_rpm.c describes final 256-byte TOC,
+  magic 0x67727430, ap2r/r2ap FIFO entries with tail/head then ring data.
+- Reference sparse checkout expanded with drivers/{soc/qcom,regulator,spmi,
+  clk/qcom,rpmsg}, include/{linux/soc/qcom,soc/qcom}; same pinned commit.
+- Recovery lacks /dev/mem and debugfs, so cannot inspect FIFO state there.
+- Patch 0092 adds read-only RPM TOC/ring metadata inspection (strict mapping
+  bounds/alignment checks) and post-power GPIO AVDD/reset/SDA/SCL readbacks.
+  Runs only in spes touch diagnostic. No RPM commands or PMIC writes added.
+  This is prerequisite evidence for implementing a bounded GLINK client;
+  do not claim power-enable support implemented. Kernel build/test pending.
+
 # Touch probe hardware test — 2026-10-20
 
 - Storage result confirmed successful by user; kernel 8577015 / CI 39315323817.
