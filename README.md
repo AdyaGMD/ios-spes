@@ -138,6 +138,15 @@ On 2026-10-20 the user reported `result=0` and continued PID 1 heartbeats.
 This confirms UFS takeover and userdata partition lookup, not filesystem
 mounting or disk writes.
 
+## Touch diagnostic
+
+With patch 0091, the builder's `touch` profile produces
+`shim/out/spes-touch-probe.img`. It runs touch independently of storage from
+RAM, with `spestouchprobe=1 sweettouch=1 sweettouchdelay=5 sweettouchdiag=3`.
+It prints input counters and coordinates roughly every five seconds; tap and
+drag to test them. Failures print the stage and stop the touch thread.
+Hardware results are pending. No partition flash or iOS GUI is involved.
+
 ## Checks
 
 ```sh

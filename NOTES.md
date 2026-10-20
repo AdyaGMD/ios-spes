@@ -1,4 +1,4 @@
-# Touch probe preparation — 2026-10-20
+# Touch probe hardware test — 2026-10-20
 
 - Storage result confirmed successful by user; kernel 8577015 / CI 39315323817.
 - Patch 0091 starts touch independently of UFS with spestouchprobe=1, requires
@@ -6,8 +6,19 @@
   without intentional panic; failures print the stage and stop the touch thread.
 - Builder touch profile sets sweettouch=1, delay=5, diag=3, storage probe absent,
   storage writes/logging/keys/USB disabled. Produces spes-touch-probe.img.
-- Next: kernel CI, validate/package touch profile, temporary boot, ask user
-  to tap/drag and report chip ID and counters. No GUI expected in RAM test.
+- Source commit 952e73b; kernel CI 39350231808 succeeded:
+  https://github.com/AdyaGMD/ios-spes/actions/runs/39350231808
+- Validation: patch applies after 0090; 8 host tests, shell syntax and diff checks pass.
+- Kernel downloaded to xnu/out-0091; SHA256SUMS passed. Image built at
+  shim/out/spes-touch-probe.img (17227776 bytes), SHA256
+  e766a0cf8204b401e2057c4ed60cda5d2d0c761f638fcebcc0df2d4096e4ac4e.
+  Boot header v3, embedded payload, image_size, RAM bounds and touch-only
+  flags validated; spesufsprobe absent. Baseline/storage images preserved.
+- User confirmed Fastboot; product spes checked. Temporary boot accepted:
+  sending 0.395s, booting 0.287s, total 0.686s. No flashing.
+- Awaiting user's tap/drag observation: SPES TOUCH down/up counts and last=x,y
+  should change. If failed, capture stopped-at stage/chip-id/error lines.
+  No GUI expected in RAM test; do not claim touch success before observation.
 
 # Storage probe hardware test — 2026-10-20
 
