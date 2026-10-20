@@ -1,3 +1,25 @@
+# Local iOS root finalized — 2026-10-20
+
+- User completed finish-ios-root-macos.sh successfully; their fsck output says
+  iOSRoot appears OK. Earlier readonly-device permission message did not abort
+  the check or finalization. Source root.cdr removed by helper after publication.
+- research/spes-ios-root.img is 17179869184 bytes (16 GiB), user-owned.
+  Independently verified saved SHA256 with shasum -c: OK:
+  6617f1b3988fe86940b7bf09d01868330f39b4601c4e842bdec6269bb1e84111.
+- Mounted image readonly with owners enabled. SystemVersion confirms iPhone OS
+  16.7.16/20H392; sbin/launchd exists, root:wheel 0755, 541600 bytes;
+  dyld shared-cache main file exists. Protected keybag was not readable by
+  unprivileged inspection. Detached inspection disk successfully.
+- No phone commands or writes this turn; no userdata install authorized yet.
+- Outstanding: missing mobileactivationd container warning remains unresolved;
+  sweet-root-tweaks.py skips data ark when container metadata is absent. Do not
+  equate filesystem validation with GUI boot readiness. Inspect first-boot
+  container expectations before modifying image; preserve checksum if changed.
+- Before installation: obtain/verify this spes handset's partition backups in
+  recovery, prepare exact userdata-only installation plan, and ask user to
+  confirm destructive step as required. Historical sweet backups are not spes
+  backups. Current phone state not queried; last reported 0093 touch test.
+
 # Recover completed host image — 2026-10-20
 
 - User ran sudo Mac builder in Terminal. Copy/prepare/root tweaks completed
