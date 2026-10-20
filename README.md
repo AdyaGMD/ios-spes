@@ -9,7 +9,7 @@ available to this kernel.
 Photos from the 2026-10-19 temporary RAM-only boot confirm framebuffer output,
 one initialized CPU and repeated `SWEET init: still alive` messages.
 There is no tested installable iOS image or SpringBoard boot on this device.
-Storage, touch and additional CPU cores remain unverified.
+Read-only storage probing succeeded; touch and additional CPU cores remain unverified.
 
 ## Changes
 
@@ -134,7 +134,9 @@ This produces `shim/out/spes-storage-probe.img`. It keeps `rd=md0`, enables
 starting the RAM test program. The probe blocks SCSI commands other than
 TEST UNIT READY and READ(10), forces a read-only disk device, and skips
 persistent logging and input drivers. It does not mount Android userdata.
-Hardware validation of this profile is pending.
+On 2026-10-20 the user reported `result=0` and continued PID 1 heartbeats.
+This confirms UFS takeover and userdata partition lookup, not filesystem
+mounting or disk writes.
 
 ## Checks
 

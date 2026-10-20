@@ -1,0 +1,62 @@
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -673,6 +673,12 @@
+ 	    goodix ? "GT9896 Yellowstone" : "Focaltech 54:52", st.irq_hint);
+ 	unsigned errors = 0, ticks = 0, polls = 0;
+ 	while (!st.dead) {
++		/* Nonfatal RAM-root diagnostic: periodic input counters and coordinates. */
++		if (st.diag == 3 && ++polls % 500u == 0) {
++			printf("SPES TOUCH: frames=%u errors=%u down=%u up=%u last=%d,%d active=%#x\n",
++			    st.s_frames, st.s_errs, st.s_down, st.s_up,
++			    st.s_lastx, st.s_lasty, st.active);
++		}
+ 		if (st.diag == 2 && ++polls == 3000) {  /* ~30 s at 10 ms */
+ 			panic("SWEET TOUCH stats: frames=%u errs=%u lasterr=%d maxn=%u hid down=%u up=%u last=%d,%d | "
+ 			    "raw %02x %02x %02x | %02x %02x %02x %02x %02x %02x | %02x %02x %02x",
+@@ -703,7 +709,12 @@
+ 	}
+ 	touch_report(0, st.x, st.y);
+ out:
+-	if (st.diag) {
++	if (st.diag == 3) {
++		printf("SPES TOUCH: stopped at %s dead=%d id=%02x:%02x errors=%d/%d\n",
++		    st.stage ? st.stage : "?", st.dead, st.d_fid1, st.d_fid2,
++		    st.d_fe1, st.d_fe2);
++	}
++	if (st.diag && st.diag != 3) {
+ 		panic("SWEET TOUCH diag: stopped at '%s' dead=%d | gcc vote=%#x cfg=%#x cbcr=%#x | "
+ 		    "se2 fw=%#x status=%#x hwtx=%#x hwrx=%#x | goodix err=%d | ft 0x38 err=%d/%d id=%02x:%02x | irq=%#x",
+ 		    st.stage ? st.stage : "?", st.dead, st.d_vote, st.d_cfg, st.d_cbcr,
+@@ -741,4 +752,20 @@
+ 		printf("SWEET TOUCH: kernel_thread_start failed %d\n", kr);
+ 	}
+ }
++/* Start independently of UFS, only for an explicit spes RAM-root test. */
++void spes_touch_probe(void);
++
++void
++spes_touch_probe(void)
++{
++	DTEntry platform;
++	int enabled = 0;
++	char root[32] = { 0 };
++	(void)PE_parse_boot_argn("spestouchprobe", &enabled, sizeof(enabled));
++	(void)PE_parse_boot_argn("rd", root, sizeof(root));
++	if (enabled == 1 && strcmp(root, "md0") == 0 &&
++	    SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess) {
++		sweet_touch_init();
++	}
++}
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1100,7 +1100,9 @@
+ 
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+ 	extern void spes_ufs_probe(void);
++	extern void spes_touch_probe(void);
+ 	spes_ufs_probe();
++	spes_touch_probe();
+ #endif
+ 	load_init_program(p);
+ 	lock_trace = 1;

@@ -1,3 +1,14 @@
+# Touch probe preparation — 2026-10-20
+
+- Storage result confirmed successful by user; kernel 8577015 / CI 39315323817.
+- Patch 0091 starts touch independently of UFS with spestouchprobe=1, requires
+  spes + rd=md0. New sweettouchdiag=3 prints counters/coordinates every ~5s
+  without intentional panic; failures print the stage and stop the touch thread.
+- Builder touch profile sets sweettouch=1, delay=5, diag=3, storage probe absent,
+  storage writes/logging/keys/USB disabled. Produces spes-touch-probe.img.
+- Next: kernel CI, validate/package touch profile, temporary boot, ask user
+  to tap/drag and report chip ID and counters. No GUI expected in RAM test.
+
 # Storage probe hardware test — 2026-10-20
 
 - Baseline RAM/PID1 milestone recorded in commit 89ac8c8.
@@ -8,7 +19,7 @@
 - Commit 8577015 pushed; kernel CI run 39315323817 succeeded:
   https://github.com/AdyaGMD/ios-spes/actions/runs/39315323817
 - Builder accepts optional storage profile, producing spes-storage-probe.img
-  separately from the verified baseline. Hardware test pending.
+  separately from the verified baseline. Storage test succeeded (see below).
 - Validation: 8 host tests and shell syntax pass; patch dry-run applies to the
   previously validated 89-patch tree. Extracted command guard compiled and
   tested for all 256 opcodes, both transfer directions and probe on/off.
@@ -24,8 +35,9 @@
   RAM bounds and read-only command line checked. Baseline checksum unchanged.
 - User confirmed Fastboot; product rechecked spes. Temporary fastboot boot
   accepted on 2026-10-20: sending 0.399s, booting 0.287s, total 0.691s.
-  Awaiting user's SPES UFS PROBE result number and PID1 heartbeat observation.
-  No partition flashed. Do not claim storage works until the result arrives.
+  USER REPORT: result=0, "disk writes blocked", and PID1 "still alive" continues.
+  This confirms UFS takeover and GPT userdata lookup succeeded read-only.
+  It does not validate filesystem mounting or disk writes. No partitions flashed.
 - Next: interpret storage output; then isolated touch test and host iOS root
   preparation. Apple BuildManifest.plist downloaded with CRC check: D22AP
   16.7.16/20H392 uses OS 087-86698-044.dmg, SystemOS 087-86593-047.dmg,
