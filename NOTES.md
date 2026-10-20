@@ -1,3 +1,22 @@
+# Host build blocked by macOS access — 2026-10-20
+
+- All three official components fully downloaded and ZIP CRC-checked:
+  research/ipsw-x/{087-86698-044,087-86593-047,087-86715-047}.dmg.
+- Base OS mounted read-only with owners enabled: SystemVersion confirms
+  16.7.16/20H392; launchd Mach-O and launchd.plist readable. SystemOS shared
+  cache readable. All three inspection mounts detached successfully.
+- Mac builder committed 43e77ee; 11 tests and bash syntax pass. Native raw
+  HFSX format and fsck attached-disk workflow tested on disposable 64MiB file.
+- Attempted native administrator authorization via osascript. Privileged shell
+  failed BEFORE running builder: /bin/bash: .../tools/mkiosroot-macos.sh:
+  Operation not permitted (exit126). No root image exists, no phone changes.
+  Likely macOS Documents privacy access; do not bypass it. User must run the
+  README sudo build command in their own Terminal and allow Documents access
+  if macOS prompts. Log research/ios-root-build.log contains only that error.
+- Next: user runs tools/mkiosroot-macos.sh with the downloaded images and
+  research/spes-ios-root.img output. Then inspect image/checksum and any build
+  diagnostics. Do not claim full root assembly or SpringBoard success yet.
+
 # macOS filesystem preparation — 2026-10-20
 
 - Confirmed touch milestone committed as 2942f74. Phone stays in 0093 RAM test.
