@@ -145,7 +145,9 @@ With patch 0091, the builder's `touch` profile produces
 RAM, with `spestouchprobe=1 sweettouch=1 sweettouchdelay=5 sweettouchdiag=3`.
 It prints input counters and coordinates roughly every five seconds; tap and
 drag to test them. Failures print the stage and stop the touch thread.
-Hardware results are pending. No partition flash or iOS GUI is involved.
+The first hardware test reached the I²C probe but got NACKs and no chip ID;
+the touch thread stopped while PID 1 remained alive. The separate touch I/O
+power supply is under investigation. No partition flash or iOS GUI is involved.
 
 ## Checks
 

@@ -16,9 +16,32 @@
   flags validated; spesufsprobe absent. Baseline/storage images preserved.
 - User confirmed Fastboot; product spes checked. Temporary boot accepted:
   sending 0.395s, booting 0.287s, total 0.686s. No flashing.
-- Awaiting user's tap/drag observation: SPES TOUCH down/up counts and last=x,y
-  should change. If failed, capture stopped-at stage/chip-id/error lines.
-  No GUI expected in RAM test; do not claim touch success before observation.
+- PHOTO RESULT: SE2 fw=0x303/proto=3 and FIFO packing readback succeed.
+  Both 0x5d and 0x38 probes return error 6 (ENXIO/NACK, IRQ 0x40000409).
+  FocalTech chip ID 00:00, stopped at probe dead=0 errors=6/6. PID1 heartbeat
+  continues. Touch is NOT working; no decoded contacts.
+- Likely missing I/O supply: live FDT touchscreen vcc_i2c-supply resolves to
+  /soc/qcom,rpm-smd/rpm-regulator-ldoa9/regulator-l9 (pm6125_l9, 1.504-2.0V
+  allowed range, not always-on). Android FT3418 driver explicitly enables it.
+  Current XNU touch only enables GPIO98 AVDD, no L9 supply request. This is
+  a hypothesis, not yet a confirmed root cause. Existing sweet_rpmh is for
+  SM7150 RPMh; spes uses RPM-SMD, so do not reuse its MMIO addresses.
+- User returned to Fastboot; temporary OrangeFox boot succeeded (send 3.051s,
+  boot 0.287s, total 3.389s). User confirms menu/password prompt; recovery ADB
+  connected. `adb wait-for-device` did not wake for recovery transport; use
+  direct adb shell or wait-for-recovery. Phone currently in OrangeFox.
+- Recovery evidence: dmesg shows FTS chip ID 0x5452 and successful touch probe,
+  consumer link to regulator.31. Sysfs pm6125_l9: 1800000 microvolts, enabled,
+  num_users=1. Confirms expected IC and required I/O supply in working Linux;
+  does NOT directly prove that L9 was off during the XNU failure.
+- Recovery kernel has no debugfs support (mount fails No such device).
+  No Android partition mounted by agent; only attempted debugfs in recovery RAM.
+  Private log: research/spes/recovery-touch-dmesg.txt. No identifiers published.
+- Next: implement or verify khaje RPM-SMD control for pm6125_l9 at the observed
+  1.8V, then re-test touch. Need source/transport audit first; do not reuse
+  SM7150 RPMh helpers or guess PMIC addresses. Add post-power GPIO readbacks
+  to distinguish power/reset/mux failure from bus configuration issues.
+  No new kernel patch or CI has been started after 0091.
 
 # Storage probe hardware test — 2026-10-20
 
