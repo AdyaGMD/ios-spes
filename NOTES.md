@@ -1,3 +1,23 @@
+# Console-overlay test dispatched — 2026-10-20
+
+- Corrected full-root boot reached real iOS services: user reported Apple logo
+  then console text. Photo shows exec of multiple daemons, datamigrator,
+  continuing touch frames (errors84 stable in visible samples). No new panic
+  visible. SpringBoard/UI success not confirmed; repeated daemon starts need
+  saved-log investigation if UI still fails.
+- User suggested console overlay hides GUI; source AppleCLCD::present confirms
+  sweetfb_noconsole=1 mutes console at first presentation. Added that bootarg
+  to tools/build-spes-ios.sh, retaining sweetlog=1 for persistent diagnostics.
+- Built shim/out/spes-ios.img (17227776 bytes), SHA256
+  68bc9b8c0f8f68a569acbc43467f287894a7f8a92ff1ea4b4f8daa1fad0d6fac.
+  Boot header, payload, RAM bounds and required flags verified. User returned
+  to Fastboot; boot accepted send0.417s boot0.287s total0.708s.
+- Current manual command: fastboot boot shim/out/spes-ios.img. Early boot text
+  remains until graphics presentation; saved logs continue. Await screen.
+- Previous boot log not retrieved yet (user preferred testing overlay first).
+  If no UI progress, temporarily boot OrangeFox and retrieve console tail;
+  do not conclude repeated exec lines alone identify GUI blocker.
+
 # First root boot panic corrected; second boot dispatched — 2026-10-20
 
 - User photo confirms userdata found read-write and iOSRoot HFS mounted. Then
