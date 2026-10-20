@@ -120,6 +120,22 @@ userspace execution and the console, not SpringBoard. No phone action is
 performed by the script. Hardware execution was confirmed by photos showing
 PID 1 and repeated heartbeat messages on 2026-10-19.
 
+## Read-only storage diagnostic
+
+With a kernel including patch 0090, append `storage` to the diagnostic builder:
+
+```sh
+CROSS_COMPILE=aarch64-elf- MKBOOTIMG="$PWD/research/mkbootimg/mkbootimg.py" \
+  tools/build-spes-diagnostic.sh xnu/out/kernel.development.sweet dtb/spes-live.dtb storage
+```
+
+This produces `shim/out/spes-storage-probe.img`. It keeps `rd=md0`, enables
+`spesufsprobe=1`, reads the UFS partition table and prints the result before
+starting the RAM test program. The probe blocks SCSI commands other than
+TEST UNIT READY and READ(10), forces a read-only disk device, and skips
+persistent logging and input drivers. It does not mount Android userdata.
+Hardware validation of this profile is pending.
+
 ## Checks
 
 ```sh

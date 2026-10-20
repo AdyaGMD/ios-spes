@@ -1,17 +1,35 @@
-# Storage probe preparation — 2026-10-19
+# Storage probe hardware test — 2026-10-20
 
 - Baseline RAM/PID1 milestone recorded in commit 89ac8c8.
 - Patch 0090 adds opt-in spesufsprobe=1 before RAM init. Requires spes and
   rd=md0; forces read-only device, allows only SCSI TEST UNIT READY/READ(10),
   skips persistent logging and input drivers. Prints result then runs RAM init.
   Also bounds GPT entry count before multiplication to prevent overflow.
+- Commit 8577015 pushed; kernel CI run 39315323817 succeeded:
+  https://github.com/AdyaGMD/ios-spes/actions/runs/39315323817
 - Builder accepts optional storage profile, producing spes-storage-probe.img
-  separately from the verified baseline. New kernel/build/hardware test pending.
+  separately from the verified baseline. Hardware test pending.
+- Validation: 8 host tests and shell syntax pass; patch dry-run applies to the
+  previously validated 89-patch tree. Extracted command guard compiled and
+  tested for all 256 opcodes, both transfer directions and probe on/off.
+  Live FDT confirms UFS controller 0x04804000 (size 0x3000).
+  Original baseline image checksum still matches. User asked to enter Fastboot.
 - Audit: baseline rd=md0 never invokes sweet_ufs_init, which also starts touch;
   therefore baseline provides no storage/input evidence. FT3418 source ID
   mapping is 54:52, matching current driver, but touch remains untested.
-- Next: build 0090 in CI, validate/package storage profile, then temporary boot.
-  No Android partition mounts or writes are part of this diagnostic.
+- Downloaded kernel to xnu/out-0090, artifact SHA256 verified; log confirms
+  patch 0090 applied. Built shim/out/spes-storage-probe.img, 17227776 bytes,
+  SHA256 a857b9b2c7de5439002d9e58ad97028aa6ee1d437a9a4d1cf61dacdf356e5856.
+  Boot-v3 header, embedded payload at aligned _end, image_size, all segment
+  RAM bounds and read-only command line checked. Baseline checksum unchanged.
+- User confirmed Fastboot; product rechecked spes. Temporary fastboot boot
+  accepted on 2026-10-20: sending 0.399s, booting 0.287s, total 0.691s.
+  Awaiting user's SPES UFS PROBE result number and PID1 heartbeat observation.
+  No partition flashed. Do not claim storage works until the result arrives.
+- Next: interpret storage output; then isolated touch test and host iOS root
+  preparation. Apple BuildManifest.plist downloaded with CRC check: D22AP
+  16.7.16/20H392 uses OS 087-86698-044.dmg, SystemOS 087-86593-047.dmg,
+  AppOS 087-86715-047.dmg. Full root files are not downloaded yet.
 
 # Latest hardware test — 2026-10-19
 
