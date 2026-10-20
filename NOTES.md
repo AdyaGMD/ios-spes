@@ -1,3 +1,13 @@
+# Diagnostic copy resumed after stall — 2026-10-20
+
+- Status check found copy stalled at 3007315968 bytes for ~12 minutes, though
+  adb recovery remained connected. Stopped host reader PIDs79982/79984.
+- Resumed at exact 4MiB boundary (717 blocks) using /tmp/iospes-pull-installed.py,
+  session78677. Remote dd stderr redirected to /tmp/iospes-copy-dd.log to avoid
+  output-pipe blockage (suspected cause, not established). Local .partial grows
+  again: observed3238002688 bytes. Same progress log/output names below.
+- Copy is incomplete; do not mount it yet. Source userdata untouched by reads.
+
 # Apple-logo investigation; diagnostic readback running — 2026-10-20
 
 - User reports Apple logo persists with final visible rapportd nexus text after
