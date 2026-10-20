@@ -48,3 +48,15 @@ A future client needs bounded waits, validated framing, channel ownership,
 matching message-ID acknowledgements, and failure reporting before a touch
 probe can depend on a regulator request. Use only the observed 1.8V target;
 never infer a PMIC register address or substitute another platform's transport.
+
+## 0092 hardware result and next fix
+
+Photo confirms TOC magic/count (0x67727430/10), TX offset 0x200 and RX 0x900,
+both ring sizes 0x6f8, empty head/tail 0, valid bounds. AVDD GPIO98 reads
+cfg=0xac3/io=2; reset cfg=0x2c3/io=3; SDA/SCL cfg=4/io=1. NACKs continue.
+
+GPIO98 advertises EGPIO_PRESENT (bit 11), but EGPIO_ENABLE (bit 12) is clear.
+`drivers/pinctrl/qcom/pinctrl-msm.c:msm_pinmux_set_mux` explicitly sets enable
+when present; khaje's PINGROUP defines these bits. Patch 0093 follows that
+rule for spes, preserving all other bits. Expect AVDD cfg=0x1ac3. Retest this
+concrete mismatch before adding RPM messages. The L9 hypothesis is unresolved.

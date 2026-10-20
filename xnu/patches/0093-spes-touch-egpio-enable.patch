@@ -1,0 +1,14 @@
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -157,6 +157,11 @@
+ 	}
+ 	cfg &= ~0x3ffu;
+ 	cfg |= (mux << 2) | pull | (drive << 6) | (out ? 0x200u : 0u);
++	/* khaje pinctrl-msm: enable EGPIO when the pin advertises it.
++	 * GPIO98 read back 0xac3: present bit 11 set, enable bit 12 clear. */
++	if (st.spes && (cfg & (1u << 11))) {
++		cfg |= 1u << 12;
++	}
+ 	touch_wr(tile, off, cfg);
+ }
+ 

@@ -24,8 +24,16 @@
 - On continuation, phone was in Android (ADB device, spes_global), not recovery.
   Rebooted to bootloader, checked product spes, temporary boot accepted:
   send 0.403s, boot 0.287s, total 0.694s. No partition flashed.
-- Awaiting photo of SPES RPM TOC/TX/RX and SPES TOUCH post-power/SDA/SCL lines.
-  Do not infer GLINK state or GPIO success until the hardware output arrives.
+- PHOTO RESULT 0092: TOC magic=0x67727430 count=10. TX off=0x200,
+  RX off=0x900, both size=0x6f8/head=0/tail=0/valid=1. GPIO98 AVDD
+  cfg=0xac3 io=0x2; reset cfg=0x2c3 io=0x3; SDA/SCL cfg=4 io=1.
+  FocalTech still returns NACK/errors=6/6/id=00:00; heartbeat continues.
+- Concrete source mismatch: GPIO98 cfg 0xac3 advertises EGPIO_PRESENT bit11
+  but lacks EGPIO_ENABLE bit12. khaje pinctrl-msm.c msm_pinmux_set_mux sets
+  bit12 whenever bit11 is present. Existing touch_gpio omitted that step.
+- Patch 0093 now adds this behavior on spes only. Expected AVDD cfg=0x1ac3.
+  This is a verified code mismatch, not yet a verified cause of touch failure.
+  Retest before implementing RPM requests; missing L9 request remains open.
 
 # Touch probe hardware test — 2026-10-20
 
