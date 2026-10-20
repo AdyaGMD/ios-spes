@@ -1,3 +1,25 @@
+# Apple-logo investigation; diagnostic readback running — 2026-10-20
+
+- User reports Apple logo persists with final visible rapportd nexus text after
+  overlay-muted boot. Last visible text is not evidence that rapportd hung.
+- Returned to Fastboot and temporarily booted OrangeFox (send3.113s boot0.287s).
+  Read console tail successfully: research/spes-ios-gui-boot.txt (+ .bin),
+  141253 log bytes, flush24, not wrapped. SpringBoard exec once, backboardd once;
+  no recorded crash of either. Display swaps2..5, 1125x2436 surfaces. Datamigrator
+  exec three times. Only explicit CRASH record is driverkitd SIG9 ns1/code7.
+  bluetoothd/fairplayd repeatedly exec. Touch errors reach1467 then stabilize,
+  with valid down/up events later. No kernel panic in captured runtime.
+- Suspect migration/first-boot state, not proven. Need installed preferences/logs.
+  Recovery has no hfsplus filesystem; readonly mount failed "No such device".
+  No filesystem modification attempted. /metadata is mounted by recovery.
+- Running read-only 16GiB copy in session51491 via /tmp/iospes-pull-installed.py.
+  Progress research/spes-ios-pull.log. Output research/spes-ios-after-boot.img
+  appears ONLY after exact byte count and successful dd; .partial during copy.
+  Keep USB connected. This is diagnosis, not Android-data preservation.
+- Next: await copy completion, mount output readonly on Mac; inspect mobile
+  migration/preferences, container metadata, CrashReporter and migration logs.
+  Source host root is preboot baseline; do not overwrite it. Phone stays recovery.
+
 # Console-overlay test dispatched — 2026-10-20
 
 - Corrected full-root boot reached real iOS services: user reported Apple logo
