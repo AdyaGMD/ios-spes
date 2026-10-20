@@ -60,3 +60,12 @@ GPIO98 advertises EGPIO_PRESENT (bit 11), but EGPIO_ENABLE (bit 12) is clear.
 when present; khaje's PINGROUP defines these bits. Patch 0093 follows that
 rule for spes, preserving all other bits. Expect AVDD cfg=0x1ac3. Retest this
 concrete mismatch before adding RPM messages. The L9 hypothesis is unresolved.
+
+## 0093 success
+
+Photo confirms AVDD cfg=0x1ac3/io=3, FocalTech 54:52, successful ID reads and
+changing down/up events and coordinates. The EGPIO fix resolved the probe
+failure in this trial. Six report errors are visible but remain stable over
+frames 193, 246 and 417. No RPM request was added. Defer regulator-control
+work until cold-boot or suspend evidence requires it; this trial does not
+validate those conditions or establish GUI touch behavior.

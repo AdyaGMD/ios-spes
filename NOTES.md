@@ -1,3 +1,19 @@
+# Confirmed touchscreen milestone — 2026-10-20
+
+- User photo confirms 0093: AVDD cfg=0x1ac3 io=3, FocalTech probe err=0/0,
+  chip-id=54:52, selected Focaltech 54:52. HID down/up events and coordinates
+  change with user input. Counters: frames193/errors6/down30/up4/last119,106;
+  frames246/errors6/down32/up6/last1054,2398;
+  frames417/errors6/down119/up7/last533,1755. PID1 continues.
+- Touch works in this RAM diagnostic after EGPIO fix. Six report errors remain
+  to investigate; count is stable across the visible samples. No GUI validation.
+- No RPM power request was needed for this successful boot. Defer GLINK client
+  implementation; explicit L9 control may matter for cold boot/suspend later.
+- Next: prepare the iPhone X iOS filesystem on the host and validate the host
+  image-building path. Preserve current successful RAM/storage/touch images.
+  Before any installation obtain this handset's partition backups and separate
+  explicit permission to overwrite userdata. No installation authorized now.
+
 # Power-control investigation — 2026-10-20
 
 - Recovery remains running, L9 verified again at 1800000 uV/enabled/users=1.

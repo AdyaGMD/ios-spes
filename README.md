@@ -9,7 +9,8 @@ available to this kernel.
 Photos from the 2026-10-19 temporary RAM-only boot confirm framebuffer output,
 one initialized CPU and repeated `SWEET init: still alive` messages.
 There is no tested installable iOS image or SpringBoard boot on this device.
-Read-only storage probing succeeded; touch and additional CPU cores remain unverified.
+Read-only storage probing and touchscreen input succeeded. Additional CPU cores
+and the iOS interface remain unverified.
 
 ## Changes
 
@@ -162,3 +163,9 @@ All shim C/assembly translation units cross-compile with Clang for Cortex-A53.
 All 89 port patches apply to the pinned XNU tree and the full kernel builds in CI.
 The RAM-only phone boot reached PID 1 and repeated heartbeat messages;
 this does not establish a working iOS interface or full hardware support.
+
+On 2026-10-20, patch 0093 enabled the advertised extended-GPIO feature on
+GPIO98. A photo confirms chip ID 54:52 and changing HID touch events and
+coordinates. Six report errors were recorded, stable across the visible
+samples; further reliability testing remains. No RPM voltage request was
+needed for that boot.
