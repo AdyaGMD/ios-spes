@@ -10,5 +10,7 @@ dev=$(adb shell 'for d in /dev/block/by-name/userdata /dev/block/bootdevice/by-n
 bytes=$(adb shell blockdev --getsize64 "$dev" | tr -d '\r')
 skip=$((bytes / 4096 - 1025))
 adb exec-out "dd if=$dev bs=4096 skip=$skip count=1025 2>/dev/null" > "$out.bin"
-echo "$dev: $bytes bytes, read blocks $skip.. ($(stat -c %s "$out.bin") bytes)" >&2
+size=$(python3 -c 'import os,sys; print(os.path.getsize(sys.argv[1]))' "$out.bin")
+[ "$size" -eq 4198400 ] || { echo "Incomplete console log read: $size bytes" >&2; exit 1; }
+echo "$dev: $bytes bytes, read blocks $skip.. ($size bytes)" >&2
 python3 "$(dirname "$0")/sweet-log.py" "$out.bin" "$out"

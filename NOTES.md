@@ -1,3 +1,17 @@
+# Userdata install in progress — 2026-10-20
+
+- User explicitly confirmed: "Yes, erase userdata and install iOS" after the
+  prior auto-review rejection. Installation is now authorized and running.
+- /tmp/iospes-install-root.py session 41213, log research/spes-ios-install.log.
+  Preflight verified root recovery, spes, exact userdata path/size/start and
+  unmounted data/metadata/sdcard. Source SHA256 rechecked successfully before
+  streaming to userdata. Do not interrupt or start another write.
+- Script syncs after write, then device SHA256 over exactly first 16GiB must
+  match source before producing research/spes-ios-install-result.json.
+  No success claimed yet. Next: verify result, temporary boot prepared iOS image.
+- Adapted tools/sweet-log-pull.sh to macOS-compatible Python file size lookup
+  and reject incomplete 4198400-byte reads; shell syntax check passes.
+
 # Ready for userdata installation confirmation — 2026-10-20
 
 - User explicitly declined preserving Android personal data; retain boot/modem/
