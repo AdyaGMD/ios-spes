@@ -12,7 +12,20 @@
   bounds/alignment checks) and post-power GPIO AVDD/reset/SDA/SCL readbacks.
   Runs only in spes touch diagnostic. No RPM commands or PMIC writes added.
   This is prerequisite evidence for implementing a bounded GLINK client;
-  do not claim power-enable support implemented. Kernel build/test pending.
+  do not claim power-enable support implemented.
+- Source b42b447; CI 39351717849 succeeded. Kernel xnu/out-0092 checksum
+  verified; 8 host tests passed and patch dry-run applied after 0091.
+- Recovery RPM protocol version sysfs returned 0. Details and source references
+  now in docs/SPES-TOUCH-POWER.md.
+- Built 0092 shim/out/spes-touch-probe.img: 17244160 bytes, SHA256
+  e44541417210255a36202247dd139dcbadac16d8494604b4d7edf4f554b18de5.
+  Previous 0091 image saved as shim/out/spes-touch-probe-0091.img.
+  Boot-v3/header, embedded payload, RAM bounds and diagnostic flags validated.
+- On continuation, phone was in Android (ADB device, spes_global), not recovery.
+  Rebooted to bootloader, checked product spes, temporary boot accepted:
+  send 0.403s, boot 0.287s, total 0.694s. No partition flashed.
+- Awaiting photo of SPES RPM TOC/TX/RX and SPES TOUCH post-power/SDA/SCL lines.
+  Do not infer GLINK state or GPIO success until the hardware output arrives.
 
 # Touch probe hardware test — 2026-10-20
 
