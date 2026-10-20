@@ -1,3 +1,23 @@
+# Recover completed host image — 2026-10-20
+
+- User ran sudo Mac builder in Terminal. Copy/prepare/root tweaks completed
+  and root unmounted. Final fsck failed because Bash 3.2 retained backslashes
+  in pattern substitution, yielding literal \/dev\/rdisk10. This was our bug.
+- Built image retained at research/.spes-root.FYPhf9/root.cdr; directory is
+  root-owned/unreadable by agent. No published research/spes-ios-root.img yet.
+- Added tools/finish-ios-root-macos.sh: checks raw HX+journal, attaches readonly
+  unmounted virtual disk, validates disk path, uses /dev/r${disk#/dev/}, fsck -fn,
+  detaches, hardlinks output, hashes, transfers ownership and removes source
+  only after success. Builder now delegates finalization to this helper.
+- End-to-end helper test passed on disposable 64MiB image: filesystem OK,
+  output research/spes-format-published.img + SHA256. No phone commands.
+- Automatic sudo -n finalization failed: password required. User must run
+  sudo tools/finish-ios-root-macos.sh research/.spes-root.FYPhf9/root.cdr
+  research/spes-ios-root.img in their Terminal. No rebuilding needed.
+- User build also warned no mobileactivationd system container; data ark was
+  skipped. After finalizing, inspect root state and address this before calling
+  it ready for GUI boot. Do not claim installation-ready or flash userdata.
+
 # Host build blocked by macOS access — 2026-10-20
 
 - All three official components fully downloaded and ZIP CRC-checked:

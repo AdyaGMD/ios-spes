@@ -59,26 +59,4 @@ copy_tree "$work/appos" "$work/root/private/preboot/Cryptexes/App"
 sync
 hdiutil detach "$work/root"
 unset 'mounts[3]'
-# macOS fsck_hfs needs an unmounted virtual disk, not a regular-file path.
-hdiutil attach -nomount -readwrite -plist "$work/root.cdr" > "$work/check.plist"
-check_disk=$("$py" -c 'import plistlib,sys; p=plistlib.load(open(sys.argv[1],"rb")); ds=[e["dev-entry"] for e in p["system-entities"] if e.get("potentially-mountable")]; assert len(ds)==1; print(ds[0])' "$work/check.plist")
-mounts+=("$check_disk")
-/sbin/fsck_hfs -fn "${check_disk/\/dev\/disk/\/dev\/rdisk}"
-hdiutil detach "$check_disk"
-unset 'mounts[3]'
-"$py" - "$work/root.cdr" <<'PY'
-import struct,sys
-with open(sys.argv[1],'rb') as f:
-    f.seek(1024); h=f.read(512)
-assert h[:2] == b'HX', 'expected raw HFSX at offset 1024'
-assert struct.unpack_from('>I',h,4)[0] & (1<<13), 'journal flag missing'
-PY
-# Publish only after successful copying, tweaks, unmount and filesystem check.
-# Hard-link creation refuses to overwrite a path created during the build.
-ln "$work/root.cdr" "$out"
-rm "$work/root.cdr"
-if [[ -n ${SUDO_UID:-} && -n ${SUDO_GID:-} ]]; then
-    chown "$SUDO_UID:$SUDO_GID" "$out"
-fi
-shasum -a 256 "$out" > "$out.sha256"
-echo "Created $out; nothing sent to the phone."
+"$script_dir/finish-ios-root-macos.sh" "$work/root.cdr" "$out"
