@@ -40,6 +40,9 @@
   User returned to Fastboot, product spes checked; temporary boot accepted
   send 0.395s/boot 0.287s/total 0.685s. No flash. Awaiting chip ID, input
   counters and post-power AVDD cfg from user; expected cfg=0x1ac3.
+  USER REPORT after 0093: "seems to be working now". Provisional improvement;
+  asked whether down/up counts and last=x,y change with taps/drags. Awaiting
+  that confirmation before marking touch working. No additional reboot.
   This is a verified code mismatch, not yet a verified cause of touch failure.
   Retest before implementing RPM requests; missing L9 request remains open.
 
