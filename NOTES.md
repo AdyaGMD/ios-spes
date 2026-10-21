@@ -1,5 +1,7 @@
-# GPU stage-1 GLINK RPM transport and GDSC probe prepared — 2026-10-21
+# GPU stage-1 GLINK RPM transport and GDSC probe dispatched — 2026-10-21
 
+- Source 8db0373 pushed fork/spes; CI 39629078334 in progress:
+  https://github.com/AdyaGMD/ios-spes/actions/runs/39629078334
 - Photo of 0097 boot analyzed and decoded: clean cold-start state.
   cx-gdsc and gx-gdsc both read 0x222001 (SW_COLLAPSE=1, PWR_ON=0).
   AHB (0x1078) and CXO (0x109c) have CLK_ENABLE=1 but CLK_OFF=1 (stalled by collapsed CX).
