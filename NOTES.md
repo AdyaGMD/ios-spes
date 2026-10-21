@@ -1,3 +1,15 @@
+# Firmware/API audit addendum — 2026-10-21
+
+- Own modem.mdt ELF32 has31 headers; loadable non-hash ranges fit live modem
+  carveout0x4ab00000..0x51400000. All image/modem.* files contiguous.
+- Full origin/topaz tree search found exported topaz_wlan APIs/hooks but no
+  IO80211/wifid adapter consumer. Do not promise published sources alone give
+  Settings integration; radio bring-up still useful. GPU source also absent.
+- Phone currently in0096 keys test; async user question pending for UI response,
+  volume/power and startup speed. No further phone reboot until observation.
+- Next host task: generate own verified firmware tables and strict loader checks;
+  do not reuse upstream firmware offset tables or tolerate CRC mismatches.
+
 # Startup/buttons0096 test booted; firmware map ready — 2026-10-21
 
 - CI39568657057 passed at source4b6ad3a. Artifact xnu/out-0096 downloaded.

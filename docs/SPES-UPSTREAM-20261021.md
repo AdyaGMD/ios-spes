@@ -55,3 +55,13 @@ supports fragmented chains and checks mirror FATs, bounds, cycles and LFNs.
 One duplicate board-data filename has identical bytes at different offsets;
 mapper retains first, rejecting conflicting duplicates. Four regression tests
 pass,15 total. This is preparation, not a working Wi-Fi driver.
+
+Further audit: spes modem.mdt is ELF32 with31 program headers. Its loadable
+non-hash segments fit0x4ab00000..0x51400000, the live modem carveout. All modem
+files are contiguous in this backup. Published TopazModem exports radio APIs
+(topaz_wlan_* and ready/RX hooks), but no consumer/IO80211 bridge was found by
+searching the complete upstream tree. Treat iOS Settings integration as an
+unresolved source gap, despite upstream README reporting it working.
+
+CI39568657057 passed the first0094–0096 batch. Separate keys-enabled image
+booted successfully through Fastboot; actual UI/key behavior remains pending.
