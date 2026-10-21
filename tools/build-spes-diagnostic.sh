@@ -13,7 +13,7 @@ case "$profile" in
     baseline) ;;
     storage) extra=' spesufsprobe=1'; name=spes-storage-probe ;;
     touch) extra=' spestouchprobe=1 sweettouchdelay=5 sweettouchdiag=3'; touch=1; name=spes-touch-probe ;;
-    gpu) extra=' spestouchprobe=1 spesgpuprobe=1 sweettouchdelay=5 sweettouchdiag=3'; touch=1; name=spes-gpu-probe ;;
+    gpu) extra=' spestouchprobe=1 spesgpuprobe=1 spesrpmprobe=1 sweettouchdelay=5 sweettouchdiag=3'; touch=1; name=spes-gpu-probe ;;
     *) echo "Unknown diagnostic profile: $profile" >&2; exit 2 ;;
 esac
 kernel=$(python3 -c 'import os,sys; print(os.path.abspath(sys.argv[1]))' "$1")

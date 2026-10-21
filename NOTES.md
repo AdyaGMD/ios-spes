@@ -1,3 +1,26 @@
+# GPU stage-1 GLINK RPM transport and GDSC probe prepared — 2026-10-21
+
+- Photo of 0097 boot analyzed and decoded: clean cold-start state.
+  cx-gdsc and gx-gdsc both read 0x222001 (SW_COLLAPSE=1, PWR_ON=0).
+  AHB (0x1078) and CXO (0x109c) have CLK_ENABLE=1 but CLK_OFF=1 (stalled by collapsed CX).
+  GFX/GMU RCGs zeroed. Captured in research/spes-gpu-power.txt.
+- Reverse-engineered live FDT and Linux kernel sources for RPM transport:
+  Platform uses GLINK over RPM message RAM at 0x045f0000 (0x7000 bytes) with APCS HMSS
+  doorbell at 0x0f111008 (bit 0).
+  GPU power resources are Qualcomm RPM railways: rwcx (ID 0) and rwmx (ID 0) with key vlvl.
+- Added 0098-spes-glink-rpm-transport.patch:
+  Implements opt-in spesrpmprobe=1 in sweet_touch.c:
+  1. GLINK v1 negotiation (GLINK_CMD_VERSION, intentless feature).
+  2. Channel open for rpm_requests (lcid=1).
+  3. v0 RPM-SMD voltage votes: rwcx=64 (LOW_SVS), rwmx=64 (LOW_SVS) with ACK verification.
+  4. On verified ACKs, uncollapse CX GDSC (0x106c) and poll PWR_ON.
+  5. On CX power, uncollapse GX GDSC (0x100c) and poll PWR_ON.
+  6. Ungate AHB and CXO branch clocks.
+  7. On full power, read GPU core chip ID at 0x05900000 (expect 0x06010001).
+- Updated tools/build-spes-diagnostic.sh gpu profile to include spesrpmprobe=1.
+- All 15 host tests pass. Clean dry-run patch application verified.
+- Next: push commit to fork/spes, trigger CI xnu.yml build, test temporary boot on phone in fastboot.
+
 # GPU stage-0 image temporarily booted — 2026-10-21
 
 - CI39609391694 SUCCESS at dfda77d, artifact xnu/out-0097.
