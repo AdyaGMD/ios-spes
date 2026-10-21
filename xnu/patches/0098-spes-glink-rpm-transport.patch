@@ -1,6 +1,6 @@
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -675,9 +675,325 @@
+@@ -675,9 +675,162 @@
  	    touch_rd(st.gcc, 0x79004));
  	/* A register snapshot is not proof that GPU execution is possible. */
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
@@ -106,227 +106,64 @@
 +	(void)PE_parse_boot_argn("spesrpmprobe", &enabled, sizeof(enabled));
 +	if (!st.spes || enabled != 1) return;
 +
-+	printf("SPES RPM: stage=glink-init starting GLINK transport probe\n");
++	printf("SPES RPM: 1. start probe\n");
 +	vm_offset_t ram = ml_io_map(0x045f0000u, 0x7000u);
 +	vm_offset_t apcs = ml_io_map(0x0f111000u, 0x1000u);
-+	if (!ram || !apcs) {
-+		printf("SPES RPM: mapping failed ram=%p apcs=%p\n", (void *)ram, (void *)apcs);
-+		return;
-+	}
++	printf("SPES RPM: 2. map ram=%p apcs=%p\n", (void *)ram, (void *)apcs);
++	if (!ram || !apcs) return;
 +
 +	uint32_t magic = touch_rd(ram, 0x6f00u);
-+	if (magic != 0x67727430u) {
-+		printf("SPES RPM: bad TOC magic %#x\n", magic);
-+		return;
-+	}
++	printf("SPES RPM: 3. TOC magic=%#x\n", magic);
++	if (magic != 0x67727430u) return;
++
 +	uint32_t tx_off = 0x200u, tx_size = 0x6f8u;
 +	uint32_t rx_off = 0x900u, rx_size = 0x6f8u;
++	printf("SPES RPM: 4. TX head=%#x tail=%#x\n",
++	    touch_rd(ram, tx_off + 4u), touch_rd(ram, tx_off));
++	printf("SPES RPM: 5. RX head=%#x tail=%#x\n",
++	    touch_rd(ram, rx_off + 4u), touch_rd(ram, rx_off));
 +
-+	printf("SPES RPM: rings TX off=%#x size=%#x RX off=%#x size=%#x\n",
-+	    tx_off, tx_size, rx_off, rx_size);
++	/* TEST A: Test writing to Message RAM */
++	printf("SPES RPM: 6. testing RAM write at off %#x...\n", tx_off + 8u);
++	uint32_t old_val = touch_rd(ram, tx_off + 8u);
++	touch_wr(ram, tx_off + 8u, 0xa5a50001u);
++	uint32_t readback = touch_rd(ram, tx_off + 8u);
++	printf("SPES RPM: 7. RAM write OK: old=%#x readback=%#x\n", old_val, readback);
++	touch_wait(1000);
 +
-+	/* Step 1: Send GLINK_CMD_VERSION */
-+	struct glink_msg vmsg = { 0 /* VERSION */, 1 /* v1 */, 2 /* INTENTLESS */ };
-+	printf("SPES RPM: sending GLINK_CMD_VERSION (v=1, feat=2)\n");
++	/* TEST B: Test APCS doorbell */
++	printf("SPES RPM: 8. testing APCS write at off 8...\n");
++	touch_wr(apcs, 0x8u, 1u);
++	printf("SPES RPM: 9. APCS write OK!\n");
++	touch_wait(1000);
++
++	/* TEST C: Send GLINK_CMD_VERSION */
++	printf("SPES RPM: 10. writing VERSION cmd\n");
++	struct glink_msg vmsg = { 0, 1, 2 };
 +	spes_rpm_pipe_write(ram, tx_off, tx_size, &vmsg, 8, apcs);
++	printf("SPES RPM: 11. VERSION sent, polling RX...\n");
 +
-+	/* Step 2: Wait for VERSION_ACK */
 +	struct glink_msg rmsg = {0, 0, 0};
-+	bool v_acked = false;
-+	for (int iter = 0; iter < 10; ++iter) {
-+		if (spes_rpm_rx_msg(ram, rx_off, rx_size, &rmsg, NULL, 0, 100)) {
-+			printf("SPES RPM: rx cmd=%u p1=%u p2=%#x\n", rmsg.cmd, rmsg.param1, rmsg.param2);
-+			if (rmsg.cmd == 1 /* VERSION_ACK */) {
-+				v_acked = true;
-+				break;
-+			} else if (rmsg.cmd == 0 /* VERSION */) {
-+				struct glink_msg ack = { 1 /* VERSION_ACK */, rmsg.param1, rmsg.param2 };
-+				spes_rpm_pipe_write(ram, tx_off, tx_size, &ack, 8, apcs);
-+				v_acked = true;
-+				break;
++	for (int i = 0; i < 20; ++i) {
++		uint32_t rx_head = touch_rd(ram, rx_off + 4u);
++		uint32_t rx_tail = touch_rd(ram, rx_off);
++		if (rx_head != rx_tail) {
++			printf("SPES RPM: RX activity! head=%#x tail=%#x\n", rx_head, rx_tail);
++			if (spes_rpm_rx_msg(ram, rx_off, rx_size, &rmsg, NULL, 0, 100)) {
++				printf("SPES RPM: rx cmd=%u p1=%u p2=%#x\n", rmsg.cmd, rmsg.param1, rmsg.param2);
 +			}
-+		}
-+	}
-+	if (!v_acked) {
-+		printf("SPES RPM: version negotiation timed out; stopping\n");
-+		return;
-+	}
-+	printf("SPES RPM: GLINK v1 negotiation SUCCESS\n");
-+
-+	/* Step 3: Open channel rpm_requests */
-+	uint8_t open_buf[24] = {0};
-+	struct glink_msg *open_msg = (struct glink_msg *)open_buf;
-+	open_msg->cmd = 2; /* OPEN */
-+	open_msg->param1 = 1; /* lcid */
-+	open_msg->param2 = 13; /* strlen("rpm_requests") + 1 */
-+	memcpy(open_buf + 8, "rpm_requests", 13);
-+	printf("SPES RPM: sending GLINK_CMD_OPEN 'rpm_requests' (lcid=1)\n");
-+	spes_rpm_pipe_write(ram, tx_off, tx_size, open_buf, 24, apcs);
-+
-+	/* Step 4: Wait for OPEN_ACK */
-+	bool open_acked = false;
-+	for (int iter = 0; iter < 10; ++iter) {
-+		if (spes_rpm_rx_msg(ram, rx_off, rx_size, &rmsg, NULL, 0, 100)) {
-+			printf("SPES RPM: rx cmd=%u p1=%u p2=%#x\n", rmsg.cmd, rmsg.param1, rmsg.param2);
-+			if (rmsg.cmd == 4 /* OPEN_ACK */) {
-+				open_acked = true;
-+				break;
-+			}
-+		}
-+	}
-+	if (!open_acked) {
-+		printf("SPES RPM: channel open timed out; stopping\n");
-+		return;
-+	}
-+	printf("SPES RPM: channel rpm_requests OPEN_ACK received!\n");
-+
-+	/* Step 5: Send voltage vote for rwcx (LOW_SVS = 64) */
-+	struct {
-+		struct glink_msg gmsg;
-+		uint32_t chunk_size;
-+		uint32_t left_size;
-+		uint32_t service_type;
-+		uint32_t request_len;
-+		uint32_t msg_id;
-+		uint32_t set;
-+		uint32_t resource_type;
-+		uint32_t resource_id;
-+		uint32_t data_len;
-+		uint32_t kvp_key;
-+		uint32_t kvp_size;
-+		uint32_t kvp_val;
-+	} __attribute__((packed)) req;
-+
-+	memset(&req, 0, sizeof(req));
-+	req.gmsg.cmd = 9; /* GLINK_CMD_TX_DATA */
-+	req.gmsg.param1 = 1; /* lcid */
-+	req.gmsg.param2 = 0; /* iid */
-+	req.chunk_size = 40;
-+	req.left_size = 0;
-+
-+	req.service_type = 0x00716572u; /* "req\0" */
-+	req.request_len = 32u;
-+	req.msg_id = 1u;
-+	req.set = 0u; /* active */
-+	req.resource_type = 0x78637772u; /* "rwcx" */
-+	req.resource_id = 0u;
-+	req.data_len = 12u;
-+	req.kvp_key = 0x6c766c76u; /* "vlvl" */
-+	req.kvp_size = 4u;
-+	req.kvp_val = 64u; /* corner 64 = LOW_SVS */
-+
-+	printf("SPES RPM: sending vote rwcx=64 (msg_id=1)\n");
-+	spes_rpm_pipe_write(ram, tx_off, tx_size, &req, sizeof(req), apcs);
-+
-+	uint8_t ack_payload[64] = {0};
-+	bool rwcx_acked = false;
-+	for (int iter = 0; iter < 10; ++iter) {
-+		if (spes_rpm_rx_msg(ram, rx_off, rx_size, &rmsg, ack_payload, sizeof(ack_payload), 100)) {
-+			printf("SPES RPM: rx cmd=%u p1=%u p2=%#x\n", rmsg.cmd, rmsg.param1, rmsg.param2);
-+			if (rmsg.cmd == 9 /* TX_DATA */) {
-+				uint32_t *ack = (uint32_t *)ack_payload;
-+				printf("SPES RPM: ACK payload req=%#x req_len=%u id_ack=%u\n",
-+				    ack[0], ack[1], ack[4]);
-+				if (ack[4] == 1u) {
-+					rwcx_acked = true;
-+					break;
-+				}
-+			}
-+		}
-+	}
-+	if (!rwcx_acked) {
-+		printf("SPES RPM: rwcx vote ACK timed out\n");
-+		return;
-+	}
-+	printf("SPES RPM: rwcx vote SUCCESS (ACK id=1 verified)\n");
-+
-+	/* Step 6: Send voltage vote for rwmx (LOW_SVS = 64) */
-+	req.msg_id = 2u;
-+	req.resource_type = 0x786d7772u; /* "rwmx" */
-+	printf("SPES RPM: sending vote rwmx=64 (msg_id=2)\n");
-+	spes_rpm_pipe_write(ram, tx_off, tx_size, &req, sizeof(req), apcs);
-+
-+	bool rwmx_acked = false;
-+	for (int iter = 0; iter < 10; ++iter) {
-+		if (spes_rpm_rx_msg(ram, rx_off, rx_size, &rmsg, ack_payload, sizeof(ack_payload), 100)) {
-+			printf("SPES RPM: rx cmd=%u p1=%u p2=%#x\n", rmsg.cmd, rmsg.param1, rmsg.param2);
-+			if (rmsg.cmd == 9 /* TX_DATA */) {
-+				uint32_t *ack = (uint32_t *)ack_payload;
-+				printf("SPES RPM: ACK payload req=%#x req_len=%u id_ack=%u\n",
-+				    ack[0], ack[1], ack[4]);
-+				if (ack[4] == 2u) {
-+					rwmx_acked = true;
-+					break;
-+				}
-+			}
-+		}
-+	}
-+	if (!rwmx_acked) {
-+		printf("SPES RPM: rwmx vote ACK timed out\n");
-+		return;
-+	}
-+	printf("SPES RPM: rwmx vote SUCCESS (ACK id=2 verified)\n");
-+
-+	/* Step 7: Now that parent supplies are active, uncollapse CX GDSC */
-+	vm_offset_t cc = ml_io_map(0x05990000u, 0x9000u);
-+	if (!cc) {
-+		printf("SPES RPM: GPUCC map failed\n");
-+		return;
-+	}
-+	printf("SPES GPU: attempting CX GDSC uncollapse (current=%#x)\n", touch_rd(cc, 0x106c));
-+	touch_wr(cc, 0x106c, touch_rd(cc, 0x106c) & ~1u); /* clear SW_COLLAPSE */
-+	bool cx_on = false;
-+	for (int i = 0; i < 100; ++i) {
-+		uint32_t val = touch_rd(cc, 0x106c);
-+		if (val & (1u << 31)) {
-+			printf("SPES GPU: CX GDSC powered ON! val=%#x (poll %d)\n", val, i);
-+			cx_on = true;
 +			break;
 +		}
-+		delay(100);
++		touch_wait(100);
 +	}
-+	if (!cx_on) {
-+		printf("SPES GPU: CX GDSC power-on timed out; reg=%#x\n", touch_rd(cc, 0x106c));
-+		return;
-+	}
-+
-+	/* Step 8: Uncollapse GX GDSC */
-+	printf("SPES GPU: attempting GX GDSC uncollapse (current=%#x)\n", touch_rd(cc, 0x100c));
-+	touch_wr(cc, 0x100c, touch_rd(cc, 0x100c) & ~1u); /* clear SW_COLLAPSE */
-+	bool gx_on = false;
-+	for (int i = 0; i < 100; ++i) {
-+		uint32_t val = touch_rd(cc, 0x100c);
-+		if (val & (1u << 31)) {
-+			printf("SPES GPU: GX GDSC powered ON! val=%#x (poll %d)\n", val, i);
-+			gx_on = true;
-+			break;
-+		}
-+		delay(100);
-+	}
-+	if (!gx_on) {
-+		printf("SPES GPU: GX GDSC power-on timed out; reg=%#x\n", touch_rd(cc, 0x100c));
-+		return;
-+	}
-+
-+	/* Step 9: Ungate AHB and CXO branch clocks */
-+	touch_wr(cc, 0x1078, touch_rd(cc, 0x1078) | 1u); /* AHB CBCR */
-+	touch_wr(cc, 0x109c, touch_rd(cc, 0x109c) | 1u); /* CXO CBCR */
-+	printf("SPES GPU: clock ungate ahb=%#x cxo=%#x\n",
-+	    touch_rd(cc, 0x1078), touch_rd(cc, 0x109c));
-+
-+	/* Step 10: Both power domains ON! Read GPU chip ID */
-+	vm_offset_t gpu = ml_io_map(0x05900000u, 0x1000u);
-+	if (gpu) {
-+		uint32_t chipid = touch_rd(gpu, 0x0u);
-+		printf("SPES GPU: *** CHIP ID READBACK = %#x (expect 0x06010001) ***\n", chipid);
-+	}
++	printf("SPES RPM: 12. step complete\n");
 +}
 +
 +static void
  touch_thread(void *arg, wait_result_t result)
  {
  	unsigned delay_s = 45;
-@@ -704,6 +1020,7 @@
+@@ -704,6 +857,7 @@
  		goto out;
  	}
  	spes_gpu_power_probe();
