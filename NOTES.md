@@ -1,3 +1,17 @@
+# GPU stage-2 verified on silicon (RBBM decode & GBIF unhalt) — 2026-10-21
+
+- Photo confirmed 100% completion of Stage 2 GPU bring-up on real handset (spes, Adreno 610).
+- GFX RCG Root Clock: Updated cleanly (`cmd=0x2`, `cfg=0x0`), running on CXO 19.2 MHz safe baseline clock.
+- Branch Clocks: `gx_gfx-cbcr` un-gated (`0x1`), bit 31 `CLK_OFF=0`, branch clock running.
+- GBIF Bus Interface: `A6XX_RBBM_GBIF_HALT` and `A6XX_GBIF_HALT` unhalted (`GBIF_HALT=0`).
+- Adreno 610 Register Decode:
+  * `REG_A6XX_RBBM_STATUS` (0x840): `0x00000001` (bit 0 `CP_AHB_BUSY_CX_MASTER=1`, `idle=1`). Perfect idle state!
+  * `REG_A6XX_RBBM_STATUS3` (0x84c): `0x00000000`.
+  * `REG_A6XX_RBBM_INT_0_STATUS` (0x804): `0x00000000` (zero pending faults/interrupts).
+  * `REG_A6XX_RBBM_VBIF_GX_RESET_STATUS` (0x854): `0x00000000`.
+- Milestone: `SPES GPU: 22. GPU STAGE-2 COMPLETE!` displayed, followed by clean SweetTouch initialization.
+- Next: Stage 3 — GPU SMMUv2 translation context (`0x059a0000`), `a630_sqe.fw` microcode loading to `REG_A6XX_CP_SQE_INSTR_BASE`, and TrustZone ZAP shader authentication (`PAS_ID 13`).
+
 # Wi-Fi WCN3988 modem subsystem implemented and verified — 2026-10-21
 
 - Patch 0099 (`0099-spes-modem-wifi.patch`) implemented and verified on CI (run 39662807639, commit 61b6016).
