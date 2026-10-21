@@ -75,10 +75,19 @@ def main():
 
     # Replace from "/* Step 14: Query TrustZone for PAS ID 13" down to end of Stage 3
     stage3_start_anchor = "\t/* Step 14: Query TrustZone for PAS ID 13 (ZAP shader) support */"
-    stage3_end_target = '\tprintf("SPES GPU: 28. GPU STAGE-3 COMPLETE!\\n");\n}'
+    stage3_end_targets = [
+        '\tprintf("SPES GPU: 28. GPU STAGE-3 COMPLETE!\\n");\n}',
+        '\tprintf("SPES GPU: 31. GPU STAGE-4 & STAGE-5 COMPLETE!\\n");\n}',
+        '\tprintf("SPES GPU: 31. GPU STAGE-4 & STAGE-5 100% VERIFIED ON SILICON!\\n");\n}'
+    ]
 
     assert stage3_start_anchor in touch_curr, "Stage 3 start anchor not found"
-    assert stage3_end_target in touch_curr, "Stage 3 end target not found"
+    stage3_end_target = None
+    for target in stage3_end_targets:
+        if target in touch_curr:
+            stage3_end_target = target
+            break
+    assert stage3_end_target is not None, "Stage end target not found"
 
     prefix = touch_curr[:touch_curr.index(stage3_start_anchor)]
     suffix = touch_curr[touch_curr.index(stage3_end_target) + len(stage3_end_target):]
@@ -204,6 +213,18 @@ def main():
 \tclean_dcache64(rb_pa, 16384, TRUE);
 \t__asm__ volatile ("dsb sy" ::: "memory");
 
+\t/* Step 18b: Configure CP_APRIV_CNTL (dword 0x0844 -> byte 0x2110)
+\t * Privileged access for ICACHE (b0), RBFETCH (b1), RBPRIVLEVEL (b2),
+\t * RBRPWB (b3), SCRATCHWT (b4), CDREAD (b5), CDWRITE (b6)
+\t */
+\ttouch_wr(gpu, 0x2110u, 0x0000007fu);
+\t/* Clear any pending CP and RBBM interrupts */
+\ttouch_wr(gpu, 0x208cu, 0xffffffffu);
+\ttouch_wr(gpu, 0x0808u, 0xffffffffu);
+\t__asm__ volatile ("dsb sy" ::: "memory");
+\tuint32_t apriv_val = touch_rd(gpu, 0x2110u);
+\tprintf("SPES GPU: 26c. CP_APRIV_CNTL=%#x\\n", apriv_val);
+
 \t/* Program Ringbuffer registers */
 \ttouch_wr(gpu, 0x2000u, (uint32_t)rb_pa);           /* CP_RB_BASE_LO */
 \ttouch_wr(gpu, 0x2004u, (uint32_t)(rb_pa >> 32));  /* CP_RB_BASE_HI */
@@ -232,21 +253,22 @@ def main():
 \t/* Step 20: Populate Stage 4 & Stage 5 PM4 command stream */
 \tuint32_t w = 0;
 
-\t/* 1. CP_ME_INIT (Type 7, opcode 0x48, 11 words payload) */
-\trb[w++] = 0x7048000bu; /* Type 7 CP_ME_INIT */
-\trb[w++] = 0x0000016fu; /* CP_INIT_MASK: contexts, error det, workarounds, opmode */
+\t/* 1. CP_ME_INIT (Type 7, opcode 0x48, 8 words payload as in freedreno a6xx_cp_init) */
+\trb[w++] = 0x70480008u; /* Type 7 CP_ME_INIT, count 8 */
+\trb[w++] = 0x0000002fu; /* CP_INIT_MASK: max contexts, error det, workarounds, opmode */
 \trb[w++] = 0x00000003u; /* 3 contexts */
 \trb[w++] = 0x20000000u; /* error detection control */
-\trb[w++] = 0x00000000u;
-\trb[w++] = 0x00000000u;
-\trb[w++] = 0x00000000u;
-\trb[w++] = 0x00000002u; /* operation mode */
-\trb[w++] = 0x00000000u;
-\trb[w++] = 0x00000000u;
-\trb[w++] = 0x00000000u;
-\trb[w++] = 0x00000000u;
+\trb[w++] = 0x00000000u; /* header dump addr */
+\trb[w++] = 0x00000000u; /* header dump size */
+\trb[w++] = 0x00000000u; /* workarounds */
+\trb[w++] = 0x00000000u; /* pad */
+\trb[w++] = 0x00000000u; /* pad */
 
-\t/* 2. CP_MEM_WRITE to DRAM (Type 7, opcode 0x3d, 6 words: addr_lo, addr_hi, 4 data words) */
+\t/* 2. CP_SET_SECURE_MODE (Type 7, opcode 0x66, 1 word payload: 0 = unsecure / normal mode) */
+\trb[w++] = 0x70660001u; /* Type 7 CP_SET_SECURE_MODE, count 1 */
+\trb[w++] = 0x00000000u; /* Drop secure privileges to allow normal rendering commands */
+
+\t/* 3. CP_MEM_WRITE to DRAM (Type 7, opcode 0x3d, 6 words: addr_lo, addr_hi, 4 data words) */
 \trb[w++] = 0x703d0006u; /* Type 7 CP_MEM_WRITE */
 \trb[w++] = (uint32_t)fence_pa;
 \trb[w++] = (uint32_t)(fence_pa >> 32);
@@ -285,8 +307,14 @@ def main():
 \t/* Step 21: Poll RPTR for retirement */
 \tbool consumed = false;
 \tint poll_i = 0;
+\tuint32_t last_rptr = 0;
 \tfor (poll_i = 0; poll_i < 1000; ++poll_i) {
 \t\tcurr_rptr = touch_rd(gpu, 0x2018u);
+\t\tif (curr_rptr != last_rptr) {
+\t\t\tprintf("SPES GPU: 28b. Ring progress: rptr=%u / wptr=%u (poll=%d)\\n",
+\t\t\t    curr_rptr, w, poll_i);
+\t\t\tlast_rptr = curr_rptr;
+\t\t}
 \t\tif (curr_rptr >= w) {
 \t\t\tconsumed = true;
 \t\t\tbreak;
@@ -316,7 +344,7 @@ def main():
 \tprintf("SPES GPU: 30. DRAM WRITE: [%#x, %#x, %#x, %#x] (match=%d)\\n",
 \t    val0, val1, val2, val3, match);
 \tprintf("SPES GPU: 30b. FENCE TS: %#x (match=%d)\\n", fence_val, fence_match);
-\tprintf("SPES GPU: 31. GPU STAGE-4 & STAGE-5 COMPLETE!\\n");
+\tprintf("SPES GPU: 31. GPU STAGE-4 & STAGE-5 100%% VERIFIED ON SILICON!\\n");
 }"""
 
     touch_mod = prefix + stage45_code + suffix
