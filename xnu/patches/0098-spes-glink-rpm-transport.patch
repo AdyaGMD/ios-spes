@@ -1,6 +1,6 @@
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -675,6 +675,353 @@
+@@ -675,6 +675,373 @@
  	    touch_rd(st.gcc, 0x79004));
  	/* A register snapshot is not proof that GPU execution is possible. */
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
@@ -183,27 +183,46 @@
 +	uint8_t open_buf[24] = {0};
 +	struct glink_msg *open_msg = (struct glink_msg *)open_buf;
 +	open_msg->cmd = 2; /* OPEN */
-+	open_msg->param1 = 1; /* lcid */
++	open_msg->param1 = 1; /* lcid = 1 */
 +	open_msg->param2 = 13; /* strlen("rpm_requests") + 1 */
 +	memcpy(open_buf + 8, "rpm_requests", 13);
 +	printf("SPES RPM: 8. opening 'rpm_requests' (lcid=1)\n");
 +	spes_rpm_pipe_write(ram, tx_off, tx_size, open_buf, 24, apcs);
 +
-+	bool open_acked = false;
++	uint16_t req_rcid = 0;
++	bool my_open_acked = false;
++
 +	for (int iter = 0; iter < 50; ++iter) {
 +		if (spes_rpm_wait_msg(ram, rx_off, rx_size, &rmsg, NULL, 0, NULL, 50)) {
 +			printf("SPES RPM: rx cmd=%u p1=%u p2=%#x\n", rmsg.cmd, rmsg.param1, rmsg.param2);
 +			if (rmsg.cmd == 4 /* OPEN_ACK */) {
-+				open_acked = true;
++				if (rmsg.param1 == 1) {
++					my_open_acked = true;
++					printf("SPES RPM: local lcid=1 OPEN_ACK verified!\n");
++				}
++			} else if (rmsg.cmd == 2 /* OPEN from remote */) {
++				printf("SPES RPM: remote OPEN rcid=%u len=%u, sending OPEN_ACK\n",
++				    rmsg.param1, rmsg.param2);
++				if (rmsg.param2 == 13) {
++					req_rcid = rmsg.param1;
++				}
++				struct glink_msg oack = { 4 /* OPEN_ACK */, rmsg.param1, 0 };
++				spes_rpm_pipe_write(ram, tx_off, tx_size, &oack, 8, apcs);
++			} else if (rmsg.cmd == 15 /* SIGNALS */) {
++				printf("SPES RPM: SIGNALS rcid=%u val=%#x\n", rmsg.param1, rmsg.param2);
++			}
++			if (my_open_acked && req_rcid != 0) {
 +				break;
 +			}
 +		}
 +	}
-+	if (!open_acked) {
-+		printf("SPES RPM: channel open timed out; stopping\n");
++
++	if (!my_open_acked || req_rcid == 0) {
++		printf("SPES RPM: channel open failed (acked=%d, rcid=%u); stopping\n",
++		    my_open_acked, req_rcid);
 +		return;
 +	}
-+	printf("SPES RPM: 9. channel 'rpm_requests' OPEN_ACK received!\n");
++	printf("SPES RPM: 9. 'rpm_requests' OPEN bidirectional (rcid=%u)!\n", req_rcid);
 +	touch_wait(100);
 +
 +	/* Step 4: Send vote for rwcx=64 */
@@ -225,7 +244,7 @@
 +
 +	memset(&req, 0, sizeof(req));
 +	req.gmsg.cmd = 9; /* GLINK_CMD_TX_DATA */
-+	req.gmsg.param1 = 1; /* lcid */
++	req.gmsg.param1 = req_rcid; /* rcid = 2 */
 +	req.gmsg.param2 = 0; /* iid */
 +	req.chunk_size = 40;
 +	req.left_size = 0;
@@ -241,7 +260,7 @@
 +	req.kvp_size = 4u;
 +	req.kvp_val = 64u; /* corner 64 = LOW_SVS */
 +
-+	printf("SPES RPM: 10. voting rwcx=64 (msg_id=1)\n");
++	printf("SPES RPM: 10. voting rwcx=64 (rcid=%u msg_id=1)\n", req_rcid);
 +	spes_rpm_pipe_write(ram, tx_off, tx_size, &req, sizeof(req), apcs);
 +
 +	uint8_t ack_payload[64] = {0};
@@ -266,9 +285,10 @@
 +	touch_wait(100);
 +
 +	/* Step 5: Send vote for rwmx=64 */
++	req.gmsg.param1 = req_rcid;
 +	req.msg_id = 2u;
 +	req.resource_type = 0x786d7772u; /* "rwmx" */
-+	printf("SPES RPM: 12. voting rwmx=64 (msg_id=2)\n");
++	printf("SPES RPM: 12. voting rwmx=64 (rcid=%u msg_id=2)\n", req_rcid);
 +	spes_rpm_pipe_write(ram, tx_off, tx_size, &req, sizeof(req), apcs);
 +
 +	bool rwmx_acked = false;
@@ -354,7 +374,7 @@
  }
  
  static void
-@@ -704,6 +1051,7 @@
+@@ -704,6 +1071,7 @@
  		goto out;
  	}
  	spes_gpu_power_probe();
