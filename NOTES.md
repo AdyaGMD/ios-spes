@@ -1,3 +1,28 @@
+# GPU stage-3 verified on silicon (SMMUv2, TrustZone PAS 13, SQE load & CP activation) — 2026-10-21
+
+- Photo confirmed 100% completion of Stage 3 GPU bring-up on real handset (spes, Adreno 610):
+  * **GPU SMMUv2 (`0x059a0000`)**:
+    - `sCR0`: `0x00220406` (active & functional!)
+    - `ID0`: `0x4c017e04`
+    - `ID1`: `0x28000005` -> 4 KiB page size (`pgsz=4K`), 8 pages (`pages=8`), 5 Context Banks (`cb=5`).
+    - Context Bank 0 (`gfx3d_user`): `SCTLR=0x08000100` (`M=0`, bypass mode active, direct DRAM addressing), `FSR=0x0` (zero faults), `CBAR0=0x0`, `CBA2R0=0x0`.
+  * **TrustZone PAS ID 13 Query**:
+    - `st=0x0`, `res=0x0`! TrustZone PIL explicitly reports PAS ID 13 (`a610_zap`) as supported and available!
+  * **SQE Microcode Buffer & Registers**:
+    - Microcode buffer: 32,260 bytes (`a630_sqe.fw`) allocated at contiguous physical address `pa=0x10326c000` (`va=0xfffffe0fdd0d0000`).
+    - `CP_SQE_INSTR_BASE`: Read back `0x1:0x326c000` (`match=1`). Verified!
+  * **CP Engine Startup & Activity**:
+    - Unhalted CP (`CP_SQE_CNTL = 1`).
+    - Initial state: `fault=0`, `int=0x80`, `sqe_stat=0`, `rptr=0`, `wptr=0`, `rbbm=0x1` (idle).
+    - Upon kicking `wptr=2`: `RBBM_STATUS` transitioned from `0x1` to `0x800805`!
+      * Bit 0: `CP_AHB_BUSY_CX_MASTER = 1`
+      * Bit 2: `CP_AHB_BUSY_GX_MASTER = 1`
+      * Bit 11: `CP_ME_BUSY = 1` (Micro Engine is actively executing!)
+      * Bit 23: `CP_PFP_BUSY = 1` (Prefetch Parser is actively fetching!)
+    - `CP_HW_FAULT=0` (Zero hardware faults!).
+  * **Milestone**: `SPES GPU: 28. GPU STAGE-3 COMPLETE!` displayed cleanly.
+- Next: Stage 4 — TrustZone ZAP authentication (`a610_zap` PIL boot to leave secure mode) + A610 `CP_ME_INIT` packet (opcode 0x48) + Ringbuffer RPTR retirement.
+
 # GPU stage-2 verified on silicon (RBBM decode & GBIF unhalt) — 2026-10-21
 
 - Photo confirmed 100% completion of Stage 2 GPU bring-up on real handset (spes, Adreno 610).
