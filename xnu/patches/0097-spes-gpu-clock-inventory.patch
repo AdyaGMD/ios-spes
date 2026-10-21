@@ -1,0 +1,56 @@
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -638,6 +638,45 @@
+ 	}
+ }
+ 
++/* A610 stage 0: inspect always-addressable clock controls only. GPU core,
++ * SMMU, firmware, RPM votes and GDSC transitions are intentionally untouched.
++ * Register offsets: pinned gpucc-khaje.c/gcc-khaje.c and live spes FDT.
++ * Call on the touch worker after its delay, only on explicit spes opt-in.
++ */
++static void
++spes_gpu_power_probe(void)
++{
++	int enabled = 0;
++	(void)PE_parse_boot_argn("spesgpuprobe", &enabled, sizeof(enabled));
++	if (!st.spes || enabled != 1) return;
++	printf("SPES GPU: stage=clock-inventory writes=0 core-access=0\n");
++	vm_offset_t cc = ml_io_map(0x05990000u, 0x9000u);
++	if (!cc) {
++		printf("SPES GPU: clock-controller map failed\n");
++		return;
++	}
++	static const struct { const char *name; uint32_t off; } regs[] = {
++		{ "cx-gdsc", 0x106c }, { "gx-gdsc", 0x100c },
++		{ "gx-reset", 0x1008 }, { "gx-domain", 0x1508 },
++		{ "cx-hw-control", 0x1540 },
++		{ "ahb-cbcr", 0x1078 }, { "cx-gfx-cbcr", 0x10a4 },
++		{ "gx-gfx-cbcr", 0x1054 }, { "cx-gmu-cbcr", 0x1098 },
++		{ "smmu-vote-cbcr", 0x5000 }, { "cx-snoc-cbcr", 0x108c },
++		{ "cxo-aon-cbcr", 0x1004 }, { "cxo-cbcr", 0x109c },
++		{ "gfx-rcg-cmd", 0x101c }, { "gfx-rcg-cfg", 0x1020 },
++		{ "gmu-rcg-cmd", 0x1120 }, { "gmu-rcg-cfg", 0x1124 },
++	};
++	for (unsigned i = 0; i < sizeof(regs) / sizeof(regs[0]); ++i) {
++		printf("SPES GPU: cc %s off=%#x value=%#x\n",
++		    regs[i].name, regs[i].off, touch_rd(cc, regs[i].off));
++	}
++	printf("SPES GPU: gcc memnoc=%#x snoc=%#x parent-votes=%#x\n",
++	    touch_rd(st.gcc, 0x3600c), touch_rd(st.gcc, 0x36018),
++	    touch_rd(st.gcc, 0x79004));
++	/* A register snapshot is not proof that GPU execution is possible. */
++	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
++}
++
+ static void
+ touch_thread(void *arg, wait_result_t result)
+ {
+@@ -664,6 +703,7 @@
+ 		printf("SWEET TOUCH: MMIO mapping failed\n");
+ 		goto out;
+ 	}
++	spes_gpu_power_probe();
+ 	st.stage = "clocks";
+ 	if (!touch_clocks()) {
+ 		goto out;

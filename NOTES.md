@@ -1,3 +1,22 @@
+# GPU stage-0 clock diagnostic prepared — 2026-10-21
+
+- Added0097-spes-gpu-clock-inventory.patch: explicit spesgpuprobe=1 on spes,
+  delayed touch worker reads GPUCC at05990000 plus three existing GCC registers.
+  No MMIO writes, GPU-core/SMMU reads, firmware loads, RPM votes or power changes.
+  Bounded17 GPUCC reads plus3 GCC reads; maps36KiB once. Diagnostic opt-in only.
+- tools/build-spes-diagnostic.sh gpu builds RAM PID1, rd=md0, ufsrw/rootrw/log0;
+  enables touch-worker entry and visible console. Full0096 iOS image preserved.
+- Patch dry-run and15 host tests pass; shell syntax passes. CI/hardware pending.
+- Recovery lacks CONFIG_DEBUG_FS and /dev/mem. GPU supplies regulator12/13
+  are disabled, users0; clock sysfs320MHz is not proof of powered hardware.
+- Corrected prior broad no-GX claim: Android A610 skips internal GMU_GX/SPTPRAC
+  access, BUT live spes has external CX/GX GDSCs at0599106c/0599100c.
+  Parent is RPM pm6125_s3_level; GPUCC also uses MX rail. Do not bypass rail votes.
+- Live kgsl-hyp sets ZAP PAS-ID13; no memory-region property. Need audit PIL
+  allocator/load placement before requesting authentication or reset.
+- Next: build0097 CI, temporary RAM-only diagnostic boot, collect displayed
+  SPES GPU lines, then implement actual initialization using observed state.
+
 # GPU firmware captured — 2026-10-21
 
 - Temporary OrangeFox boot accepted send3.077s boot0.288s total3.417s.
