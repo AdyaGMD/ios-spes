@@ -1,3 +1,37 @@
+# GPU firmware captured — 2026-10-21
+
+- Temporary OrangeFox boot accepted send3.077s boot0.288s total3.417s.
+  Phone currently in recovery; do not imply a new GPU image exists.
+- KGSL reports Adreno610v2, current320MHz, available320..1114.8MHz.
+  dmesg: GPU SMMU non-coherent table walks, four stream-match groups.
+  Captured research/spes-gpu-recovery.txt (ignored).
+- Mounted /dev/block/mapper/vendor_a at /tmp/spes-vendor with ro,noload.
+  Copied six a610_zap*/a630_sqe.fw files to research/spes-gpu-firmware;
+  each local SHA256 matches phone. Unmounted successfully. No partition writes
+  requested. Recovery automatically mounted metadata rw as usual.
+- Manifest research/spes-gpu-firmware/manifest.json; SQE32264 bytes SHA256
+  57eece0d8032b0ab2467d856c304ce22f502ae8d4b2f8169b9d1ca890ceb463c.
+- Next concrete GPU work: audit A610 clocks/regulators and ZAP PAS load plus
+  SMMU context/stream ownership, adapt backend before isolated ring/fence test.
+  Do not enable A740 GMU code, GPU writes, or claim acceleration yet.
+- README + GPU profile/audit prepared for commit; previous local firmware
+  commits also need pushing to fork/spes. No kernel change/CI needed here.
+
+# GPU reuse started; volume keys confirmed — 2026-10-21
+
+- User confirms0096 volume buttons work, but UI/button response very slow;
+  startup speed inconclusive. Power button still unverified.
+- README corrected: iOS16.7.16 UI boots, userdata root installed, no GPU/Wi-Fi.
+- User supplied unixnu.com/drivers/native-adreno. Public UniXNU GPU sources
+  fetched to ignored research/unixnu; audit docs/SPES-GPU-20261021.md.
+- A740 GMU backend is incompatible unchanged with A610; Linux A610 source
+  identifies a630_sqe.fw/a610_zap, no GPMU feature and no GX domain.
+- tools/spes-gpu-profile.py reads live FDT GPU resources only; accepted actual
+  FDT and rejected wrong chip. Unmodified upstream SMMU table tests pass
+  Clang ASan/UBSan. No GPU code integrated or GPU hardware tested yet.
+- User now ready in Fastboot, authorized temporary recovery for GPU firmware
+  and KGSL inspection. Recovery boot command in progress; read-only inspection.
+
 # Firmware/API audit addendum — 2026-10-21
 
 - Own modem.mdt ELF32 has31 headers; loadable non-hash ranges fit live modem

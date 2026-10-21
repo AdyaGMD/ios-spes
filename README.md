@@ -5,12 +5,16 @@ to **Redmi Note 11 (`spes`, SM6225 / Snapdragon 680)**. Target handset: 6 GB
 physical RAM, unlocked bootloader. The Android “+2 GB” expansion is not RAM
 available to this kernel.
 
-**Status: XNU boots and runs a test program as PID 1 on spes.**
-Photos from the 2026-10-19 temporary RAM-only boot confirm framebuffer output,
-one initialized CPU and repeated `SWEET init: still alive` messages.
-There is no tested installable iOS image or SpringBoard boot on this device.
-Read-only storage probing and touchscreen input succeeded. Additional CPU cores
-and the iOS interface remain unverified.
+**Status (2026-10-21): iOS 16.7.16 boots to its interface on spes.**
+The user confirmed the UI, touchscreen and volume buttons on the test handset.
+Startup and interaction are very slow. The current build uses one Gold CPU;
+GPU acceleration and Wi-Fi are not working. Additional CPUs and the power
+button remain unverified. This is an experimental port, not a daily-use ROM.
+
+The iOS HFS+ root is installed in the existing `userdata` partition after
+explicit approval to erase Android data. Boot images are still loaded with
+`fastboot boot`; bootloaders, recovery, modem and persist are preserved.
+Apple filesystem images and device-specific dumps are not distributed here.
 
 ## Changes
 
@@ -23,7 +27,8 @@ and the iOS interface remain unverified.
 - Patch **0088**: FocalTech AVDD on **GPIO98 / SOUTH tile**, reset 86, IRQ 80;
   integer 1080×2400 coordinates instead of topaz's fractional 1350×3000 input.
   Touch defaults off on spes; opt in with `sweettouch=1` after initial diagnostics.
-  Keys and the inherited USB driver remain disabled on spes.
+  Patch **0096** enables PMIC keys with `sweetkeys=1`; volume buttons are
+  user-confirmed working. The inherited USB driver remains disabled on spes.
 - The shim accepts `BOOT_HEADER_VERSION=3`, matching the supplied stock firmware.
   Version 4 remains the upstream default. Embedded payload packaging is retained;
   temporary bootloader acceptance and RAM-only userspace execution are verified.
@@ -47,7 +52,8 @@ Source reference: [Jabiyeff/kernel_xiaomi_sm6225 at
 `drivers/pinctrl/qcom/pinctrl-khaje.c`, and
 `drivers/input/touchscreen/ft3418_i2c/focaltech_core.c`.
 The GPIO98 SOUTH tile and integer touch decoding come from that source;
-the exact touch IC, protocol and power sequencing remain hardware-unverified.
+hardware testing identified FocalTech `54:52` and confirmed touch events after
+patch **0093** enabled the AVDD GPIO output correctly.
 
 ## Verified temporary recovery / live memory capture
 
@@ -57,8 +63,8 @@ flash command was run. The live FDT is saved locally in ignored
 `dtb/spes-live.dtb`; it is not published because it can contain device identifiers.
 The selected XNU RAM range is **0x100000000 + 0xc0000000 (3 GiB)**. The live
 DT also confirms AVDD GPIO98, IRQ80 and 1080×2400 touch coordinates.
-`shim/out/spes.adt` was generated successfully. This verifies recovery access
-and memory-map extraction, not an XNU or iOS boot.
+`shim/out/spes.adt` was generated successfully. This was the initial recovery and memory-map milestone; subsequent tests
+reached XNU userspace and then the iOS interface.
 
 ## Capturing the live memory map again
 
@@ -77,7 +83,7 @@ The tool intentionally refuses it. No recovery image is supplied in this reposit
 ## Build preparation
 
 Build XNU with `.github/workflows/xnu.yml` in your own fork (manual dispatch).
-It retains the SWEET machine name and applies patches 0001–0089. Download the
+It retains the SWEET machine name and applies patches 0001–0096. Download the
 `xnu-kernel` artifact into `xnu/out`. The [first corrected kernel build passed](https://github.com/AdyaGMD/ios-spes/actions/runs/39273597179) at source commit `7f915db`.
 
 The shim needs an AArch64 GNU toolchain and an executable AOSP `mkbootimg`.
@@ -101,9 +107,9 @@ An independently prepared RAM root can instead be supplied via `mkpayload.py
 Do not enable UFS writes or persistent logs against Android userdata.
 
 Only after reviewing the generated image and memory map should a temporary
-`fastboot boot shim/out/shim-boot.img` be attempted. No partitions have been
-flashed or modified by this work. Installing an iOS root into userdata would
-erase Android data and is a separate, explicitly confirmed step.
+`fastboot boot shim/out/shim-boot.img` be attempted. The test handset now has an iOS root in
+userdata. On another handset, installing that root erases Android data and
+requires a separate, explicitly confirmed step.
 
 ## RAM-only first-boot diagnostic
 
