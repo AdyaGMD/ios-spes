@@ -1,3 +1,22 @@
+# GPU stage-1 verified on silicon (RPM GLINK + GDSC uncollapse) — 2026-10-21
+
+- Photo confirmed runtime completion of all 20 GPU stage-1 probe steps on real handset.
+- Transport: GLINK v1 intentless negotiation over Message RAM (0x045f0000) verified.
+- Channel 'rpm_requests' opened symmetrically (AP lcid=1, RPM rcid=2, secondary rcid=3 ACKed).
+- Key fix: GLINK_CMD_TX_DATA requires param1 = channel->lcid (1), not rcid.
+  Added strict memory barriers (dmb sy) before updating head/tail and ringing APCS doorbell (0x0f111008).
+- Voltage votes:
+  * rwcx=64 (LOW_SVS) voted -> RPM ACK payload [0x716572, 0xc, 0x2367736d] received.
+  * rwmx=64 (LOW_SVS) voted -> RPM ACK payload [0x716572, 0xc, 0x2367736d] received.
+- Power Domains:
+  * cx-gdsc (0x0599106c) uncollapsed from 0x222001 -> transitioned to 0xaf0222000 (PWR_ON=1) on poll 1.
+  * gx-gdsc (0x0599100c) uncollapsed from 0x222001 -> transitioned to 0xaf0222000 (PWR_ON=1) on poll 1.
+- Clocks: ahb-cbcr (0x05991078) and cxo-cbcr (0x0599109c) un-gated (CLK_OFF bit 31 cleared, value 0x1).
+- Core MMIO: Mapped Adreno 610 core at 0x05900000. Sequential 32-bit reads completed cleanly without bus abort or reset.
+- Next: Adreno register layout uses 32-bit word indexing (reg << 2 in Freedreno/MSM).
+  Target REG_A6XX_RBBM_STATUS (word 0x210 -> byte 0x840), REG_A6XX_RBBM_STATUS3 (word 0x213 -> byte 0x84c),
+  and configure GFX RCG (0x101c/0x1020) and branch clocks (0x1054 / 0x10a4).
+
 # GPU stage-1 image temporarily booted — 2026-10-21
 
 - CI 39629078334 SUCCESS at commit 8db0373, artifact in xnu/out-0098.
