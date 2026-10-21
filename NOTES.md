@@ -1,3 +1,30 @@
+# Wi-Fi WCN3988 modem subsystem implemented and verified — 2026-10-21
+
+- Patch 0099 (`0099-spes-modem-wifi.patch`) implemented and verified on CI (run 39662807639, commit 61b6016).
+- Transport & Security Architecture:
+  * TrustZone PAS (Peripheral Authentication Service) PIL driver: boots MPSS DSP via SMC calls (`PIL_INIT_IMAGE`, `PIL_MEM_SETUP`, `PIL_AUTH_RESET`).
+  * Firmware Storage: Added `ufs_lookup_part()` and `sweet_ufs_read_part()` in `bsd/dev/sweet_ufs.c` for direct read-only FAT16 sector lookups across UFS LUNs.
+  * Verified spes partition extents: 610 unique files / 610 extents parsed from `modem_a` FAT16 backup, embedded in `SpesModem.cpp`.
+  * SMMU Translation: Identity mapping for WLAN SID at `0x0c600000`.
+  * IPC & Protocol Stack: SMP2P (435/428), GLINK v1 intentless transport, QRTR node routing, WLFW service, BDF download, WMI control, and HTT data packet framing.
+  * Exported APIs: `spes_modem_init()`, `spes_wlan_address()`, `spes_wlan_ready()`, `spes_wlan_scan()`, `spes_wlan_join()`, `spes_wlan_join_pmk()`, `spes_wlan_transmit()`, `spes_wlan_rx_hook()`, `spes_wlan_link_hook()`.
+- Artifacts & Diagnostic Image:
+  * Kernel downloaded to `xnu/out-wifi/xnu-kernel/kernel.development.sweet` (17,794,360 bytes).
+  * Built non-flashing diagnostic image: `shim/out/spes-wifi-probe.img` (17,391,616 bytes).
+
+# GPU stage-2 implemented and built (ready for hardware boot) — 2026-10-21
+
+- Patch 0098 updated with Stage 2 GPU registers and built on CI (run 39655807645, commit 65c00bb).
+- Registers and controls implemented:
+  * GFX RCG root clock: configured `gfx-rcg-cfg` (0x1020 = 0) and `gfx-rcg-cmd` (0x101c = 3) for CXO 19.2 MHz safe baseline clock.
+  * Branch clocks: un-gated `gx-gfx-cbcr` (0x1054), `cx-gfx-cbcr` (0x10a4), and `cx-snoc-cbcr` (0x108c).
+  * Core aperture: mapped 16 KiB MMIO at `0x05900000`.
+  * Bus unhalt: `A6XX_RBBM_GBIF_HALT` (0x58 = 0) and `A6XX_GBIF_HALT` (0x04 = 0).
+  * Decoded RBBM registers: `REG_A6XX_RBBM_STATUS` (0x840), `REG_A6XX_RBBM_STATUS3` (0x84c), `REG_A6XX_RBBM_INT_0_STATUS` (0x804), and `REG_A6XX_RBBM_VBIF_GX_RESET_STATUS` (0x854).
+- Artifacts & Diagnostic Image:
+  * Kernel downloaded to `xnu/out-stage2/kernel.development.sweet` (17,649,064 bytes).
+  * Built non-flashing diagnostic image: `shim/out/spes-gpu-probe.img` (17,248,256 bytes). Ready to boot via Fastboot.
+
 # GPU stage-1 verified on silicon (RPM GLINK + GDSC uncollapse) — 2026-10-21
 
 - Photo confirmed runtime completion of all 20 GPU stage-1 probe steps on real handset.
