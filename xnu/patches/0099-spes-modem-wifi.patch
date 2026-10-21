@@ -1,20 +1,11 @@
---- a/iokit/conf/files.arm64
-+++ b/iokit/conf/files.arm64
-@@ -10,6 +10,7 @@ iokit/Kernel/arm/AppleARMSMP.cpp    					optional iokitcpp
- iokit/Kernel/arm/SweetPlatformExpert.cpp                         optional iokitcpp
- 
- iokit/Kernel/arm/SweetCPU.cpp                                    optional iokitcpp
-+iokit/Kernel/arm/SpesModem.cpp                                   optional iokitcpp
- iokit/Kernel/arm/SweetEntitlements.cpp                           optional iokitcpp
- iokit/Kernel/arm/SweetKeyStore.cpp                               optional iokitcpp
- iokit/Kernel/arm/SweetWatchdog.cpp                               optional iokitcpp
+diff --git a/bsd/dev/sweet_ufs.c b/bsd/dev/sweet_ufs.c
+index 7af567f..01637e4 100644
 --- a/bsd/dev/sweet_ufs.c
 +++ b/bsd/dev/sweet_ufs.c
-@@ -357,6 +357,107 @@ ufs_find_partition(const char *want)
- 	printf("SWEET UFS: no GPT partition named \"%s\"\n", want);
+@@ -358,6 +358,107 @@ ufs_find_partition(const char *want)
  	return ENOENT;
  }
-+
+ 
 +/*
 + * spes: read-only access to other GPT partitions on LUNs 0-5 (modem firmware in
 + * modem_a, later the EFS copies). Never writes; the LUN0 GPT fence state is untouched.
@@ -119,24 +110,9 @@
  static int
  ufs_take_over_host(void)
  {
---- a/iokit/Kernel/arm/SweetFramebuffer.cpp
-+++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -37,6 +37,7 @@
- #include "SweetSurface.h"
- 
- extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
-+extern "C" void spes_modem_init(void);  /* iokit/Kernel/arm/SpesModem.cpp (boot-arg modem=1) */
- 
- #if defined(SWEET)
- #include <IOKit/IOService.h>
-@@ -164,6 +165,7 @@ AppleCLCD::start(IOService *provider)
- 	if (!IOService::start(provider)) {
- 		return false;
- 	}
-+	spes_modem_init();
- 	PE_current_console(&video);
- 	fPhys = video.v_baseAddr;
- 	fWidth = (uint32_t)video.v_width;
+diff --git a/iokit/Kernel/arm/SpesModem.cpp b/iokit/Kernel/arm/SpesModem.cpp
+new file mode 100644
+index 0000000..b9748fb
 --- /dev/null
 +++ b/iokit/Kernel/arm/SpesModem.cpp
 @@ -0,0 +1,6224 @@
@@ -6364,3 +6340,35 @@
 +extern "C" void topaz_modem_init(void) {}
 +
 +#endif
+diff --git a/iokit/Kernel/arm/SweetFramebuffer.cpp b/iokit/Kernel/arm/SweetFramebuffer.cpp
+index 6e00a6e..a41758f 100644
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -37,6 +37,7 @@
+ #include "SweetSurface.h"
+ 
+ extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
++extern "C" void spes_modem_init(void);  /* iokit/Kernel/arm/SpesModem.cpp (boot-arg modem=1) */
+ 
+ #if defined(SWEET)
+ #include <IOKit/IOService.h>
+@@ -164,6 +165,7 @@ AppleCLCD::start(IOService *provider)
+ 	if (!IOService::start(provider)) {
+ 		return false;
+ 	}
++	spes_modem_init();
+ 	PE_current_console(&video);
+ 	fPhys = video.v_baseAddr;
+ 	fWidth = (uint32_t)video.v_width;
+diff --git a/iokit/conf/files.arm64 b/iokit/conf/files.arm64
+index acc9ae0..41fbf16 100644
+--- a/iokit/conf/files.arm64
++++ b/iokit/conf/files.arm64
+@@ -10,6 +10,7 @@ iokit/Kernel/arm/AppleARMSMP.cpp    					optional iokitcpp
+ iokit/Kernel/arm/SweetPlatformExpert.cpp                         optional iokitcpp
+ 
+ iokit/Kernel/arm/SweetCPU.cpp                                    optional iokitcpp
++iokit/Kernel/arm/SpesModem.cpp                                   optional iokitcpp
+ iokit/Kernel/arm/SweetEntitlements.cpp                           optional iokitcpp
+ iokit/Kernel/arm/SweetKeyStore.cpp                               optional iokitcpp
+ iokit/Kernel/arm/SweetWatchdog.cpp                               optional iokitcpp
