@@ -65,8 +65,7 @@ def main():
     zap_lines.append("#endif /* _SWEET_ZAP_H_ */\n")
     sweet_zap_content = "\n".join(zap_lines)
 
-    # 3. Modify sweet_touch.c from touch_base (or touch_curr)
-    # Let's inspect touch_curr to see what needs to be updated
+    # 3. Modify sweet_touch.c from touch_curr (restored Stage 3)
     touch_curr = (xnu_check / "bsd/dev/sweet_touch.c").read_text()
 
     # Ensure sweet_zap.h is included
@@ -75,11 +74,16 @@ def main():
         touch_curr = touch_curr.replace('#include "sweet_sqe.h"', '#include "sweet_sqe.h"\n#include "sweet_zap.h"')
 
     # Replace from "/* Step 14: Query TrustZone for PAS ID 13" down to end of Stage 3
-    # Let's find the anchor in touch_curr
     stage3_start_anchor = "\t/* Step 14: Query TrustZone for PAS ID 13 (ZAP shader) support */"
+    stage3_end_target = '\tprintf("SPES GPU: 28. GPU STAGE-3 COMPLETE!\\n");\n}'
+
     assert stage3_start_anchor in touch_curr, "Stage 3 start anchor not found"
+    assert stage3_end_target in touch_curr, "Stage 3 end target not found"
 
     prefix = touch_curr[:touch_curr.index(stage3_start_anchor)]
+    suffix = touch_curr[touch_curr.index(stage3_end_target) + len(stage3_end_target):]
+    assert "spes_touch_probe" in suffix
+    assert "#endif /* ARM64_BOARD_CONFIG_SWEET */" in suffix
 
     stage45_code = """\t/* Step 14: Query TrustZone for PAS ID 13 (ZAP shader) support */
 \tuint64_t tz_res = 0;
@@ -316,7 +320,7 @@ def main():
 \tprintf("SPES GPU: 31. GPU STAGE-4 & STAGE-5 COMPLETE!\\n");
 }"""
 
-    touch_mod = prefix + stage45_code
+    touch_mod = prefix + stage45_code + suffix
 
     # 4. Create temporary git repository and verify patch generation
     with tempfile.TemporaryDirectory() as td:
