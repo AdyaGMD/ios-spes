@@ -1,16 +1,11 @@
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -675,9 +675,162 @@
+@@ -675,6 +675,353 @@
  	    touch_rd(st.gcc, 0x79004));
  	/* A register snapshot is not proof that GPU execution is possible. */
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
 +}
 +
-+/* GLINK transport and RPM-SMD v0 communication on spes (SM6225).
-+ * live FDT: qcom,glink-rpm over message RAM 0x045f0000, 0x7000 bytes.
-+ * Doorbell: APCS HMSS at 0x0f111000, offset 0x8, bit 0.
-+ * Opt-in via boot-arg spesrpmprobe=1.
-+ */
 +struct glink_msg {
 +	uint16_t cmd;
 +	uint16_t param1;
@@ -50,56 +45,88 @@
 +}
 +
 +static void
-+spes_rpm_pipe_rx_read(vm_offset_t ram, uint32_t offset, uint32_t size,
-+    void *dst, uint32_t len)
++spes_rpm_rx_peak(vm_offset_t ram, uint32_t offset, uint32_t size,
++    uint32_t rel_offset, void *dst, uint32_t len)
 +{
 +	uint32_t tail = touch_rd(ram, offset);
-+	uint32_t aligned_len = (len + 7u) & ~7u;
-+	uint8_t *out = (uint8_t *)dst;
++	uint32_t pos = tail + rel_offset;
++	if (pos >= size) pos -= size;
 +
-+	for (uint32_t i = 0; i < aligned_len; i += 4) {
-+		uint32_t w = touch_rd(ram, offset + 8u + tail);
++	uint8_t *out = (uint8_t *)dst;
++	for (uint32_t i = 0; i < len; i += 4) {
++		uint32_t w = touch_rd(ram, offset + 8u + pos);
 +		for (uint32_t b = 0; b < 4 && (i + b) < len; ++b) {
 +			out[i + b] = (w >> (8u * b)) & 0xffu;
 +		}
-+		tail += 4;
-+		if (tail >= size) tail = 0;
++		pos += 4;
++		if (pos >= size) pos = 0;
 +	}
++}
++
++static void
++spes_rpm_rx_advance(vm_offset_t ram, uint32_t offset, uint32_t size, uint32_t count)
++{
++	uint32_t tail = touch_rd(ram, offset);
++	tail += count;
++	while (tail >= size) tail -= size;
 +	touch_wr(ram, offset, tail);
 +}
 +
 +static bool
-+spes_rpm_rx_msg(vm_offset_t ram, uint32_t rx_off, uint32_t rx_size,
-+    struct glink_msg *msg, void *payload, uint32_t max_payload, unsigned timeout_ms)
++spes_rpm_rx_next(vm_offset_t ram, uint32_t rx_off, uint32_t rx_size,
++    struct glink_msg *hdr, void *payload, uint32_t max_payload, uint32_t *out_payload_len)
 +{
-+	for (unsigned t = 0; t < timeout_ms; ++t) {
-+		uint32_t avail = spes_rpm_pipe_rx_avail(ram, rx_off, rx_size);
-+		if (avail >= 8) {
-+			spes_rpm_pipe_rx_read(ram, rx_off, rx_size, msg, 8);
-+			uint32_t extra = 0;
-+			if (msg->cmd == 2 /* OPEN */) {
-+				extra = (msg->param2 + 7u) & ~7u;
-+			} else if (msg->cmd == 9 /* TX_DATA */) {
-+				uint32_t data_hdr[2] = {0};
-+				spes_rpm_pipe_rx_read(ram, rx_off, rx_size, data_hdr, 8);
-+				extra = (data_hdr[0] + 7u) & ~7u;
-+			}
-+			if (extra > 0 && payload && extra <= max_payload) {
-+				spes_rpm_pipe_rx_read(ram, rx_off, rx_size, payload, extra);
-+			} else if (extra > 0) {
-+				uint32_t dummy = 0;
-+				for (uint32_t i = 0; i < extra; i += 4) {
-+					spes_rpm_pipe_rx_read(ram, rx_off, rx_size, &dummy, 4);
-+				}
-+			}
++	uint32_t avail = spes_rpm_pipe_rx_avail(ram, rx_off, rx_size);
++	if (avail < 8) return false;
++
++	spes_rpm_rx_peak(ram, rx_off, rx_size, 0, hdr, 8);
++	uint16_t cmd = hdr->cmd;
++
++	if (cmd == 9 /* GLINK_CMD_TX_DATA */) {
++		if (avail < 16) return false;
++		uint32_t data_hdr[2];
++		spes_rpm_rx_peak(ram, rx_off, rx_size, 8, data_hdr, 8);
++		uint32_t chunk_size = data_hdr[0];
++		uint32_t chunk_aligned = (chunk_size + 7u) & ~7u;
++		if (avail < 16 + chunk_aligned) return false;
++
++		if (payload && max_payload > 0) {
++			uint32_t copy_len = chunk_size < max_payload ? chunk_size : max_payload;
++			spes_rpm_rx_peak(ram, rx_off, rx_size, 16, payload, copy_len);
++			if (out_payload_len) *out_payload_len = chunk_size;
++		}
++		spes_rpm_rx_advance(ram, rx_off, rx_size, 16 + chunk_aligned);
++		return true;
++	} else if (cmd == 2 /* GLINK_CMD_OPEN */) {
++		uint32_t name_len = hdr->param2;
++		uint32_t name_aligned = (name_len + 7u) & ~7u;
++		if (avail < 8 + name_aligned) return false;
++		spes_rpm_rx_advance(ram, rx_off, rx_size, 8 + name_aligned);
++		if (out_payload_len) *out_payload_len = 0;
++		return true;
++	} else {
++		/* All other commands (0, 1, 3, 4, 15) are exactly 8 bytes */
++		spes_rpm_rx_advance(ram, rx_off, rx_size, 8);
++		if (out_payload_len) *out_payload_len = 0;
++		return true;
++	}
++}
++
++static bool
++spes_rpm_wait_msg(vm_offset_t ram, uint32_t rx_off, uint32_t rx_size,
++    struct glink_msg *hdr, void *payload, uint32_t max_payload, uint32_t *out_payload_len,
++    unsigned timeout_ms)
++{
++	for (unsigned t = 0; t < timeout_ms; t += 10) {
++		if (spes_rpm_rx_next(ram, rx_off, rx_size, hdr, payload, max_payload, out_payload_len)) {
 +			return true;
 +		}
-+		delay(1000);
++		touch_wait(10);
 +	}
 +	return false;
- }
- 
- static void
++}
++
++static void
 +spes_glink_rpm_probe(void)
 +{
 +	int enabled = 0;
@@ -123,47 +150,211 @@
 +	printf("SPES RPM: 5. RX head=%#x tail=%#x\n",
 +	    touch_rd(ram, rx_off + 4u), touch_rd(ram, rx_off));
 +
-+	/* TEST A: Test writing to Message RAM */
-+	printf("SPES RPM: 6. testing RAM write at off %#x...\n", tx_off + 8u);
-+	uint32_t old_val = touch_rd(ram, tx_off + 8u);
-+	touch_wr(ram, tx_off + 8u, 0xa5a50001u);
-+	uint32_t readback = touch_rd(ram, tx_off + 8u);
-+	printf("SPES RPM: 7. RAM write OK: old=%#x readback=%#x\n", old_val, readback);
-+	touch_wait(1000);
-+
-+	/* TEST B: Test APCS doorbell */
-+	printf("SPES RPM: 8. testing APCS write at off 8...\n");
-+	touch_wr(apcs, 0x8u, 1u);
-+	printf("SPES RPM: 9. APCS write OK!\n");
-+	touch_wait(1000);
-+
-+	/* TEST C: Send GLINK_CMD_VERSION */
-+	printf("SPES RPM: 10. writing VERSION cmd\n");
-+	struct glink_msg vmsg = { 0, 1, 2 };
++	/* Step 1: Send GLINK_CMD_VERSION */
++	printf("SPES RPM: 6. sending VERSION (v=1, feat=2)\n");
++	struct glink_msg vmsg = { 0 /* VERSION */, 1 /* v1 */, 2 /* INTENTLESS */ };
 +	spes_rpm_pipe_write(ram, tx_off, tx_size, &vmsg, 8, apcs);
-+	printf("SPES RPM: 11. VERSION sent, polling RX...\n");
 +
-+	struct glink_msg rmsg = {0, 0, 0};
-+	for (int i = 0; i < 20; ++i) {
-+		uint32_t rx_head = touch_rd(ram, rx_off + 4u);
-+		uint32_t rx_tail = touch_rd(ram, rx_off);
-+		if (rx_head != rx_tail) {
-+			printf("SPES RPM: RX activity! head=%#x tail=%#x\n", rx_head, rx_tail);
-+			if (spes_rpm_rx_msg(ram, rx_off, rx_size, &rmsg, NULL, 0, 100)) {
-+				printf("SPES RPM: rx cmd=%u p1=%u p2=%#x\n", rmsg.cmd, rmsg.param1, rmsg.param2);
++	/* Step 2: Negotiate GLINK v1 */
++	bool rpm_v_acked = false;
++	bool my_v_acked = false;
++	struct glink_msg rmsg;
++	for (int iter = 0; iter < 50; ++iter) {
++		if (spes_rpm_wait_msg(ram, rx_off, rx_size, &rmsg, NULL, 0, NULL, 50)) {
++			printf("SPES RPM: rx cmd=%u p1=%u p2=%#x\n", rmsg.cmd, rmsg.param1, rmsg.param2);
++			if (rmsg.cmd == 0 /* VERSION */) {
++				struct glink_msg ack = { 1 /* VERSION_ACK */, rmsg.param1, 0 };
++				spes_rpm_pipe_write(ram, tx_off, tx_size, &ack, 8, apcs);
++				rpm_v_acked = true;
++			} else if (rmsg.cmd == 1 /* VERSION_ACK */) {
++				my_v_acked = true;
 +			}
++			if (rpm_v_acked && my_v_acked) break;
++		}
++	}
++	if (!my_v_acked) {
++		printf("SPES RPM: version negotiation timed out; stopping\n");
++		return;
++	}
++	printf("SPES RPM: 7. GLINK v1 transport established!\n");
++	touch_wait(100);
++
++	/* Step 3: Open channel rpm_requests */
++	uint8_t open_buf[24] = {0};
++	struct glink_msg *open_msg = (struct glink_msg *)open_buf;
++	open_msg->cmd = 2; /* OPEN */
++	open_msg->param1 = 1; /* lcid */
++	open_msg->param2 = 13; /* strlen("rpm_requests") + 1 */
++	memcpy(open_buf + 8, "rpm_requests", 13);
++	printf("SPES RPM: 8. opening 'rpm_requests' (lcid=1)\n");
++	spes_rpm_pipe_write(ram, tx_off, tx_size, open_buf, 24, apcs);
++
++	bool open_acked = false;
++	for (int iter = 0; iter < 50; ++iter) {
++		if (spes_rpm_wait_msg(ram, rx_off, rx_size, &rmsg, NULL, 0, NULL, 50)) {
++			printf("SPES RPM: rx cmd=%u p1=%u p2=%#x\n", rmsg.cmd, rmsg.param1, rmsg.param2);
++			if (rmsg.cmd == 4 /* OPEN_ACK */) {
++				open_acked = true;
++				break;
++			}
++		}
++	}
++	if (!open_acked) {
++		printf("SPES RPM: channel open timed out; stopping\n");
++		return;
++	}
++	printf("SPES RPM: 9. channel 'rpm_requests' OPEN_ACK received!\n");
++	touch_wait(100);
++
++	/* Step 4: Send vote for rwcx=64 */
++	struct {
++		struct glink_msg gmsg;
++		uint32_t chunk_size;
++		uint32_t left_size;
++		uint32_t service_type;
++		uint32_t request_len;
++		uint32_t msg_id;
++		uint32_t set;
++		uint32_t resource_type;
++		uint32_t resource_id;
++		uint32_t data_len;
++		uint32_t kvp_key;
++		uint32_t kvp_size;
++		uint32_t kvp_val;
++	} __attribute__((packed)) req;
++
++	memset(&req, 0, sizeof(req));
++	req.gmsg.cmd = 9; /* GLINK_CMD_TX_DATA */
++	req.gmsg.param1 = 1; /* lcid */
++	req.gmsg.param2 = 0; /* iid */
++	req.chunk_size = 40;
++	req.left_size = 0;
++
++	req.service_type = 0x00716572u; /* "req\0" */
++	req.request_len = 32u;
++	req.msg_id = 1u;
++	req.set = 0u; /* active */
++	req.resource_type = 0x78637772u; /* "rwcx" */
++	req.resource_id = 0u;
++	req.data_len = 12u;
++	req.kvp_key = 0x6c766c76u; /* "vlvl" */
++	req.kvp_size = 4u;
++	req.kvp_val = 64u; /* corner 64 = LOW_SVS */
++
++	printf("SPES RPM: 10. voting rwcx=64 (msg_id=1)\n");
++	spes_rpm_pipe_write(ram, tx_off, tx_size, &req, sizeof(req), apcs);
++
++	uint8_t ack_payload[64] = {0};
++	uint32_t ack_len = 0;
++	bool rwcx_acked = false;
++	for (int iter = 0; iter < 50; ++iter) {
++		if (spes_rpm_wait_msg(ram, rx_off, rx_size, &rmsg, ack_payload, sizeof(ack_payload), &ack_len, 50)) {
++			printf("SPES RPM: rx cmd=%u p1=%u len=%u\n", rmsg.cmd, rmsg.param1, ack_len);
++			if (rmsg.cmd == 9 /* TX_DATA */ && ack_len >= 12) {
++				uint32_t *ack = (uint32_t *)ack_payload;
++				printf("SPES RPM: ACK payload [%#x, %#x, %#x]\n", ack[0], ack[1], ack[2]);
++				rwcx_acked = true;
++				break;
++			}
++		}
++	}
++	if (!rwcx_acked) {
++		printf("SPES RPM: rwcx vote timed out; stopping\n");
++		return;
++	}
++	printf("SPES RPM: 11. rwcx vote confirmed!\n");
++	touch_wait(100);
++
++	/* Step 5: Send vote for rwmx=64 */
++	req.msg_id = 2u;
++	req.resource_type = 0x786d7772u; /* "rwmx" */
++	printf("SPES RPM: 12. voting rwmx=64 (msg_id=2)\n");
++	spes_rpm_pipe_write(ram, tx_off, tx_size, &req, sizeof(req), apcs);
++
++	bool rwmx_acked = false;
++	for (int iter = 0; iter < 50; ++iter) {
++		if (spes_rpm_wait_msg(ram, rx_off, rx_size, &rmsg, ack_payload, sizeof(ack_payload), &ack_len, 50)) {
++			printf("SPES RPM: rx cmd=%u p1=%u len=%u\n", rmsg.cmd, rmsg.param1, ack_len);
++			if (rmsg.cmd == 9 /* TX_DATA */ && ack_len >= 12) {
++				uint32_t *ack = (uint32_t *)ack_payload;
++				printf("SPES RPM: ACK payload [%#x, %#x, %#x]\n", ack[0], ack[1], ack[2]);
++				rwmx_acked = true;
++				break;
++			}
++		}
++	}
++	if (!rwmx_acked) {
++		printf("SPES RPM: rwmx vote timed out; stopping\n");
++		return;
++	}
++	printf("SPES RPM: 13. rwmx vote confirmed!\n");
++	touch_wait(200);
++
++	/* Step 6: Uncollapse CX GDSC */
++	vm_offset_t cc = ml_io_map(0x05990000u, 0x9000u);
++	if (!cc) {
++		printf("SPES GPU: GPUCC map failed\n");
++		return;
++	}
++	printf("SPES GPU: 14. CX GDSC uncollapse (curr=%#x)\n", touch_rd(cc, 0x106c));
++	touch_wr(cc, 0x106c, touch_rd(cc, 0x106c) & ~1u);
++	bool cx_on = false;
++	for (int i = 0; i < 200; ++i) {
++		uint32_t val = touch_rd(cc, 0x106c);
++		if (val & (1u << 31)) {
++			printf("SPES GPU: 15. CX GDSC powered ON! val=%#x (poll %d)\n", val, i);
++			cx_on = true;
 +			break;
 +		}
-+		touch_wait(100);
++		touch_wait(5);
 +	}
-+	printf("SPES RPM: 12. step complete\n");
-+}
++	if (!cx_on) {
++		printf("SPES GPU: CX GDSC power-on timed out; reg=%#x\n", touch_rd(cc, 0x106c));
++		return;
++	}
++	touch_wait(50);
 +
-+static void
- touch_thread(void *arg, wait_result_t result)
- {
- 	unsigned delay_s = 45;
-@@ -704,6 +857,7 @@
++	/* Step 7: Uncollapse GX GDSC */
++	printf("SPES GPU: 16. GX GDSC uncollapse (curr=%#x)\n", touch_rd(cc, 0x100c));
++	touch_wr(cc, 0x100c, touch_rd(cc, 0x100c) & ~1u);
++	bool gx_on = false;
++	for (int i = 0; i < 200; ++i) {
++		uint32_t val = touch_rd(cc, 0x100c);
++		if (val & (1u << 31)) {
++			printf("SPES GPU: 17. GX GDSC powered ON! val=%#x (poll %d)\n", val, i);
++			gx_on = true;
++			break;
++		}
++		touch_wait(5);
++	}
++	if (!gx_on) {
++		printf("SPES GPU: GX GDSC power-on timed out; reg=%#x\n", touch_rd(cc, 0x100c));
++		return;
++	}
++	touch_wait(50);
++
++	/* Step 8: Ungate branch clocks */
++	touch_wr(cc, 0x1078, touch_rd(cc, 0x1078) | 1u); /* AHB */
++	touch_wr(cc, 0x109c, touch_rd(cc, 0x109c) | 1u); /* CXO */
++	touch_wait(10);
++	printf("SPES GPU: 18. clocks ahb=%#x cxo=%#x\n",
++	    touch_rd(cc, 0x1078), touch_rd(cc, 0x109c));
++
++	/* Step 9: Read Adreno 610 identification registers */
++	vm_offset_t gpu = ml_io_map(0x05900000u, 0x1000u);
++	if (!gpu) {
++		printf("SPES GPU: GPU core MMIO map failed\n");
++		return;
++	}
++	printf("SPES GPU: 19. reading Adreno 610 registers:\n");
++	for (uint32_t o = 0; o < 0x40; o += 4) {
++		printf("  gpu +%#02x = %#08x\n", o, touch_rd(gpu, o));
++	}
++	printf("SPES GPU: 20. GPU STAGE-1 COMPLETE!\n");
+ }
+ 
+ static void
+@@ -704,6 +1051,7 @@
  		goto out;
  	}
  	spes_gpu_power_probe();
