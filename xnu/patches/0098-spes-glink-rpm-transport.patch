@@ -1020,10 +1020,10 @@ index 0000000..9b12fff
 +};
 +#endif /* _SWEET_SQE_H_ */
 diff --git a/bsd/dev/sweet_touch.c b/bsd/dev/sweet_touch.c
-index 7dd8949..2d0da10 100644
+index 7dd8949..eeb5048 100644
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -17,6 +17,12 @@
+@@ -17,6 +17,13 @@
  #include <machine/machine_routines.h>
  #include <pexpert/pexpert.h>
  #include <pexpert/device_tree.h>
@@ -1031,12 +1031,13 @@ index 7dd8949..2d0da10 100644
 +#include <vm/pmap.h>
 +#include <vm/vm_kern.h>
 +#include "sweet_sqe.h"
++#include "sweet_zap.h"
 +
 +extern ppnum_t pmap_find_phys(pmap_t pmap, addr64_t va);
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +683,588 @@ spes_gpu_power_probe(void)
+@@ -677,188 +684,720 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -1046,10 +1047,128 @@ index 7dd8949..2d0da10 100644
 +	uint32_t param2;
 +} __attribute__((packed));
 +
-+static void
+ static void
+-touch_thread(void *arg, wait_result_t result)
 +spes_rpm_pipe_write(vm_offset_t ram, uint32_t offset, uint32_t size,
 +    const void *data, uint32_t len, vm_offset_t apcs)
-+{
+ {
+-	unsigned delay_s = 45;
+-	(void)arg;
+-	(void)result;
+-	/*
+-	 * Start late (boot-arg sweettouchdelay, seconds): if the bus access
+-	 * below hangs the SoC, the persistent log and the GUI got there first.
+-	 */
+-	(void)PE_parse_boot_argn("sweettouchdelay", &delay_s, sizeof(delay_s));
+-	printf("SWEET TOUCH: starting in %u s\n", delay_s);
+-	touch_wait(delay_s * 1000u);
+-	if (st.spes && st.diag == 3) spes_rpm_inspect();
+-	st.stage = "map";
+-	printf("SWEET TOUCH: mapping GCC/TLMM/SE2\n");
+-	st.gcc = ml_io_map(TOUCH_GCC_PA, 0x80000);
+-	st.west = ml_io_map(TOUCH_WEST_PA, 0x58000);
+-	/* spes GPIO98 is on SOUTH, topaz GPIO36 is on EAST. */
+-	st.east = ml_io_map(st.spes ? 0x00900000u : TOUCH_EAST_PA,
+-	    st.spes ? 0x99000 : 0x25000);
+-	st.se = ml_io_map(TOUCH_SE_PA, 0x4000);
+-	if (!st.gcc || !st.west || !st.east || !st.se) {
+-		printf("SWEET TOUCH: MMIO mapping failed\n");
+-		goto out;
+-	}
+-	spes_gpu_power_probe();
+-	st.stage = "clocks";
+-	if (!touch_clocks()) {
+-		goto out;
+-	}
+-	st.stage = "se2 init";
+-	if (!touch_se_init()) {
+-		goto out;
+-	}
+-	st.stage = "power/reset";
+-	printf("SWEET TOUCH: TLMM reset=%#x irq=%#x avdd=%#x\n",
+-	    touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_RESET)),
+-	    touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_IRQ)),
+-	    touch_rd(st.east, TOUCH_GPIO_IO(TOUCH_PIN_AVDD)));
+-	/* TopazTouch touch.c: IRQ input, AVDD on, I2C pins, then the reset pulse. */
+-	touch_gpio(TOUCH_PIN_IRQ, 0, 3, 3, false, false);       /* CTL 0xc3 */
+-	touch_gpio(TOUCH_PIN_AVDD, 0, 3, 3, true, true);        /* CTL 0x2c3, high */
+-	touch_gpio(6, 1, 0, 0, false, false);                   /* qup2 SDA, CTL 0x4 */
+-	touch_gpio(7, 1, 0, 0, false, false);                   /* qup2 SCL */
+-	touch_gpio(TOUCH_PIN_RESET, 0, 3, 3, true, false);      /* CTL 0x2c3, low */
+-	touch_wait(20);
+-	touch_gpio(TOUCH_PIN_RESET, 0, 3, 3, true, true);
+-	touch_wait(250);
+-	if (st.spes) {
+-		printf("SPES TOUCH: post-power avdd cfg=%#x io=%#x reset cfg=%#x io=%#x\n",
+-		    touch_rd(st.east, TOUCH_GPIO_CFG(TOUCH_PIN_AVDD)),
+-		    touch_rd(st.east, TOUCH_GPIO_IO(TOUCH_PIN_AVDD)),
+-		    touch_rd(st.west, TOUCH_GPIO_CFG(TOUCH_PIN_RESET)),
+-		    touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_RESET)));
+-		printf("SPES TOUCH: SDA cfg=%#x io=%#x SCL cfg=%#x io=%#x\n",
+-		    touch_rd(st.west, TOUCH_GPIO_CFG(6)), touch_rd(st.west, TOUCH_GPIO_IO(6)),
+-		    touch_rd(st.west, TOUCH_GPIO_CFG(7)), touch_rd(st.west, TOUCH_GPIO_IO(7)));
+-	}
+-	st.stage = "probe";
+-	uint8_t gid[32], legacy[32], fid1 = 0, fid2 = 0;
+-	st.probing = true;
+-	int ge = touch_probe_info(GOODIX_PID_REG, gid);
+-	printf("SWEET TOUCH: probe 0x5d err=%d pid=%02x%02x%02x%02x fw=%02x.%02x.%02x.%02x irq=%#x\n",
+-	    ge, gid[0], gid[1], gid[2], gid[3], gid[8], gid[9], gid[10], gid[11], st.irq_status);
+-	(void)touch_probe_info(0x8240, legacy);
+-	int fe1 = touch_read(0x38, 0xa3, false, &fid1, 1);
+-	int fe2 = touch_read(0x38, 0x9f, false, &fid2, 1);
+-	printf("SWEET TOUCH: probe 0x38 err=%d/%d chip-id=%02x:%02x irq=%#x\n",
+-	    fe1, fe2, fid1, fid2, st.irq_status);
+-	st.probing = false;
+-	st.d_ge = ge;
+-	st.d_fe1 = fe1;
+-	st.d_fe2 = fe2;
+-	st.d_fid1 = fid1;
+-	st.d_fid2 = fid2;
+-	bool goodix = !ge && gid[0] == '9' && gid[1] == '8' && gid[2] == '9' && gid[3] == '6';
+-	bool fts = !fe1 && !fe2 && fid1 == 0x54 && fid2 == 0x52;
+-	if (st.dead || goodix == fts) {
+-		printf("SWEET TOUCH: no unique supported IC (goodix=%d fts=%d dead=%d); stopping\n",
+-		    goodix, fts, st.dead);
+-		goto out;
+-	}
+-	st.kind = goodix ? TOUCH_GOODIX : TOUCH_FTS;
+-	st.stage = "polling";
+-	printf("SWEET TOUCH: selected %s, 1080x2400, poll=10ms irq-hint=%d\n",
+-	    goodix ? "GT9896 Yellowstone" : "Focaltech 54:52", st.irq_hint);
+-	unsigned errors = 0, ticks = 0, polls = 0;
+-	while (!st.dead) {
+-		/* Nonfatal RAM-root diagnostic: periodic input counters and coordinates. */
+-		if (st.diag == 3 && ++polls % 500u == 0) {
+-			printf("SPES TOUCH: frames=%u errors=%u down=%u up=%u last=%d,%d active=%#x\n",
+-			    st.s_frames, st.s_errs, st.s_down, st.s_up,
+-			    st.s_lastx, st.s_lasty, st.active);
+-		}
+-		if (st.diag == 2 && ++polls == 3000) {  /* ~30 s at 10 ms */
+-			panic("SWEET TOUCH stats: frames=%u errs=%u lasterr=%d maxn=%u hid down=%u up=%u last=%d,%d | "
+-			    "raw %02x %02x %02x | %02x %02x %02x %02x %02x %02x | %02x %02x %02x",
+-			    st.s_frames, st.s_errs, st.s_lasterr, st.s_maxn, st.s_down, st.s_up,
+-			    st.s_lastx, st.s_lasty, st.s_raw[0], st.s_raw[1], st.s_raw[2],
+-			    st.s_raw[3], st.s_raw[4], st.s_raw[5], st.s_raw[6], st.s_raw[7],
+-			    st.s_raw[8], st.s_raw[9], st.s_raw[10], st.s_raw[11]);
+-		}
+-		/* Optional IRQ hint still reads every 100ms, and always while down. */
+-		if (!st.irq_hint || st.active ||
+-		    !(touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_IRQ)) & 1u) ||
+-		    (++ticks % 10u) == 0) {
+-			int err = st.kind == TOUCH_GOODIX ? touch_goodix() : touch_focaltech();
+-			if (err) {
+-				st.s_errs++;
+-				st.s_lasterr = err;
+-				if ((errors++ % 100u) == 0) {
+-					printf("SWEET TOUCH: report err=%d irq=%#x\n", err, st.irq_status);
+-				}
+-				if (errors == 10) {
+-					touch_report(0, st.x, st.y); /* release after persistent bad reads */
+-				}
+-			} else {
+-				errors = 0;
+-			}
 +	uint32_t head = touch_rd(ram, offset + 4u);
 +	uint32_t aligned_len = (len + 7u) & ~7u;
 +	const uint8_t *src = (const uint8_t *)data;
@@ -1058,25 +1177,59 @@ index 7dd8949..2d0da10 100644
 +		uint32_t w = 0;
 +		for (uint32_t b = 0; b < 4 && (i + b) < len; ++b) {
 +			w |= (uint32_t)src[i + b] << (8u * b);
-+		}
+ 		}
+-		touch_wait(10);
 +		touch_wr(ram, offset + 8u + head, w);
 +		head += 4;
 +		if (head >= size) head = 0;
-+	}
+ 	}
+-	touch_report(0, st.x, st.y);
+-out:
+-	if (st.diag == 3) {
+-		printf("SPES TOUCH: stopped at %s dead=%d id=%02x:%02x errors=%d/%d\n",
+-		    st.stage ? st.stage : "?", st.dead, st.d_fid1, st.d_fid2,
+-		    st.d_fe1, st.d_fe2);
+-	}
+-	if (st.diag && st.diag != 3) {
+-		panic("SWEET TOUCH diag: stopped at '%s' dead=%d | gcc vote=%#x cfg=%#x cbcr=%#x | "
+-		    "se2 fw=%#x status=%#x hwtx=%#x hwrx=%#x | goodix err=%d | ft 0x38 err=%d/%d id=%02x:%02x | irq=%#x",
+-		    st.stage ? st.stage : "?", st.dead, st.d_vote, st.d_cfg, st.d_cbcr,
+-		    st.d_fw, st.d_status, st.d_hwtx, st.d_hwrx, st.d_ge,
+-		    st.d_fe1, st.d_fe2, st.d_fid1, st.d_fid2, st.irq_status);
+-	}
+-	(void)thread_terminate(current_thread());
+-	thread_block(THREAD_CONTINUE_NULL);
 +	__asm__ volatile("dmb sy" ::: "memory");
 +	touch_wr(ram, offset + 4u, head);
 +	__asm__ volatile("dmb sy" ::: "memory");
 +	touch_wr(apcs, 0x8u, 1u);
-+}
-+
+ }
+ 
+-void
+-sweet_touch_init(void)
 +static uint32_t
 +spes_rpm_pipe_rx_avail(vm_offset_t ram, uint32_t offset, uint32_t size)
-+{
+ {
+-	int enabled = 1;
+-	thread_t thread;
+-	if (st.started) {
+-		return;
 +	uint32_t tail = touch_rd(ram, offset);
 +	uint32_t head = touch_rd(ram, offset + 4u);
 +	if (head < tail) {
 +		return size - tail + head;
-+	}
+ 	}
+-	DTEntry platform;
+-	st.spes = SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess;
+-	if (st.spes) enabled = 0; /* opt in after initial boot diagnostics */
+-	st.started = true;
+-	(void)PE_parse_boot_argn("sweettouch", &enabled, sizeof(enabled));
+-	st.irq_hint = 1; /* topaz: read on IRQ GPIO80 low, while touching, else every 100 ms */
+-	(void)PE_parse_boot_argn("sweettouchirq", &st.irq_hint, sizeof(st.irq_hint));
+-	(void)PE_parse_boot_argn("sweettouchdiag", &st.diag, sizeof(st.diag));
+-	if (!enabled) {
+-		printf("SWEET TOUCH: disabled (sweettouch=0)\n");
+-		return;
 +	return head - tail;
 +}
 +
@@ -1096,7 +1249,10 @@ index 7dd8949..2d0da10 100644
 +		}
 +		pos += 4;
 +		if (pos >= size) pos = 0;
-+	}
+ 	}
+-	kern_return_t kr = kernel_thread_start(touch_thread, NULL, &thread);
+-	if (kr == KERN_SUCCESS) {
+-		thread_deallocate(thread);
 +}
 +
 +static void
@@ -1147,27 +1303,41 @@ index 7dd8949..2d0da10 100644
 +		spes_rpm_rx_advance(ram, rx_off, rx_size, 8 + name_aligned);
 +		if (out_payload_len) *out_payload_len = 0;
 +		return true;
-+	} else {
+ 	} else {
+-		printf("SWEET TOUCH: kernel_thread_start failed %d\n", kr);
 +		/* All other commands (0, 1, 3, 4, 15) are exactly 8 bytes */
 +		spes_rpm_rx_advance(ram, rx_off, rx_size, 8);
 +		if (out_payload_len) *out_payload_len = 0;
 +		return true;
-+	}
-+}
-+
+ 	}
+ }
+-/* Start independently of UFS, only for an explicit spes RAM-root test. */
+-void spes_touch_probe(void);
+ 
+-void
+-spes_touch_probe(void)
 +static bool
 +spes_rpm_wait_msg(vm_offset_t ram, uint32_t rx_off, uint32_t rx_size,
 +    struct glink_msg *hdr, void *payload, uint32_t max_payload, uint32_t *out_payload_len,
 +    unsigned timeout_ms)
-+{
+ {
+-	DTEntry platform;
+-	int enabled = 0;
+-	char root[32] = { 0 };
+-	(void)PE_parse_boot_argn("spestouchprobe", &enabled, sizeof(enabled));
+-	(void)PE_parse_boot_argn("rd", root, sizeof(root));
+-	if (enabled == 1 && strcmp(root, "md0") == 0 &&
+-	    SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess) {
+-		sweet_touch_init();
 +	for (unsigned t = 0; t < timeout_ms; t += 10) {
 +		if (spes_rpm_rx_next(ram, rx_off, rx_size, hdr, payload, max_payload, out_payload_len)) {
 +			return true;
 +		}
 +		touch_wait(10);
-+	}
+ 	}
 +	return false;
-+}
+ }
+-#endif /* ARM64_BOARD_CONFIG_SWEET */
 +
 +static uint64_t
 +spes_smc(uint64_t a[8])
@@ -1528,7 +1698,73 @@ index 7dd8949..2d0da10 100644
 +	uint64_t tz_st = spes_scm(0x42000000u | (0x02u << 8) | 0x07u, 1, 13, 0, 0, &tz_res);
 +	printf("SPES GPU: 24. TrustZone PAS 13 check: st=%#llx res=%#llx\n", tz_st, tz_res);
 +
-+	/* Step 15: Allocate physically contiguous DMA memory for SQE microcode */
++	/* ================================================================
++	 * STAGE 4: TrustZone PAS ID 13 (a610_zap) PIL Authentication
++	 * ================================================================ */
++	printf("SPES GPU: starting Stage 4 (ZAP PIL authentication)...\n");
++
++	/* Step 15a: Allocate contiguous buffer for ZAP MDT metadata (8 KiB) */
++	vm_offset_t mdt_va = 0;
++	if (kmem_alloc_contig(kernel_map, &mdt_va, 8192, PAGE_MASK, 0, 0,
++	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++		printf("SPES GPU: kmem_alloc_contig for ZAP MDT failed\n");
++		return;
++	}
++	ppnum_t mdt_pn = pmap_find_phys(kernel_pmap, (addr64_t)mdt_va);
++	uint64_t mdt_pa = ptoa_64(mdt_pn);
++	memcpy((void *)mdt_va, a610_zap_mdt, sizeof(a610_zap_mdt));
++	clean_dcache64(mdt_pa, sizeof(a610_zap_mdt), TRUE);
++	__asm__ volatile ("dsb sy" ::: "memory");
++	printf("SPES GPU: 25a. ZAP MDT (%lu bytes) at pa=%#llx va=%#lx\n",
++	    sizeof(a610_zap_mdt), mdt_pa, (unsigned long)mdt_va);
++
++	/* Step 15b: Map DTB reserved gpu_region@56615000 (8 KiB) for ZAP segment */
++	vm_offset_t zap_va = ml_io_map(0x56615000u, 0x2000u);
++	uint64_t zap_pa = 0x56615000u;
++	uint64_t zap_size = 0x2000u;
++	if (zap_va) {
++		memcpy((void *)zap_va, a610_zap_b02, sizeof(a610_zap_b02));
++		clean_dcache64(zap_pa, sizeof(a610_zap_b02), TRUE);
++		__asm__ volatile ("dsb sy" ::: "memory");
++		printf("SPES GPU: 25b. ZAP b02 (%lu bytes) at pa=%#llx va=%#lx\n",
++		    sizeof(a610_zap_b02), zap_pa, (unsigned long)zap_va);
++	}
++
++	/* Fallback dynamic buffer in case TrustZone requires non-carveout RAM */
++	vm_offset_t zap_dyn_va = 0;
++	uint64_t zap_dyn_pa = 0;
++	if (kmem_alloc_contig(kernel_map, &zap_dyn_va, 8192, PAGE_MASK, 0, 0,
++	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) == KERN_SUCCESS) {
++		ppnum_t zap_pn = pmap_find_phys(kernel_pmap, (addr64_t)zap_dyn_va);
++		zap_dyn_pa = ptoa_64(zap_pn);
++		memcpy((void *)zap_dyn_va, a610_zap_b02, sizeof(a610_zap_b02));
++		clean_dcache64(zap_dyn_pa, sizeof(a610_zap_b02), TRUE);
++		__asm__ volatile ("dsb sy" ::: "memory");
++	}
++
++	/* Step 15c: SCM PIL_INIT_IMAGE (cmd 0x01, arginfo = 0x82) */
++	uint64_t pil_res = 0;
++	uint64_t pil_init_st = spes_scm(0x42000000u | (0x02u << 8) | 0x01u, 2 | (2 << 6), 13, mdt_pa, 0, &pil_res);
++	printf("SPES GPU: 25c. ZAP PIL_INIT_IMAGE: st=%#llx res=%#llx\n", pil_init_st, pil_res);
++
++	/* Step 15d: SCM PIL_MEM_SETUP (cmd 0x02, arginfo = 3) */
++	uint64_t pil_mem_st = spes_scm(0x42000000u | (0x02u << 8) | 0x02u, 3, 13, zap_pa, zap_size, &pil_res);
++	printf("SPES GPU: 25d. ZAP PIL_MEM_SETUP: st=%#llx res=%#llx (pa=%#llx)\n", pil_mem_st, pil_res, zap_pa);
++	if (pil_mem_st != 0 && zap_dyn_pa != 0) {
++		pil_mem_st = spes_scm(0x42000000u | (0x02u << 8) | 0x02u, 3, 13, zap_dyn_pa, 8192u, &pil_res);
++		printf("SPES GPU: 25d2. ZAP PIL_MEM_SETUP fallback: st=%#llx res=%#llx (pa=%#llx)\n", pil_mem_st, pil_res, zap_dyn_pa);
++	}
++
++	/* Step 15e: SCM PIL_AUTH_RESET (cmd 0x05, arginfo = 1) */
++	uint64_t pil_auth_st = spes_scm(0x42000000u | (0x02u << 8) | 0x05u, 1, 13, 0, 0, &pil_res);
++	printf("SPES GPU: 25e. ZAP PIL_AUTH_RESET: st=%#llx res=%#llx\n", pil_auth_st, pil_res);
++
++	/* ================================================================
++	 * STAGE 5: Microcode Upload, Ringbuffer Submission & GPU Memory Writes
++	 * ================================================================ */
++	printf("SPES GPU: starting Stage 5 (microcode upload & ringbuffer execution)...\n");
++
++	/* Step 16: Allocate physically contiguous DMA memory for SQE microcode */
 +	vm_offset_t sqe_va = 0;
 +	if (kmem_alloc_contig(kernel_map, &sqe_va, 32768, PAGE_MASK, 0, 0,
 +	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
@@ -1542,19 +1778,19 @@ index 7dd8949..2d0da10 100644
 +	memcpy((void *)sqe_va, a630_sqe_fw, sizeof(a630_sqe_fw));
 +	clean_dcache64(sqe_pa, sizeof(a630_sqe_fw), TRUE);
 +	__asm__ volatile ("dsb sy" ::: "memory");
-+	printf("SPES GPU: 25. SQE ucode (%lu bytes) at pa=%#llx va=%#lx\n",
++	printf("SPES GPU: 26. SQE ucode (%lu bytes) at pa=%#llx va=%#lx\n",
 +	    sizeof(a630_sqe_fw), sqe_pa, (unsigned long)sqe_va);
 +
-+	/* Step 16: Program CP SQE Base Registers (dword 0x0830 -> 0x20c0) */
++	/* Step 17: Program CP SQE Base Registers (dword 0x0830 -> 0x20c0) */
 +	touch_wr(gpu, 0x20c0u, (uint32_t)sqe_pa);
 +	touch_wr(gpu, 0x20c4u, (uint32_t)(sqe_pa >> 32));
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +	uint32_t base_lo = touch_rd(gpu, 0x20c0u);
 +	uint32_t base_hi = touch_rd(gpu, 0x20c4u);
-+	printf("SPES GPU: 25b. CP_SQE_INSTR_BASE=%#x:%#x (match=%d)\n",
++	printf("SPES GPU: 26b. CP_SQE_INSTR_BASE=%#x:%#x (match=%d)\n",
 +	    base_hi, base_lo, (base_lo == (uint32_t)sqe_pa && base_hi == (uint32_t)(sqe_pa >> 32)));
 +
-+	/* Step 17: Allocate Ringbuffer (8 KiB) + Fence (8 KiB) */
++	/* Step 18: Allocate Ringbuffer (8 KiB) + Fence/Scratch (8 KiB) */
 +	vm_offset_t rb_va = 0;
 +	if (kmem_alloc_contig(kernel_map, &rb_va, 16384, PAGE_MASK, 0, 0,
 +	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
@@ -1564,9 +1800,16 @@ index 7dd8949..2d0da10 100644
 +	ppnum_t rb_pn = pmap_find_phys(kernel_pmap, (addr64_t)rb_va);
 +	uint64_t rb_pa = ptoa_64(rb_pn);
 +	uint64_t fence_pa = rb_pa + 8192u;
++	vm_offset_t fence_va = rb_va + 8192u;
 +	volatile uint32_t *rb = (volatile uint32_t *)rb_va;
++	volatile uint32_t *scratch = (volatile uint32_t *)fence_va;
 +
 +	bzero((void *)rb_va, 16384);
++	scratch[0] = 0xdeadbeefu;
++	scratch[1] = 0xdeadbeefu;
++	scratch[2] = 0xdeadbeefu;
++	scratch[3] = 0xdeadbeefu;
++	scratch[4] = 0xdeadbeefu; /* Fence seqno slot */
 +	clean_dcache64(rb_pa, 16384, TRUE);
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
@@ -1581,7 +1824,7 @@ index 7dd8949..2d0da10 100644
 +	touch_wr(gpu, 0x2214u, 0u);                       /* CP_SCRATCH(2) */
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
-+	/* Step 18: Un-halt CP SQE engine */
++	/* Step 19: Un-halt CP SQE engine */
 +	touch_wr(gpu, 0x2020u, 1u); /* CP_SQE_CNTL = 1 */
 +	touch_wait(10);
 +
@@ -1592,44 +1835,392 @@ index 7dd8949..2d0da10 100644
 +	uint32_t curr_rptr = touch_rd(gpu, 0x2018u);
 +	uint32_t curr_wptr = touch_rd(gpu, 0x201cu);
 +	rbbm_status = touch_rd(gpu, 0x840u);
-+	printf("SPES GPU: 26. CP started! fault=%#x int=%#x sqe_stat=%#x rptr=%u wptr=%u rbbm=%#x\n",
++	printf("SPES GPU: 27. CP started! fault=%#x int=%#x sqe_stat=%#x rptr=%u wptr=%u rbbm=%#x\n",
 +	    cp_hw_fault, cp_int_stat, sqe_stat, curr_rptr, curr_wptr, rbbm_status);
 +
-+	/* Step 19: Submit PM4 NOP packet to ringbuffer and verify silicon execution */
-+	rb[0] = 0x70100001u; /* Type 7 CP_NOP, 1 payload word */
-+	rb[1] = 0xca11ab1eu; /* payload marker: 0xCA11AB1E */
-+	clean_dcache64(rb_pa, 16, TRUE);
++	/* Step 20: Populate Stage 4 & Stage 5 PM4 command stream */
++	uint32_t w = 0;
++
++	/* 1. CP_ME_INIT (Type 7, opcode 0x48, 11 words payload) */
++	rb[w++] = 0x7048000bu; /* Type 7 CP_ME_INIT */
++	rb[w++] = 0x0000016fu; /* CP_INIT_MASK: contexts, error det, workarounds, opmode */
++	rb[w++] = 0x00000003u; /* 3 contexts */
++	rb[w++] = 0x20000000u; /* error detection control */
++	rb[w++] = 0x00000000u;
++	rb[w++] = 0x00000000u;
++	rb[w++] = 0x00000000u;
++	rb[w++] = 0x00000002u; /* operation mode */
++	rb[w++] = 0x00000000u;
++	rb[w++] = 0x00000000u;
++	rb[w++] = 0x00000000u;
++	rb[w++] = 0x00000000u;
++
++	/* 2. CP_MEM_WRITE to DRAM (Type 7, opcode 0x3d, 6 words: addr_lo, addr_hi, 4 data words) */
++	rb[w++] = 0x703d0006u; /* Type 7 CP_MEM_WRITE */
++	rb[w++] = (uint32_t)fence_pa;
++	rb[w++] = (uint32_t)(fence_pa >> 32);
++	rb[w++] = 0x11223344u;
++	rb[w++] = 0x55667788u;
++	rb[w++] = 0x99aabbccu;
++	rb[w++] = 0xddeeff00u;
++
++	/* 3. CP_MEM_WRITE to Screen Framebuffer (0x5c000000): 16 colored pixels */
++	rb[w++] = 0x703d0012u; /* Type 7 CP_MEM_WRITE, 18 words (2 addr + 16 pixels) */
++	rb[w++] = 0x5c000000u;
++	rb[w++] = 0x00000000u;
++	for (int px = 0; px < 16; px++) {
++		rb[w++] = 0x00ff00ffu; /* Bright green test pixels (ARGB/RGBA) */
++	}
++
++	/* 4. CP_EVENT_WRITE Fence (Type 7, opcode 0x46, 4 words) */
++	rb[w++] = 0x70460004u; /* Type 7 CP_EVENT_WRITE */
++	rb[w++] = 0x08000031u; /* CACHE_FLUSH_TS with write timestamp */
++	rb[w++] = (uint32_t)(fence_pa + 16);
++	rb[w++] = (uint32_t)((fence_pa + 16) >> 32);
++	rb[w++] = 0xcafe0001u; /* Fence seqno marker */
++
++	/* 5. CP_NOP (Type 7, opcode 0x10, 1 word) */
++	rb[w++] = 0x70100001u;
++	rb[w++] = 0xca11ab1eu;
++
++	clean_dcache64(rb_pa, w * 4, TRUE);
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
-+	/* Advance WPTR to 2 words */
-+	touch_wr(gpu, 0x201cu, 2u);
-+	touch_wait(5);
++	/* Advance WPTR to kick execution */
++	touch_wr(gpu, 0x201cu, w);
++	__asm__ volatile ("dsb sy" ::: "memory");
++	printf("SPES GPU: 28. RING SUBMITTED: wptr=%u\n", w);
 +
++	/* Step 21: Poll RPTR for retirement */
 +	bool consumed = false;
 +	int poll_i = 0;
-+	for (poll_i = 0; poll_i < 200; ++poll_i) {
++	for (poll_i = 0; poll_i < 1000; ++poll_i) {
 +		curr_rptr = touch_rd(gpu, 0x2018u);
-+		if (curr_rptr == 2u) {
++		if (curr_rptr >= w) {
 +			consumed = true;
 +			break;
 +		}
-+		touch_wait(1);
++		touch_wait(2);
 +	}
-+	printf("SPES GPU: 27. RING NOP EXECUTION: rptr=%u / wptr=2 (consumed=%d poll=%d)\n",
-+	    curr_rptr, consumed, poll_i);
-+	printf("SPES GPU: 27b. RBBM_STATUS=%#x CP_HW_FAULT=%#x CP_INT=%#x\n",
-+	    touch_rd(gpu, 0x840u), touch_rd(gpu, 0x2084u), touch_rd(gpu, 0x208cu));
-+	printf("SPES GPU: 28. GPU STAGE-3 COMPLETE!\n");
-+}
++	rbbm_status = touch_rd(gpu, 0x840u);
++	cp_hw_fault = touch_rd(gpu, 0x2084u);
++	cp_int_stat = touch_rd(gpu, 0x208cu);
++	printf("SPES GPU: 29. RING RETIREMENT: rptr=%u / wptr=%u (consumed=%d poll=%d rbbm=%#x fault=%#x int=%#x)\n",
++	    curr_rptr, w, consumed, poll_i, rbbm_status, cp_hw_fault, cp_int_stat);
 +
- static void
- touch_thread(void *arg, wait_result_t result)
- {
-@@ -704,6 +1292,7 @@ touch_thread(void *arg, wait_result_t result)
- 		goto out;
- 	}
- 	spes_gpu_power_probe();
-+	spes_glink_rpm_probe();
- 	st.stage = "clocks";
- 	if (!touch_clocks()) {
- 		goto out;
++	/* Step 22: Invalidate CPU cache on scratch buffer and verify GPU writes */
++	flush_dcache64(fence_pa, 64, TRUE);
++	__asm__ volatile ("dsb sy" ::: "memory");
++
++	uint32_t val0 = scratch[0];
++	uint32_t val1 = scratch[1];
++	uint32_t val2 = scratch[2];
++	uint32_t val3 = scratch[3];
++	uint32_t fence_val = scratch[4];
++
++	int match = (val0 == 0x11223344u && val1 == 0x55667788u &&
++	             val2 == 0x99aabbccu && val3 == 0xddeeff00u);
++	int fence_match = (fence_val == 0xcafe0001u);
++
++	printf("SPES GPU: 30. DRAM WRITE: [%#x, %#x, %#x, %#x] (match=%d)\n",
++	    val0, val1, val2, val3, match);
++	printf("SPES GPU: 30b. FENCE TS: %#x (match=%d)\n", fence_val, fence_match);
++	printf("SPES GPU: 31. GPU STAGE-4 & STAGE-5 COMPLETE!\n");
++}
+\ No newline at end of file
+diff --git a/bsd/dev/sweet_zap.h b/bsd/dev/sweet_zap.h
+new file mode 100644
+index 0000000..8e64c8a
+--- /dev/null
++++ b/bsd/dev/sweet_zap.h
+@@ -0,0 +1,290 @@
++/* Autogenerated A610 ZAP shader firmware for Adreno 610 (PAS ID 13) */
++#ifndef _SWEET_ZAP_H_
++#define _SWEET_ZAP_H_
++static const uint32_t a610_zap_mdt[1715] = {
++	0x464c457fu, 0x00010101u, 0x00000000u, 0x00000000u, 0x00a40002u, 0x00000001u, 0x00005000u, 0x00000034u,
++	0x00000000u, 0x00000003u, 0x00200034u, 0x00000003u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
++	0x00000000u, 0x00000094u, 0x00000000u, 0x07000000u, 0x00000000u, 0x00000000u, 0x00001000u, 0x00006000u,
++	0x00006000u, 0x00001a38u, 0x00002000u, 0x02200000u, 0x00001000u, 0x00000001u, 0x00003000u, 0x00005000u,
++	0x00005000u, 0x00000830u, 0x00000830u, 0x08000007u, 0x00100000u, 0x00000000u, 0x00000006u, 0x00000000u,
++	0x00000000u, 0x00001990u, 0x00000090u, 0xffffffffu, 0x00000100u, 0xffffffffu, 0x00001800u, 0x00000000u,
++	0x00000078u, 0x00000000u, 0x00000000u, 0x00000014u, 0x00000000u, 0x00000072u, 0x00000000u, 0x00000000u,
++	0x00000002u, 0x00009007u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
++	0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
++	0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000001u, 0x51c2511bu,
++	0xce184430u, 0x77f523bcu, 0xe8706a81u, 0xc9fe802fu, 0x888e70f5u, 0xf1603ae0u, 0xf3aff197u, 0x2797f40au,
++	0xf6ec270au, 0xa5348fc9u, 0xbcd50b62u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u,
++	0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0x00000000u, 0xbde593efu,
++	0x79de6e00u, 0x394f8ee7u, 0xa98f45cdu, 0x6d0869aau, 0x199c5609u, 0xcc64b707u, 0x287e2d1cu, 0xa3220b46u,
++	0xaa8c80d1u, 0xeb58b48au, 0x0bc1fb2du, 0xc6309f11u, 0x64ca2891u, 0x5430db22u, 0xeb841497u, 0xc837dc82u,
++	0x2b3d72beu, 0x018013adu, 0xe9795452u, 0x86a22e07u, 0x245161e1u, 0x137efa18u, 0x7372dcd5u, 0x5514c418u,
++	0xb3ca7bf4u, 0x38b732fcu, 0xb87447afu, 0xa80cccd4u, 0x78fa9d81u, 0xacc1e699u, 0x80d893eau, 0x4311b4b7u,
++	0xe52c3bd4u, 0x3c1183f8u, 0x15ad7496u, 0xc029057eu, 0xb782425fu, 0x915dab45u, 0x47644d62u, 0x4a6b20d7u,
++	0x127aa753u, 0x21ff1a84u, 0x4e218174u, 0x2ac6bee9u, 0xadbbeb71u, 0x5ad74b27u, 0xf3dc11cbu, 0x0286446au,
++	0x7c6948c7u, 0xe9ab015cu, 0x8340bdaau, 0x88bdc0e4u, 0x9b39b85au, 0x36cf6ff8u, 0x6f1c25c0u, 0xba7b509cu,
++	0x30b35decu, 0x0a396beeu, 0x972218d5u, 0x765a5d27u, 0x9bc153c4u, 0x9864004cu, 0x49ac3652u, 0x14962b45u,
++	0x3d508b44u, 0xc105bc3au, 0x20f76cf0u, 0x3d4cc772u, 0x59faa08cu, 0xc41fb8a9u, 0x0f082e3eu, 0x8781a24fu,
++	0xb4416434u, 0xb5e07933u, 0x2866b8e3u, 0x07048230u, 0xbf028230u, 0x010203a0u, 0x01010202u, 0x09063d30u,
++	0x8648862au, 0x01010df7u, 0xa030300au, 0x060b300du, 0x48866009u, 0x04036501u, 0x1aa10102u, 0x09061830u,
++	0x8648862au, 0x01010df7u, 0x060b3008u, 0x48866009u, 0x04036501u, 0x03a20102u, 0x30200102u, 0x300b3173u,
++	0x55030609u, 0x02130604u, 0x10314e43u, 0x03060e30u, 0x13080455u, 0x69654207u, 0x676e696au, 0x0e301031u,
++	0x04550306u, 0x42071307u, 0x696a6965u, 0x0f31676eu, 0x03060d30u, 0x130b0455u, 0x61695806u, 0x31696d6fu,
++	0x060d300fu, 0x0a045503u, 0x69580613u, 0x696d6f61u, 0x1c301e31u, 0x04550306u, 0x58151303u, 0x6d6f6169u,
++	0x74412069u, 0x74736574u, 0x6f697461u, 0x4143206eu, 0x0d171e30u, 0x32313132u, 0x36303130u, 0x39333131u,
++	0x340d175au, 0x32313131u, 0x31363036u, 0x5a393331u, 0x0b316630u, 0x03060930u, 0x13060455u, 0x31535502u,
++	0x06113013u, 0x08045503u, 0x61430a13u, 0x6f66696cu, 0x61696e72u, 0x19301b31u, 0x04550306u, 0x53121303u,
++	0x6f546365u, 0x20736c6fu, 0x74736554u, 0x65735520u, 0x30113172u, 0x5503060fu, 0x08130a04u, 0x54636553u,
++	0x736c6f6fu, 0x10301231u, 0x04550306u, 0x53091307u, 0x44206e61u, 0x6f676569u, 0x22018230u, 0x09060d30u,
++	0x8648862au, 0x01010df7u, 0x03000501u, 0x000f0182u, 0x0a018230u, 0x01018202u, 0x9686a900u, 0x3befd03eu,
++	0x778e0cadu, 0xfc4ce94fu, 0x207493b1u, 0x78aa4fd3u, 0x989d7612u, 0xe94eba50u, 0x1f6b373du, 0x5c93f40eu,
++	0x1a424408u, 0xb9a49ff4u, 0x17c4a067u, 0xa4deea91u, 0xce91929eu, 0xe13fb5ecu, 0x63e29451u, 0x3b9185e3u,
++	0x191ee9fbu, 0x6114e218u, 0x711f4d86u, 0x11ad0c8fu, 0xf503c670u, 0x0c2d6b78u, 0x65b955f6u, 0xe81c4606u,
++	0xa2020d7bu, 0xc8d70343u, 0x1ce1fe79u, 0x9ed20735u, 0xdff04cc5u, 0xdd770582u, 0xee3d2c40u, 0x75f16131u,
++	0x4ad2c670u, 0x040f6e42u, 0x1e91b8f0u, 0x0bafc503u, 0x6249e16au, 0x24b2d269u, 0x38511c2fu, 0x7efee1e7u,
++	0x35c38e02u, 0xd114cb55u, 0x4c2f838bu, 0x913ba3fcu, 0x92a694f6u, 0xff9ec9c3u, 0xd418fd2au, 0x9a8d5608u,
++	0x495e8d8du, 0xab4c988cu, 0xd44f897cu, 0x186a5a92u, 0x6382e7d0u, 0x8e161adau, 0x7e5d5136u, 0x481dc455u,
++	0x4358e022u, 0xde265fc2u, 0xa949dfdeu, 0xd8c262b1u, 0xea2bc04au, 0xc248973bu, 0x010302edu, 0x53a30100u,
++	0x1f305130u, 0x1d550306u, 0x30180423u, 0xb2148016u, 0x90894883u, 0xbaf00da6u, 0x71ac9b1fu, 0x1ee13b2fu,
++	0x30940c28u, 0x5503060cu, 0x0504131du, 0x01020330u, 0x060b3000u, 0x0f1d5503u, 0x02030404u, 0x13308007u,
++	0x1d550306u, 0x300c0425u, 0x2b08060au, 0x05050106u, 0x30030307u, 0x2a09063du, 0xf7864886u, 0x0a01010du,
++	0x0da03030u, 0x09060b30u, 0x01488660u, 0x02040365u, 0x301aa101u, 0x2a090618u, 0xf7864886u, 0x0801010du,
++	0x09060b30u, 0x01488660u, 0x02040365u, 0x0203a201u, 0x82032001u, 0xb8000101u, 0x478d6ffau, 0x5d3f80e6u,
++	0xaaa5388cu, 0x529ce37du, 0xda3ee7d1u, 0x1d902700u, 0x5b1197c3u, 0x9f87c2bau, 0xadfba0e0u, 0xae589c95u,
++	0xe8974805u, 0xb6af66d8u, 0x3a0093bbu, 0x43502bb1u, 0xc317e3b7u, 0xd7903766u, 0xde1a4f68u, 0x02988a39u,
++	0x75bc2a4du, 0x0dc17eb0u, 0xde241668u, 0x226f56d7u, 0xa7b15cc2u, 0x69f22a35u, 0x88a7d9bbu, 0x18c3d76fu,
++	0xd2adc01cu, 0x56c8182du, 0xd91a149au, 0xfe8bab8au, 0x1c20e481u, 0xb7c5e2f0u, 0x0c01833du, 0x5155b51bu,
++	0xcbf29b86u, 0xcd3da367u, 0x6a4a8b62u, 0x56506610u, 0xb87b2ccau, 0xf13f156fu, 0x659f3019u, 0xdf11cb5du,
++	0xfd800605u, 0x3d43e605u, 0x36604907u, 0xa034dc94u, 0xe942ac91u, 0xa3a0c8efu, 0x6b2d05c0u, 0x19691063u,
++	0x84611b63u, 0xa8e5b256u, 0xe7acb494u, 0x207eaf98u, 0xe6fcc267u, 0x2b958941u, 0x77872fceu, 0x4a8d7fe2u,
++	0x42f17042u, 0x3f6d15a0u, 0x8be781d6u, 0x0adbfe97u, 0x53feec84u, 0x30f17725u, 0x301a0482u, 0xa0d20282u,
++	0x02010203u, 0x30050102u, 0x2a09063du, 0xf7864886u, 0x0a01010du, 0x0da03030u, 0x09060b30u, 0x01488660u,
++	0x02040365u, 0x301aa101u, 0x2a090618u, 0xf7864886u, 0x0801010du, 0x09060b30u, 0x01488660u, 0x02040365u,
++	0x0203a201u, 0x6c302001u, 0x09300b31u, 0x04550306u, 0x43021306u, 0x3010314eu, 0x5503060eu, 0x07130804u,
++	0x6a696542u, 0x31676e69u, 0x060e3010u, 0x07045503u, 0x65420713u, 0x6e696a69u, 0x300f3167u, 0x5503060du,
++	0x06130b04u, 0x6f616958u, 0x0f31696du, 0x03060d30u, 0x130a0455u, 0x61695806u, 0x31696d6fu, 0x06153017u,
++	0x03045503u, 0x69580e13u, 0x696d6f61u, 0x6f6f5220u, 0x41432074u, 0x0d171e30u, 0x30313731u, 0x34303932u,
++	0x35303730u, 0x330d175au, 0x32303137u, 0x30343034u, 0x5a353037u, 0x0b317330u, 0x03060930u, 0x13060455u,
++	0x314e4302u, 0x060e3010u, 0x08045503u, 0x65420713u, 0x6e696a69u, 0x30103167u, 0x5503060eu, 0x07130704u,
++	0x6a696542u, 0x31676e69u, 0x060d300fu, 0x0b045503u, 0x69580613u, 0x696d6f61u, 0x0d300f31u, 0x04550306u,
++	0x5806130au, 0x6d6f6169u, 0x301e3169u, 0x5503061cu, 0x15130304u, 0x6f616958u, 0x4120696du, 0x73657474u,
++	0x69746174u, 0x43206e6fu, 0x01823041u, 0x060d3022u, 0x48862a09u, 0x010df786u, 0x00050101u, 0x0f018203u,
++	0x01823000u, 0x0182020au, 0xd2cf0001u, 0xa6284d9du, 0xcf444304u, 0x28bc2da5u, 0xd3922405u, 0x79db9476u,
++	0xe285e776u, 0xcdaaff86u, 0x9c5aa8beu, 0x48592163u, 0xf5b173bcu, 0x9e0d2328u, 0xeb581109u, 0x787b1d4du,
++	0x905cca76u, 0xf088d31fu, 0xbf03b47eu, 0x4d493b27u, 0x698c5361u, 0xe1ce350cu, 0xb760a872u, 0xd8534bd2u,
++	0xd3f37a9eu, 0x98b5df63u, 0xa4da2d17u, 0xd7eb50cbu, 0x43201025u, 0x76a59ac1u, 0x65c38b5cu, 0x23b2aa84u,
++	0x53ceda38u, 0xc466aea2u, 0x3f362b56u, 0x17adabb5u, 0x5a4bc7d7u, 0xa7443e39u, 0x32d5c8d5u, 0x28f5b9f1u,
++	0x4b3f97acu, 0x246d0d7du, 0x359d6550u, 0xbf012f73u, 0xa13174d5u, 0x64eea2dau, 0x07c40dc0u, 0x80a03dadu,
++	0x93a5bd01u, 0xa29cfa00u, 0xeb551d5fu, 0x85f55f50u, 0x3c167eb8u, 0x64f2dd11u, 0x8ed7a511u, 0x9eb564c6u,
++	0xce233e11u, 0xe294e754u, 0xe7ae89dcu, 0xd87ab72du, 0x3ddbc0f2u, 0xf49be55fu, 0xc9fef5d7u, 0x3e22bf4au,
++	0x431d2bf8u, 0x06239015u, 0x03023fdau, 0xa3010001u, 0x305e3060u, 0x5503061fu, 0x1804231du, 0x14801630u,
++	0x42bce002u, 0x09e6b9e7u, 0x0e8e0fdfu, 0xe3b95a54u, 0x08313a95u, 0x03061d30u, 0x040e1d55u, 0xb2140416u,
++	0x90894883u, 0xbaf00da6u, 0x71ac9b1fu, 0x1ee13b2fu, 0x30940c28u, 0x5503060fu, 0x0804131du, 0x01010630u,
++	0x000102ffu, 0x03060b30u, 0x040f1d55u, 0x02020304u, 0x063d3004u, 0x48862a09u, 0x010df786u, 0x30300a01u,
++	0x0b300da0u, 0x86600906u, 0x03650148u, 0xa1010204u, 0x0618301au, 0x48862a09u, 0x010df786u, 0x0b300801u,
++	0x86600906u, 0x03650148u, 0xa2010204u, 0x20010203u, 0x01018203u, 0xaf17b300u, 0xbc9c4c44u, 0x2a254ef7u,
++	0x4c48c518u, 0xe40cf2e1u, 0xe6b7e79cu, 0x2e643616u, 0xf0ad81e0u, 0x1083a41fu, 0x0d1ad606u, 0xc4201d16u,
++	0x1a94ea7bu, 0x86797fb1u, 0xe2c6781au, 0x04e2f77cu, 0x8e56b859u, 0x66ed7c4bu, 0x81dd6806u, 0x41301edeu,
++	0xf6ccbe6du, 0xdc43e824u, 0x6da4e0a0u, 0xd9523584u, 0x5834ec77u, 0xe41c56d5u, 0xe0663fa0u, 0x3f008683u,
++	0x1c54dde6u, 0xed8d793cu, 0x04dbbe07u, 0x546b53a3u, 0x58e5105au, 0x90c4a632u, 0x81a70cdcu, 0x99c8bb20u,
++	0x46a934c1u, 0xf5fefd82u, 0x8989253du, 0x955a0b31u, 0x96aba6fcu, 0x2ded02b2u, 0xcf8aaebfu, 0xb60e8fecu,
++	0x79f5cb1fu, 0xed22191fu, 0xde5096a1u, 0xd88cdeb9u, 0x1d38f1abu, 0x3bdd28cfu, 0x2f65b3adu, 0xbc3a25e0u,
++	0x763acfa5u, 0x9283dc0au, 0xc2a73883u, 0x8cbd88dau, 0xa3cacd3au, 0xff57e4bdu, 0xadf76a4bu, 0xf54c753bu,
++	0x769576f2u, 0x190b9c2du, 0x375621b4u, 0x0b940290u, 0x960e7aacu, 0x038230ceu, 0x028230efu, 0x0203a0a7u,
++	0x01020201u, 0x063d3001u, 0x48862a09u, 0x010df786u, 0x30300a01u, 0x0b300da0u, 0x86600906u, 0x03650148u,
++	0xa1010204u, 0x0618301au, 0x48862a09u, 0x010df786u, 0x0b300801u, 0x86600906u, 0x03650148u, 0xa2010204u,
++	0x20010203u, 0x0b316c30u, 0x03060930u, 0x13060455u, 0x314e4302u, 0x060e3010u, 0x08045503u, 0x65420713u,
++	0x6e696a69u, 0x30103167u, 0x5503060eu, 0x07130704u, 0x6a696542u, 0x31676e69u, 0x060d300fu, 0x0b045503u,
++	0x69580613u, 0x696d6f61u, 0x0d300f31u, 0x04550306u, 0x5806130au, 0x6d6f6169u, 0x30173169u, 0x55030615u,
++	0x0e130304u, 0x6f616958u, 0x5220696du, 0x20746f6fu, 0x1e304143u, 0x37310d17u, 0x39323031u, 0x36303430u,
++	0x175a3131u, 0x3137330du, 0x30343230u, 0x31363034u, 0x6c305a31u, 0x09300b31u, 0x04550306u, 0x43021306u,
++	0x3010314eu, 0x5503060eu, 0x07130804u, 0x6a696542u, 0x31676e69u, 0x060e3010u, 0x07045503u, 0x65420713u,
++	0x6e696a69u, 0x300f3167u, 0x5503060du, 0x06130b04u, 0x6f616958u, 0x0f31696du, 0x03060d30u, 0x130a0455u,
++	0x61695806u, 0x31696d6fu, 0x06153017u, 0x03045503u, 0x69580e13u, 0x696d6f61u, 0x6f6f5220u, 0x41432074u,
++	0x22018230u, 0x09060d30u, 0x8648862au, 0x01010df7u, 0x03000501u, 0x000f0182u, 0x0a018230u, 0x01018202u,
++	0x5437bb00u, 0x28963541u, 0x34e4554au, 0xac95620eu, 0x17c0b39fu, 0x934a2ac2u, 0x52c3d4e1u, 0x89e719f0u,
++	0x5c899b51u, 0x6b2542bdu, 0xff201577u, 0x827685f0u, 0x404eedbeu, 0x8ec45138u, 0x49b0920bu, 0x1fb3bd36u,
++	0x3e60ff43u, 0xb424a2d1u, 0xa38b2c24u, 0xf184cd79u, 0x1a23c892u, 0xab8869f8u, 0x86bfb697u, 0x8b8913abu,
++	0xbdd6efb5u, 0x88477f9cu, 0x4862c455u, 0xf87a6ecdu, 0x9bb5e02cu, 0xa53a8130u, 0xb6421f6du, 0x6865b90bu,
++	0x5f9a14cdu, 0x45c53b6eu, 0x8d2845a6u, 0x538f9835u, 0xf1eed3ddu, 0xd94708e0u, 0xfb220af1u, 0x45a66a07u,
++	0x03d66443u, 0xab8d04d3u, 0x739d7789u, 0x65b670c1u, 0xfc8e178bu, 0x9f34b8fdu, 0x488f7f97u, 0xc52e6b92u,
++	0xada38e09u, 0xaca6e7f6u, 0xe6ac0713u, 0xeb86bb03u, 0x5d0ea1f8u, 0xeef8d79du, 0x43706795u, 0x2e4497bbu,
++	0xfccde053u, 0x1bbbf081u, 0x407eace7u, 0xfa75b802u, 0xec64bdb8u, 0xb4a35050u, 0x6b989d2au, 0xde6c3d73u,
++	0x01030231u, 0x3ca30100u, 0x1d303a30u, 0x1d550306u, 0x0416040eu, 0xbce00214u, 0xe6b9e742u, 0x8e0fdf09u,
++	0xb95a540eu, 0x313a95e3u, 0x060c3008u, 0x131d5503u, 0x03300504u, 0x30ff0101u, 0x5503060bu, 0x04040f1du,
++	0x06010203u, 0x09063d30u, 0x8648862au, 0x01010df7u, 0xa030300au, 0x060b300du, 0x48866009u, 0x04036501u,
++	0x1aa10102u, 0x09061830u, 0x8648862au, 0x01010df7u, 0x060b3008u, 0x48866009u, 0x04036501u, 0x03a20102u,
++	0x03200102u, 0x00010182u, 0x039f3580u, 0x8be753f5u, 0x7549c944u, 0x3362c755u, 0x94ca4f44u, 0xaabc1583u,
++	0x07b25195u, 0x07a7d2abu, 0x9f4330e5u, 0x4719611bu, 0x3667481fu, 0x87e97a5au, 0x895f128du, 0x56a4f4f5u,
++	0xb4abf5c0u, 0x6022420cu, 0x8e6e4ca6u, 0xcf34f50cu, 0xa40ce1e1u, 0x806411beu, 0xd4141845u, 0xc46b8e81u,
++	0xa5a28910u, 0xd4119c4au, 0x2439cf38u, 0xa558ec0du, 0x8a083a71u, 0x0f67e4ecu, 0xa77c5c9du, 0x13989952u,
++	0x9fc84ca1u, 0x0a4711d3u, 0x98f75024u, 0xceac0abeu, 0x1f814f19u, 0x1eab87a6u, 0x2afd5193u, 0xc609a639u,
++	0x08667883u, 0x8c6c9553u, 0x388f1d97u, 0xb9e27860u, 0x84b117a9u, 0x1f816866u, 0x8facf432u, 0x238c3b27u,
++	0x93b76111u, 0x132d4849u, 0x031d23e5u, 0x88ec2941u, 0xe60adca2u, 0x538e1a26u, 0xcb83ca61u, 0x8834d13bu,
++	0xbccf10d2u, 0xb8047e1du, 0xc90e2799u, 0x27650b2cu, 0x3e2a20e7u, 0x5ce94197u, 0x061d51abu, 0x8029ed18u,
++	0x4c3697f9u, 0xd7c886a3u, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu, 0xffffffffu,
++	0xffffffffu, 0xffffffffu, 0xffffffffu,
++};
++
++static const uint32_t a610_zap_b02[524] = {
++	0x016ff020u, 0x880f020cu, 0xb8090071u, 0xa8000071u, 0xc440000fu, 0xc441000eu, 0xc4430005u, 0xc442000au,
++	0x88030020u, 0xc8000008u, 0x98001806u, 0x8803f800u, 0xa8030024u, 0xa8040025u, 0xa8050025u, 0xa8060025u,
++	0x88030001u, 0xd1000000u, 0xa8090071u, 0xb8080083u, 0x88030004u, 0xa8030083u, 0xb803006du, 0x60630001u,
++	0x48630007u, 0x50630007u, 0xc4600003u, 0xc060fffbu, 0x981e0006u, 0xb80a0080u, 0x88840003u, 0x988a1806u,
++	0xa8030080u, 0xb8030069u, 0x28630030u, 0xc060ffffu, 0xb8030069u, 0xa8040082u, 0xa8000082u, 0xa80a0080u,
++	0x88040001u, 0x88030802u, 0xa8040026u, 0xa8030027u, 0x981e0006u, 0x8b1d0084u, 0xa8000030u, 0x881d001cu,
++	0x881f0001u, 0x8b1d0081u, 0xb8030038u, 0xc0600000u, 0xb8030038u, 0xb803006au, 0xc060ffffu, 0x01000000u,
++	0xc4410008u, 0xc4400012u, 0x01000000u, 0xa8080083u, 0xd1000000u, 0xa8090071u, 0xc8000000u, 0xc800ffffu,
++	0x8803f400u, 0x88040001u, 0xa8030024u, 0xa8040025u, 0xa8040026u, 0xa8030027u, 0xc3c1fff8u, 0xa8080083u,
++	0x88030001u, 0xd1000000u, 0xa8090071u, 0x88050002u, 0xa805008bu, 0xb803008bu, 0xa800008bu, 0x50630019u,
++	0x28660001u, 0x98063806u, 0x8a440001u, 0xa804005du, 0xd40001fau, 0x88030004u, 0xd40001fau, 0x88030031u,
++	0xa8000030u, 0x881d001cu, 0x881f0001u, 0xd4000207u, 0x8b1d0081u, 0x8803f800u, 0x88040003u, 0xa8040026u,
++	0xa8030027u, 0x981e5806u, 0x981e6806u, 0x981e7006u, 0xb8040062u, 0xb8050063u, 0x49ef0002u, 0x09ef0fffu,
++	0x51ef000cu, 0x49ef000cu, 0xa8030024u, 0xa8040025u, 0xa8050025u, 0xa80f0025u, 0x8803f400u, 0x88040001u,
++	0xa8040026u, 0xa8030027u, 0x33c40002u, 0xa8030024u, 0xa8040025u, 0x88000011u, 0x88006051u, 0x881dbb08u,
++	0x8a04000fu, 0x309fffffu, 0x881dbb11u, 0x881f0000u, 0x881dab00u, 0x881f0000u, 0x881db987u, 0x881f0101u,
++	0x881da9bbu, 0x8a040020u, 0x309f0100u, 0x881db990u, 0x881f00fdu, 0x881f0040u, 0x881f0000u, 0x881f0001u,
++	0x881f0000u, 0x881f0001u, 0x881f0000u, 0x8a0400dcu, 0x309fd8d4u, 0x881f00fcu, 0x881db999u, 0x881f0001u,
++	0x881f0001u, 0x881f0001u, 0x881da9bcu, 0x881f0004u, 0x881da9b3u, 0x881f0000u, 0x881da9b0u, 0x8a040042u,
++	0x309f1800u, 0x881f000fu, 0x881d001cu, 0x881f0001u, 0x881db309u, 0x881f004cu, 0xb8030062u, 0xb8040063u,
++	0x086304c0u, 0x98802002u, 0x88050080u, 0x48a50002u, 0x08a5007fu, 0x50a50007u, 0x301da9b4u, 0x9803f806u,
++	0x9804f806u, 0x301da9bcu, 0x9805f806u, 0x48a50016u, 0x301db9a1u, 0x9803f806u, 0x9804f806u, 0x8a040036u,
++	0x30840000u, 0x301db9a0u, 0x98a4f806u, 0xd40001dfu, 0x01000000u, 0x881db800u, 0x881f0140u, 0x881da823u,
++	0x881f0100u, 0x881dbb10u, 0x881f0140u, 0x881dab04u, 0x881f0100u, 0x881db803u, 0x881f0100u, 0x881da894u,
++	0x881f0100u, 0x881db801u, 0x881f0000u, 0x881da83bu, 0x881f0000u, 0x881db802u, 0x881f0000u, 0x881da863u,
++	0x881f0000u, 0x301db820u, 0x8a044020u, 0x309f4000u, 0x8a440001u, 0x309db823u, 0x881c0400u, 0x8c1f0000u,
++	0x301db9a0u, 0x8a044030u, 0x309f4000u, 0x8a440001u, 0x309db9a3u, 0x881c0400u, 0x8c1f0000u, 0x88034080u,
++	0x88040000u, 0x88050003u, 0x880c9e0bu, 0xa80c0024u, 0x30634000u, 0xa8030025u, 0xa8040025u, 0xa8050025u,
++	0x8b1d00e7u, 0x881f0001u, 0x881dd600u, 0x28df00ffu, 0x881dbb00u, 0x28df00ffu, 0x881d9840u, 0x28df00ffu,
++	0xd40001ebu, 0x01000000u, 0x881d88d4u, 0x881f0000u, 0x881d88d7u, 0x881f4100u, 0x881d88d8u, 0x881f0000u,
++	0x881f0000u, 0x881d88d6u, 0x881f0000u, 0x881d88d0u, 0x881f0000u, 0x881f0000u, 0x8a04003fu, 0x309f007fu,
++	0x881f0404u, 0x8a440001u, 0x309d88dfu, 0x881f0000u, 0x881f0000u, 0x881f0000u, 0x881f0000u, 0x881d88e3u,
++	0x881f00f2u, 0x8b1d00e7u, 0x301f0001u, 0x881dd600u, 0x28df00ffu, 0x28c300ffu, 0x48630010u, 0x881dbb02u,
++	0x307f001eu, 0x881d9842u, 0x307f001eu, 0xd40001ebu, 0x01000000u, 0x881d88d4u, 0x881f0000u, 0x881d88d7u,
++	0x881f3100u, 0x881d88d8u, 0x881f0000u, 0x881f0000u, 0x881d88d6u, 0x8a040002u, 0x309f0000u, 0x881d88d0u,
++	0x881f0000u, 0x881f0000u, 0x8a04000fu, 0x309f001fu, 0x881f0101u, 0x881d88e3u, 0x881f00f2u, 0x8b1d00e7u,
++	0x301f0001u, 0x881dd600u, 0x28df00ffu, 0x28c300ffu, 0x48630010u, 0x881dbb02u, 0x307f001eu, 0x881d9842u,
++	0x307f001eu, 0xd40001ebu, 0x01000000u, 0xc8000085u, 0x01000000u, 0x01000000u, 0x01000000u, 0x01000000u,
++	0x21400000u, 0x56100003u, 0x00000000u, 0x204cc001u, 0x00000014u, 0x204cc002u, 0x00000000u, 0x204cc304u,
++	0x00000000u, 0x00000300u, 0x00020001u, 0x429400f8u, 0x00000000u, 0x00000500u, 0x00000005u, 0x00800000u,
++	0x04800008u, 0xc1060700u, 0x20100003u, 0x42101003u, 0x20010001u, 0x42100001u, 0xfffffff9u, 0x01000000u,
++	0x00000000u, 0x08000500u, 0x00000000u, 0x204cc300u, 0x00000000u, 0x204cc304u, 0x00000000u, 0x204cc308u,
++	0x00000000u, 0x204cc30cu, 0x00000000u, 0x204cc310u, 0x00000000u, 0x204cc314u, 0x00000000u, 0x204cc318u,
++	0x00000000u, 0x204cc31cu, 0x00000000u, 0x204cc320u, 0x00000000u, 0x204cc324u, 0x00000000u, 0x204cc328u,
++	0x00000000u, 0x204cc32cu, 0x00000000u, 0x204cc330u, 0x00000000u, 0x204cc334u, 0x00000000u, 0x204cc338u,
++	0x00000000u, 0x204cc33cu, 0x00000000u, 0x204cc340u, 0x00000000u, 0x204cc344u, 0x00000000u, 0x204cc348u,
++	0x00000000u, 0x204cc34cu, 0x00000000u, 0x204cc350u, 0x00000000u, 0x204cc354u, 0x00000000u, 0x204cc358u,
++	0x00000000u, 0x204cc35cu, 0x00000000u, 0x204cc360u, 0x00000000u, 0x204cc364u, 0x00000000u, 0x204cc368u,
++	0x00000000u, 0x204cc36cu, 0x00000000u, 0x204cc370u, 0x00000000u, 0x204cc374u, 0x00000000u, 0x204cc378u,
++	0x00000000u, 0x204cc37cu, 0x00000000u, 0x204cc380u, 0x00000000u, 0x204cc384u, 0x00000000u, 0x204cc388u,
++	0x00000000u, 0x204cc38cu, 0x00000000u, 0x204cc390u, 0x00000000u, 0x204cc394u, 0x00000000u, 0x204cc398u,
++	0x00000000u, 0x204cc39cu, 0x00000000u, 0x204cc3a0u, 0x00000000u, 0x204cc3a4u, 0x00000000u, 0x204cc3a8u,
++	0x00000000u, 0x204cc3acu, 0x00000000u, 0x204cc3b0u, 0x00000000u, 0x204cc3b4u, 0x00000000u, 0x204cc3b8u,
++	0x00000000u, 0x204cc3bcu, 0x00000000u, 0xe0400000u, 0x00000000u, 0x03000000u, 0x00000000u, 0x00000000u,
++	0xa8000030u, 0x881d001cu, 0x881f0001u, 0xd4000207u, 0x8b1d0081u, 0x8803f800u, 0xa8030024u, 0xa80b0025u,
++	0xa80d0025u, 0xa80e0025u, 0xd40001fau, 0x88030031u, 0xa8000030u, 0x881d001cu, 0x881f0001u, 0xd4000207u,
++	0x8b1d0081u, 0x8803f400u, 0xa8030024u, 0xa8000025u, 0x88040001u, 0xa8040026u, 0xa8030027u, 0xc3c0fe77u,
++	0x88050002u, 0xa805008bu, 0xb803008bu, 0x50630019u, 0x28630001u, 0x98672010u, 0xa800008bu, 0xcc80000cu,
++	0x01000000u, 0x8b1d00e7u, 0x301f0001u, 0x881dd600u, 0xd40001ebu, 0x28df00ffu, 0xa8000030u, 0x881d001cu,
++	0x881f0001u, 0xd4000207u, 0x8b1d0081u, 0xa8080083u, 0x88030001u, 0xd1000000u, 0xa8090071u, 0x8b1d00e7u,
++	0x881f0003u, 0x881dd600u, 0x28df00ffu, 0x881dbb01u, 0x28df00ffu, 0x881d9841u, 0x28df00ffu, 0xd40001ebu,
++	0x01000000u, 0xd0000000u, 0x01000000u, 0x28c500ffu, 0x48a50010u, 0x881dbb02u, 0x30bf0005u, 0x881d9842u,
++	0x30bf0005u, 0x881d9880u, 0x301f0800u, 0x881dd601u, 0x28df00ffu, 0xc8c80003u, 0x08c60001u, 0x38c60100u,
++	0xd0000000u, 0x01000000u, 0x8b1d00e7u, 0x881f0001u, 0x881dd600u, 0x28df00ffu, 0x28c400ffu, 0x48840010u,
++	0x881dbb02u, 0x9883f806u, 0x881d9842u, 0xd40001ebu, 0x9883f806u, 0xd0000000u, 0x01000000u, 0xb8050038u,
++	0xc0a00000u, 0xb8050038u, 0xd0000000u, 0x01000000u,
++};
++#endif /* _SWEET_ZAP_H_ */
