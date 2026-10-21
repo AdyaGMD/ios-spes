@@ -42,3 +42,16 @@ User reports spes finally reached iOS UI after waiting, but it is slow.
 
 Local patch dry-runs passed; 11 host tests passed. New kernel/device tests
 pending. Keep installed root and working 0093 boot image as fallback.
+
+## Firmware audit follow-up
+
+The verified spes modem_a FAT16 backup contains610 unique file paths.
+None of upstream's28 modem offset/size/CRC entries matches this image fully.
+Upstream fw_read logs a CRC mismatch but continues, relying on TrustZone;
+spes must instead reject unexpected firmware before starting hardware.
+Generated ignored research/spes-modem-map.json with per-file extents, CRC32,
+SHA256 and whole-partition SHA256 matching the backup manifest. The mapper
+supports fragmented chains and checks mirror FATs, bounds, cycles and LFNs.
+One duplicate board-data filename has identical bytes at different offsets;
+mapper retains first, rejecting conflicting duplicates. Four regression tests
+pass,15 total. This is preparation, not a working Wi-Fi driver.

@@ -1,3 +1,23 @@
+# Startup/buttons0096 test booted; firmware map ready — 2026-10-21
+
+- CI39568657057 passed at source4b6ad3a. Artifact xnu/out-0096 downloaded.
+- Built default shim/out/spes-ios.img with0096, keys off. Saved old working
+  overlay-muted0093 as shim/out/spes-ios-0093-gui.img before rebuilding.
+- Separate shim/out/spes-ios-0096-keys.img enables sweetkeys=1, still cpus1,
+  USB disabled, modem/WLAN not included. Image17231872bytes; host boot header,
+  payload, memory bounds and bootargs verified. User ready in Fastboot;
+  boot accepted send0.411s boot0.288s total0.703s. Await UI/button/latency report.
+  sweetfb_stayon=1 means Power will not physically blank display.
+- Firmware map tools/map-modem-fat16.py +4 tests:610files from backed-up modem_a;
+  whole-partition SHA matches backup manifest. 0/28 topaz modem table entries
+  match spes offset+size+CRC. Upstream fw_read continues on CRC mismatch; fix
+  this for spes before enabling modem. JSON research/spes-modem-map.json ignored.
+- Reconstructed final upstream TopazModem.cpp under research/upstream-wifi/tree
+  from0113–0130 patches for audit. No Wi-Fi code added to current kernel yet.
+- Next: validate0096 on phone, adapt firmware tables/read-only partition API,
+  enforce fail-closed firmware identity, audit TrustZone/DMA/GLINK assumptions,
+  then staged modem-only test before WLAN scan/association. GPU source absent.
+
 # First upstream batch CI running — 2026-10-21
 
 - Commit4b6ad3a pushed fork/spes. Kernel CI39568657057 in progress, Build step:
