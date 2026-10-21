@@ -1,3 +1,16 @@
+# First upstream batch CI running — 2026-10-21
+
+- Commit4b6ad3a pushed fork/spes. Kernel CI39568657057 in progress, Build step:
+  https://github.com/AdyaGMD/ios-spes/actions/runs/39568657057.
+- Includes0094–0096 only, not Wi-Fi or real GPU. Once CI passes, download
+  xnu-kernel to xnu/out-0096, build separate temporary image, test boot speed
+  and PMIC keys opt-in; keep0093 fallback. Do not enable unreviewed hardware.
+- WLAN MSA0x51900000+0x100000 also matches live FDT. Upstream16MiB DMA pool
+  at0xe0000000 is in spes DRAM, outside XNU selected bank and explicit reserved
+  regions; this alone does not prove firmware/secure ownership compatibility.
+- Readonly local symbol image detached. Downloaded upstream Wi-Fi patch copies
+  in ignored research/upstream-wifi for continued audit.
+
 # UI reported working; upstream adaptation begun — 2026-10-21
 
 - User now reports iOS booted to UI after waiting; very slow. Earlier apparent

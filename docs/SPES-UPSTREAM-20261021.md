@@ -23,7 +23,10 @@ User reports spes finally reached iOS UI after waiting, but it is slow.
 - Wi-Fi: upstream0113–0130 contains PAS modem boot, firmware loading from
   modem_a, GLINK/QRTR services, WLFW and WLAN protocol/data path. Live spes FDT
   matches modem reservation0x4ab00000+0x6900000 and SMEM0x46000000+0x200000.
-  Firmware/board data, other carveouts, DMA pool, RF/clock assumptions and EFS
+  WLAN MSA also matches0x51900000+0x100000. Upstream allocates a16MiB
+  DMA pool at0xe0000000, within spes DRAM and outside the selected XNU high
+  memory bank and explicit reserved ranges. Firmware/board data, DMA ownership,
+  RF/clock assumptions and EFS
   handling still need comparison. Do not enable wholesale on that evidence.
 - Battery: topaz0091 assumes SM5602 gauge@0x71 plus charger@0x6a on SE1.
   Spes live FDT includes sc8551@0x65; identify all active gauge/charger devices
