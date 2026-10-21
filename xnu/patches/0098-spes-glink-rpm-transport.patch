@@ -1,6 +1,6 @@
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -675,6 +675,373 @@
+@@ -675,9 +675,389 @@
  	    touch_rd(st.gcc, 0x79004));
  	/* A register snapshot is not proof that GPU execution is possible. */
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
@@ -29,7 +29,9 @@
 +		head += 4;
 +		if (head >= size) head = 0;
 +	}
++	__asm__ volatile("dmb sy" ::: "memory");
 +	touch_wr(ram, offset + 4u, head);
++	__asm__ volatile("dmb sy" ::: "memory");
 +	touch_wr(apcs, 0x8u, 1u);
 +}
 +
@@ -69,7 +71,9 @@
 +	uint32_t tail = touch_rd(ram, offset);
 +	tail += count;
 +	while (tail >= size) tail -= size;
++	__asm__ volatile("dmb sy" ::: "memory");
 +	touch_wr(ram, offset, tail);
++	__asm__ volatile("dmb sy" ::: "memory");
 +}
 +
 +static bool
@@ -87,6 +91,11 @@
 +		uint32_t data_hdr[2];
 +		spes_rpm_rx_peak(ram, rx_off, rx_size, 8, data_hdr, 8);
 +		uint32_t chunk_size = data_hdr[0];
++		if (chunk_size == 0 || chunk_size > rx_size) {
++			printf("SPES RPM: invalid chunk_size=%#x avail=%u\n", chunk_size, avail);
++			spes_rpm_rx_advance(ram, rx_off, rx_size, 8);
++			return false;
++		}
 +		uint32_t chunk_aligned = (chunk_size + 7u) & ~7u;
 +		if (avail < 16 + chunk_aligned) return false;
 +
@@ -110,8 +119,8 @@
 +		if (out_payload_len) *out_payload_len = 0;
 +		return true;
 +	}
-+}
-+
+ }
+ 
 +static bool
 +spes_rpm_wait_msg(vm_offset_t ram, uint32_t rx_off, uint32_t rx_size,
 +    struct glink_msg *hdr, void *payload, uint32_t max_payload, uint32_t *out_payload_len,
@@ -126,7 +135,7 @@
 +	return false;
 +}
 +
-+static void
+ static void
 +spes_glink_rpm_probe(void)
 +{
 +	int enabled = 0;
@@ -244,7 +253,7 @@
 +
 +	memset(&req, 0, sizeof(req));
 +	req.gmsg.cmd = 9; /* GLINK_CMD_TX_DATA */
-+	req.gmsg.param1 = req_rcid; /* rcid = 2 */
++	req.gmsg.param1 = 1; /* lcid = 1 (AP channel ID) */
 +	req.gmsg.param2 = 0; /* iid */
 +	req.chunk_size = 40;
 +	req.left_size = 0;
@@ -260,16 +269,18 @@
 +	req.kvp_size = 4u;
 +	req.kvp_val = 64u; /* corner 64 = LOW_SVS */
 +
-+	printf("SPES RPM: 10. voting rwcx=64 (rcid=%u msg_id=1)\n", req_rcid);
++	printf("SPES RPM: 10a. writing 56b rwcx vote (lcid=1 msg_id=1)\n");
++	touch_wait(100);
 +	spes_rpm_pipe_write(ram, tx_off, tx_size, &req, sizeof(req), apcs);
++	printf("SPES RPM: 10b. doorbell kicked! Waiting for RPM ACK...\n");
 +
 +	uint8_t ack_payload[64] = {0};
 +	uint32_t ack_len = 0;
 +	bool rwcx_acked = false;
-+	for (int iter = 0; iter < 50; ++iter) {
++	for (int iter = 0; iter < 100; ++iter) {
 +		if (spes_rpm_wait_msg(ram, rx_off, rx_size, &rmsg, ack_payload, sizeof(ack_payload), &ack_len, 50)) {
 +			printf("SPES RPM: rx cmd=%u p1=%u len=%u\n", rmsg.cmd, rmsg.param1, ack_len);
-+			if (rmsg.cmd == 9 /* TX_DATA */ && ack_len >= 12) {
++			if (rmsg.cmd == 9 /* TX_DATA */) {
 +				uint32_t *ack = (uint32_t *)ack_payload;
 +				printf("SPES RPM: ACK payload [%#x, %#x, %#x]\n", ack[0], ack[1], ack[2]);
 +				rwcx_acked = true;
@@ -285,17 +296,19 @@
 +	touch_wait(100);
 +
 +	/* Step 5: Send vote for rwmx=64 */
-+	req.gmsg.param1 = req_rcid;
++	req.gmsg.param1 = 1; /* lcid = 1 */
 +	req.msg_id = 2u;
 +	req.resource_type = 0x786d7772u; /* "rwmx" */
-+	printf("SPES RPM: 12. voting rwmx=64 (rcid=%u msg_id=2)\n", req_rcid);
++	printf("SPES RPM: 12a. writing 56b rwmx vote (lcid=1 msg_id=2)\n");
++	touch_wait(100);
 +	spes_rpm_pipe_write(ram, tx_off, tx_size, &req, sizeof(req), apcs);
++	printf("SPES RPM: 12b. doorbell kicked! Waiting for RPM ACK...\n");
 +
 +	bool rwmx_acked = false;
-+	for (int iter = 0; iter < 50; ++iter) {
++	for (int iter = 0; iter < 100; ++iter) {
 +		if (spes_rpm_wait_msg(ram, rx_off, rx_size, &rmsg, ack_payload, sizeof(ack_payload), &ack_len, 50)) {
 +			printf("SPES RPM: rx cmd=%u p1=%u len=%u\n", rmsg.cmd, rmsg.param1, ack_len);
-+			if (rmsg.cmd == 9 /* TX_DATA */ && ack_len >= 12) {
++			if (rmsg.cmd == 9 /* TX_DATA */) {
 +				uint32_t *ack = (uint32_t *)ack_payload;
 +				printf("SPES RPM: ACK payload [%#x, %#x, %#x]\n", ack[0], ack[1], ack[2]);
 +				rwmx_acked = true;
@@ -371,10 +384,13 @@
 +		printf("  gpu +%#02x = %#08x\n", o, touch_rd(gpu, o));
 +	}
 +	printf("SPES GPU: 20. GPU STAGE-1 COMPLETE!\n");
- }
- 
- static void
-@@ -704,6 +1071,7 @@
++}
++
++static void
+ touch_thread(void *arg, wait_result_t result)
+ {
+ 	unsigned delay_s = 45;
+@@ -704,6 +1084,7 @@
  		goto out;
  	}
  	spes_gpu_power_probe();
