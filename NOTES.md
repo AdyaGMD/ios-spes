@@ -1,3 +1,31 @@
+# GPU stage-0 image temporarily booted — 2026-10-21
+
+- CI39609391694 SUCCESS at dfda77d, artifact xnu/out-0097.
+- Built shim/out/spes-gpu-probe.img (17248256 bytes), SHA256
+  7c560552196817dab085a0a62eefeee1a520fc17cdb59bec2cb4ccea3d313b51.
+- Boot v3, embedded payload, 3GiB RAM bounds and RAM-root/read-only flags
+  verified with /tmp/check-spes-gpu.py. Existing0096 iOS image preserved.
+- adb reboot bootloader from recovery, then temporary fastboot boot accepted:
+  send0.393s boot0.288s total0.685s. This is acceptance, not runtime success.
+- Await user clock-inventory completion + cx/gx-gdsc values/photograph and
+  PID1 heartbeat. Do not infer powered state or proceed to writes yet.
+- Probe reads17 GPUCC controls and3 GCC registers only, no core/SMMU access;
+  no GPU initialization, firmware auth, disk writes or Metal device publication.
+- Next: decode actual CC/GDSC state, complete RPM S3/MX and GDSC transition
+  implementation, confirm SMMU ownership before ring/fence stage. The firmware
+  and CP packet differences are recorded in docs/SPES-GPU-20261021.md.
+
+# GPU diagnostic CI dispatched — 2026-10-21
+
+- Source dfda77d pushed fork/spes; CI39609391694 passed:
+  https://github.com/AdyaGMD/ios-spes/actions/runs/39609391694.
+- Further audit: SQE skips4-byte header; A610 CP_ME_INIT has11 payload words
+  versus upstreamA740 seven. ZAP MDT PT_LOAD is relocatable, nominal0x5000,
+  size0x830, alignment1MiB; never interpret0x5000 as physical load destination.
+- Phone remains in recovery. Downloading xnu-kernel to out-0097,
+  build gpu RAM-root profile and temporary boot. Need user photo of SPES GPU
+  lines: persistent storage logging intentionally off in this diagnostic.
+
 # GPU stage-0 clock diagnostic prepared — 2026-10-21
 
 - Added0097-spes-gpu-clock-inventory.patch: explicit spesgpuprobe=1 on spes,
