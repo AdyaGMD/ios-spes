@@ -116,7 +116,6 @@ def main():
 \tuint64_t zap_size = 0x2000u;
 \tif (zap_va) {
 \t\tmemcpy((void *)zap_va, a610_zap_b02, sizeof(a610_zap_b02));
-\t\tclean_dcache64(zap_pa, sizeof(a610_zap_b02), TRUE);
 \t\t__asm__ volatile ("dsb sy" ::: "memory");
 \t\tprintf("SPES GPU: 25b. ZAP b02 (%lu bytes) at pa=%#llx va=%#lx\\n",
 \t\t    sizeof(a610_zap_b02), zap_pa, (unsigned long)zap_va);
