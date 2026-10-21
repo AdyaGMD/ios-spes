@@ -1,3 +1,26 @@
+# GPU stage-4 verified on silicon & Stage 5 fix ready — 2026-10-21
+
+- Physical silicon execution photo verified 100% completion of Stage 4 TrustZone ZAP authentication:
+  * **TrustZone PAS ID 13 PIL**:
+    - `SPES GPU: 24. TrustZone PAS 13 check: st=0 res=0`
+    - `SPES GPU: 25a. ZAP MDT (6860 bytes) at pa=0x103278000 va=0xfffffe039c090000`
+    - `SPES GPU: 25b. ZAP b02 (2096 bytes) at pa=0x56615000 va=0xfffffe101dc05000`
+    - `SPES GPU: 25c. ZAP PIL_INIT_IMAGE: st=0 res=0`: MDT metadata signature validated by TrustZone!
+    - `SPES GPU: 25d. ZAP PIL_MEM_SETUP: st=0 res=0 (pa=0x56615000)`: Carveout `/reserved-memory/gpu_region@56615000` accepted by TrustZone!
+    - `SPES GPU: 25e. ZAP PIL_AUTH_RESET: st=0 res=0`: TrustZone executed ZAP shader and unlocked Adreno 610!
+  * **Stage 5 Root Cause Analysis & Silicon Fix**:
+    - `rptr=0 / wptr=45` caused by `CP_APRIV_CNTL` (dword `0x0844` -> byte `0x2110`) uninitialized, asserting `int=0x80` (`CP_ILLEGAL_INSTR_ERROR`), and missing `CP_SET_SECURE_MODE` packet.
+    - Updated `tools/build-0098-stage45.py` and `xnu/patches/0098-spes-glink-rpm-transport.patch` (commit `1d82bc2`):
+      1. Programmed `CP_APRIV_CNTL = 0x0000007f` to authorize ICACHE, RBFETCH, RBPRIVLEVEL, RBRPWB, SCRATCHWT, CDREAD, CDWRITE.
+      2. Cleared pending interrupts in `CP_INTERRUPT_STATUS` (`0x208c`) and `RBBM_INT_CLEAR_CMD` (`0x0808`).
+      3. Added `CP_SET_SECURE_MODE` (`0x70660001`, `0x00000000`) after `CP_ME_INIT` to drop secure privileges before normal PM4 rendering.
+      4. Enabled real-time progress logging on `rptr` advancement.
+    - CI run `39690951806` built and artifact `xnu-kernel` downloaded.
+    - Diagnostic boot image `shim/out/spes-gpu-probe.img` packaged and verified (SHA256: `fd8fe34038bc3c1a9e214dce94bfc1b5032b50f04eafa0006f17cc854637ef10`).
+- Display Brightness Subsystem (MIPI DSI DCS) & Audio Subsystem (WSA881x / Bolero) architectures completed:
+  * Brightness: OLED panel `k7 38 0c 0a video mode fhdp dsi panel` (`bl_ctrl_dcs`), DCS `0x51` (`MIPI_DCS_SET_DISPLAY_BRIGHTNESS`), min 1, max 2047 (`0x07ff`). DSI-0 controller at `0x05e94000`.
+  * Audio: WSA881x class-D smart amplifier on QUP0 SE1 (`0x04a84000`) at I2C slave address `0x0e` and `0x44`. Clocked by GCC RCG `0x1f278` and wrapper vote `0x7900c` (bit 11). Bolero macro blocks at `0x0a600000`, `0x0a620000`, `0x0a730000`.
+
 # GPU stage-3 verified on silicon (SMMUv2, TrustZone PAS 13, SQE load & CP activation) — 2026-10-21
 
 - Photo confirmed 100% completion of Stage 3 GPU bring-up on real handset (spes, Adreno 610):

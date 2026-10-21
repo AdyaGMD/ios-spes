@@ -1,0 +1,2 @@
+#!/bin/sh
+exec python3 /Users/adya/Documents/iospes/research/mkbootimg/mkbootimg.py "$@"
