@@ -1,6 +1,6 @@
 --- a/bsd/dev/sweet_touch.c
 +++ b/bsd/dev/sweet_touch.c
-@@ -675,9 +675,389 @@
+@@ -675,6 +675,421 @@
  	    touch_rd(st.gcc, 0x79004));
  	/* A register snapshot is not proof that GPU execution is possible. */
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
@@ -119,8 +119,8 @@
 +		if (out_payload_len) *out_payload_len = 0;
 +		return true;
 +	}
- }
- 
++}
++
 +static bool
 +spes_rpm_wait_msg(vm_offset_t ram, uint32_t rx_off, uint32_t rx_size,
 +    struct glink_msg *hdr, void *payload, uint32_t max_payload, uint32_t *out_payload_len,
@@ -135,7 +135,7 @@
 +	return false;
 +}
 +
- static void
++static void
 +spes_glink_rpm_probe(void)
 +{
 +	int enabled = 0;
@@ -373,24 +373,56 @@
 +	printf("SPES GPU: 18. clocks ahb=%#x cxo=%#x\n",
 +	    touch_rd(cc, 0x1078), touch_rd(cc, 0x109c));
 +
-+	/* Step 9: Read Adreno 610 identification registers */
-+	vm_offset_t gpu = ml_io_map(0x05900000u, 0x1000u);
++	/* Step 9: Configure and start GFX RCG clock (CXO 19.2 MHz safe baseline) */
++	printf("SPES GPU: 19. GFX RCG configure (curr cmd=%#x cfg=%#x)\n",
++	    touch_rd(cc, 0x101c), touch_rd(cc, 0x1020));
++	touch_wr(cc, 0x1020, 0u); /* SRC_SEL = 0 (CXO 19.2MHz), DIV = 0 (div 1) */
++	touch_wr(cc, 0x101c, 3u); /* ROOT_EN=1, UPDATE=1 */
++	bool rcg_ok = false;
++	for (int i = 0; i < 100; ++i) {
++		if (!(touch_rd(cc, 0x101c) & 2u)) {
++			rcg_ok = true;
++			break;
++		}
++		touch_wait(1);
++	}
++	printf("SPES GPU: 19b. GFX RCG updated (ok=%d cmd=%#x cfg=%#x)\n",
++	    rcg_ok, touch_rd(cc, 0x101c), touch_rd(cc, 0x1020));
++
++	/* Step 10: Ungate graphics core branch clocks */
++	touch_wr(cc, 0x108c, 1u); /* CX SNOC */
++	touch_wr(cc, 0x10a4, 1u); /* CX GFX */
++	touch_wr(cc, 0x1054, 1u); /* GX GFX */
++	touch_wait(10);
++	printf("SPES GPU: 20. branches snoc=%#x cx_gfx=%#x gx_gfx=%#x\n",
++	    touch_rd(cc, 0x108c), touch_rd(cc, 0x10a4), touch_rd(cc, 0x1054));
++
++	/* Step 11: Map Adreno 610 MMIO (16 KiB aperture) and unhalt GBIF */
++	vm_offset_t gpu = ml_io_map(0x05900000u, 0x4000u);
 +	if (!gpu) {
 +		printf("SPES GPU: GPU core MMIO map failed\n");
 +		return;
 +	}
-+	printf("SPES GPU: 19. reading Adreno 610 registers:\n");
-+	for (uint32_t o = 0; o < 0x40; o += 4) {
-+		printf("  gpu +%#02x = %#08x\n", o, touch_rd(gpu, o));
-+	}
-+	printf("SPES GPU: 20. GPU STAGE-1 COMPLETE!\n");
-+}
++	touch_wr(gpu, 0x58u, 0u); /* A6XX_RBBM_GBIF_HALT = 0 */
++	touch_wr(gpu, 0x04u, 0u); /* A6XX_GBIF_HALT = 0 */
++	touch_wait(5);
 +
-+static void
- touch_thread(void *arg, wait_result_t result)
- {
- 	unsigned delay_s = 45;
-@@ -704,6 +1084,7 @@
++	/* Step 12: Read and decode RBBM status and control registers */
++	uint32_t rbbm_status = touch_rd(gpu, 0x840u);
++	uint32_t rbbm_status3 = touch_rd(gpu, 0x84cu);
++	uint32_t gbif_halt = touch_rd(gpu, 0x58u);
++	uint32_t int0_status = touch_rd(gpu, 0x804u);
++	uint32_t vbif_reset = touch_rd(gpu, 0x854u);
++
++	printf("SPES GPU: 21. RBBM_STATUS=%#x (idle=%d) STATUS3=%#x\n",
++	    rbbm_status, (rbbm_status & ~1u) == 0, rbbm_status3);
++	printf("SPES GPU: 21b. GBIF_HALT=%#x INT0=%#x VBIF_RESET=%#x\n",
++	    gbif_halt, int0_status, vbif_reset);
++	printf("SPES GPU: 22. GPU STAGE-2 COMPLETE!\n");
+ }
+ 
+ static void
+@@ -704,6 +1119,7 @@
  		goto out;
  	}
  	spes_gpu_power_probe();
