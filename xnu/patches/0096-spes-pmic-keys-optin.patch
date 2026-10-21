@@ -1,0 +1,15 @@
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -676,7 +676,11 @@
+ 	/* PMIC keys need separate spes validation; never start the USB driver. */
+ 	DTEntry platform;
+ 	if (SecureDTLookupEntry(NULL, "/spes-platform", &platform) == kSuccess) {
+-		printf("SPES: keys/USB disabled during bring-up\n");
++		/* Live spes FDT matches PM6125 PON and GPIO5. Opt-in test only. */
++		int keys = 0;
++		(void)PE_parse_boot_argn("sweetkeys", &keys, sizeof(keys));
++		if (keys == 1) sweet_keys_init();
++		printf("SPES: PMIC keys %s; USB disabled\n", keys == 1 ? "requested" : "disabled");
+ 		return 0;
+ 	}
+ 	sweet_keys_init();

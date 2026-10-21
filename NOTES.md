@@ -1,3 +1,24 @@
+# UI reported working; upstream adaptation begun — 2026-10-21
+
+- User now reports iOS booted to UI after waiting; very slow. Earlier apparent
+  logo hang was not proven deadlock. Do not keep diagnosing it as a boot failure.
+- Longer log research/spes-ios-long-boot.txt:164596bytes,flush74. SpringBoard
+  samples showed LaunchServices database reseed wait while ControlCenter queried
+  app records. Symbolication research/spes-long-symbols.txt using official ipsw
+  tool3.1.739 in research/ipsw-tool and cache research/ios16.a2s.
+- Original local root currently mounted readonly /Volumes/iOSRoot for symbols;
+  detach after use. Phone state is user-reported running iOS; do not reboot it
+  without communicating test plan. Recovery was last tool-dispatched before
+  user reported their own successful boot.
+- User requests ALL useful new upstream hardware support, not only GPU/Wi-Fi.
+  Fetched origin/topaz89451b8; review docs/SPES-UPSTREAM-20261021.md.
+- Added0094 upstreamIOKit-quiesce,0095 adapted emptyIOAcceleratorES (no GPU),
+  0096 opt-in PMIC keys on spes after matching live FDT. Patch dry runs and
+  11 host tests pass. Need CI build and temporary test; current normal keys=0.
+- GPU implementation not published upstream. Wi-Fi modem reservation matches
+  but detailed firmware/DMA/board validation remains. Battery differs; do not
+  copy topaz battery/DSI/MMIO work wholesale. Preserve0093 fallback/root.
+
 # Diagnostic copy inspected; longer unchanged boot started — 2026-10-20
 
 - Readback completed exactly16GiB: research/spes-ios-after-boot.img.
