@@ -1,8 +1,11 @@
-# GPU stage-1 GLINK RPM transport and GDSC probe dispatched — 2026-10-21
+# GPU stage-1 image temporarily booted — 2026-10-21
 
-- Source 8db0373 pushed fork/spes; CI 39629078334 in progress:
-  https://github.com/AdyaGMD/ios-spes/actions/runs/39629078334
-- Photo of 0097 boot analyzed and decoded: clean cold-start state.
+- CI 39629078334 SUCCESS at commit 8db0373, artifact in xnu/out-0098.
+- Built shim/out/spes-gpu-probe.img (17248256 bytes), SHA256
+  ead9f40f4e997ab69c85af7c4d1547f4efd80acc7c98259a41f43c2877835889.
+- Verified with /tmp/check-spes-gpu.py: Boot v3, embedded payload, RAM bounds verified.
+- fastboot boot accepted: send 0.427s, boot 0.289s, total 0.721s.
+- Handset currently booting kernel with spesrpmprobe=1. Awaiting user photograph/report of screen log.
   cx-gdsc and gx-gdsc both read 0x222001 (SW_COLLAPSE=1, PWR_ON=0).
   AHB (0x1078) and CXO (0x109c) have CLK_ENABLE=1 but CLK_OFF=1 (stalled by collapsed CX).
   GFX/GMU RCGs zeroed. Captured in research/spes-gpu-power.txt.
