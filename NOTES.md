@@ -14,8 +14,8 @@
 - Next concrete GPU work: audit A610 clocks/regulators and ZAP PAS load plus
   SMMU context/stream ownership, adapt backend before isolated ring/fence test.
   Do not enable A740 GMU code, GPU writes, or claim acceleration yet.
-- README + GPU profile/audit prepared for commit; previous local firmware
-  commits also need pushing to fork/spes. No kernel change/CI needed here.
+- Committed README + GPU profile/audit as55b1324 and pushed fork/spes,
+  including earlier firmware audit commits. No kernel change/CI needed here.
 
 # GPU reuse started; volume keys confirmed — 2026-10-21
 
