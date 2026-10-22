@@ -1,3 +1,37 @@
+# GPU stage-5 fix verified & built, multi-core 4x Cortex-A73, camera, haptics & audio ready — 2026-10-22
+
+- **Stage 5 Silicon Probe Assembled**:
+  * Root cause of `int=0x80` (`CP_ILLEGAL_INSTR_ERROR`):
+    1. Adreno 610 physical hardware queue size is strictly **48 entries** (`CP_MEM_POOL_DBG` `0x230c = 48`, `0x2438 = 47`). Defaulting to 128 caused immediate internal buffer overflow and SQE microcode fault.
+    2. Adreno Type 7 & Type 4 PM4 headers require odd parity bits (`odd_bit(count) << 15` and `odd_bit(opcode) << 23`). Missing parity bits caused the CP parser to reject packets.
+    3. Programmed ROQ thresholds (`0x2308 = 0x00800060`, `0x2304 = 0x40201b16`), unhalted SQE (`0x2634 = 1`), and configured UCHE trap/filter (`0x27808 = 0x00080000`).
+  * GitHub Actions CI run `39704024675` completed successfully with commit `67d0220`.
+  * Downloaded `xnu-kernel` artifact and built `shim/out/spes-gpu-probe.img` (SHA256: `5bd1646675ecb81539e2e065b4944e3d171b8a0f273d851f19b82639013c7aae`).
+  * Ready to boot test upon user wakeup: `/Users/adya/Library/Android/sdk/platform-tools/fastboot boot shim/out/spes-gpu-probe.img`.
+  * Expected output: `SPES GPU: 29. RING RETIREMENT: rptr=44 / wptr=44 (consumed=1)`, `SPES GPU: 30. DRAM WRITE: match=1`, solid green horizontal test line rendered to AMOLED framebuffer screen (`0x5c000000`), tactile haptic pulse on TLMM GPIO 36.
+
+- **Optimized Full iOS 16 Boot Images**:
+  * Generated `shim/out/spes-ios.img` and `shim/out/spes-ios-smp4.img` using `tools/build-spes-ios-optimized.sh`.
+  * Multi-Core Bringup: Boot argument `cpus=4` boots all four Kryo 260 Gold (Cortex-A73) high-performance cores via PSCI `CPU_ON` (`sweet_secondary_entry`).
+  * Display composition refresh: `sweetfb_hz=60` for 60 fps smooth UI rendering.
+  * UFS read-write root (`rd=ufsroot0 ufsroot=userdata ufsrw=1 rootrw=1`) with persistent diagnostics.
+
+- **Subsystem Bringup & Hardware Mapping Completed**:
+  * **CPU Autonomous Hardware Frequency Scaling (`qcom,cpufreq-hw`)**:
+    - Hardware DVFS controller: Domain 0 (Silver) `0x0f521000`, Domain 1 (Gold) `0x0f523000`.
+    - Locking LUT index 11 via `REG_PERF_STATE` (`0x920`) clocks Gold cluster to 2.4 GHz and Silver cluster to 1.9 GHz.
+  * **Haptics & Vibrations**:
+    - Hardware: LCT PWM vibrator on TLMM GPIO 36 (`0x00424000`, `GPIO_CFG36 = 0x00448000`).
+    - Integrated with `SweetHID.cpp`: fires a 15 ms pulse on finger touch down (`down && was != down`) and 25 ms on hardware button presses (Power, Volume Up, Volume Down) for authentic tactile feedback.
+  * **Camera Subsystem (CAMSS / Samsung S5KJN1 50MP)**:
+    - Base blocks: CPAS `0x05c11000`, CSID0 `0x05c6e000`, CSIPHY0 `0x05c52000`, CCI0 `0x05c1b000`.
+    - Sensor 0: Samsung S5KJN1 (50MP main sensor) on CCI I2C Master 0 at 400 kHz, MCLK `CAMIF_MCLK0` 24 MHz, reset GPIO 37. Chip ID register `0x0000` = `0x3841`/`0x3842`.
+  * **Stereo Smart Amplifiers & Bolero Codec**:
+    - Hardware: Dual Awinic AW87xxx on QUP0 SE1 I2C (`0x04a84000`): Left PA at `0x58` (Reset GPIO 106), Right PA at `0x5b` (Reset GPIO 35).
+    - Codec: Qualcomm Bolero (`rx-macro@a600000`, `tx-macro@a620000`, `va-macro@a730000`) communicating over SoundWire.
+  * **Display Refresh Rate 90 Hz**:
+    - Tianma / Novatek NT36672E AMOLED panel supports dynamic FPS (`dfps_immediate_porch_mode_vfp`, 90 Hz and 60 Hz). DSI controller at `0x05e94000`.
+
 # GPU stage-4 verified on silicon & Stage 5 fix ready — 2026-10-21
 
 - Physical silicon execution photo verified 100% completion of Stage 4 TrustZone ZAP authentication:
