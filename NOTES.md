@@ -8,13 +8,13 @@
     4. **Freedreno `CP_ME_INIT` PM4 Header**: Standard upstream count 8 with mask `0x0000002fu` (`0x70c80008u` header) prevents NULL dereference of powerup reglist. Followed by `CP_SET_SECURE_MODE` (`0x70e60001u`, payload 0) to exit protected mode.
     5. **RBBM Interrupt Clearing**: `0x00dc` (`A6XX_RBBM_INT_CLEAR_CMD`) clears interrupts; `0x0808` is `RBBM_INT_0_MASK` (set to 0 during probe).
   * Implementation:
-    - Pushed commit `e784ba9` with updated `xnu/patches/0098-spes-glink-rpm-transport.patch`.
+    - Pushed commit `e784ba9` and `f1cffee` (replaced undeclared `invalidate_dcache64` with XNU's standard `flush_dcache64`).
     - Allocated 64 KiB contiguous kernel DMA memory via `kmem_alloc_contig` below 4GB (`atop_64(0xffffffffULL)`):
       * `sqe_pa`: offset `+0x0000` (32 KiB)
       * `rb_pa`: offset `+0x8000` (16 KiB)
       * `fence_pa`: offset `+0xc000` (16 KiB)
-    - Applied explicit CPU cache cleans (`clean_dcache64`) before WPTR kick and cache invalidate (`invalidate_dcache64`) before reading GPU DRAM scratch results.
-    - Triggered GitHub Actions CI workflow `xnu.yml` (run `39775328054`).
+    - Applied explicit CPU cache cleans (`clean_dcache64`) before WPTR kick and cache invalidate/flush (`flush_dcache64`) before reading GPU DRAM scratch results.
+    - Triggered GitHub Actions CI workflow `xnu.yml` (run `39776126003`).
 
 # Stage 5 Fixed Image Booted on Silicon (`fed264b1`) — 2026-10-22
 
