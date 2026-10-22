@@ -1818,7 +1818,7 @@ index 7dd8949..2c09d18 100644
 +	    curr_rptr, w, consumed, poll_i, rbbm_status, cp_hw_fault, cp_int_stat, cp_scratch2);
 +
 +	/* Step 22: Invalidate CPU cache on scratch buffer and verify GPU writes */
-+	invalidate_dcache64(fence_pa, 64, TRUE);
++	flush_dcache64(fence_pa, 64, TRUE);
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
 +	uint32_t val0 = scratch[0];

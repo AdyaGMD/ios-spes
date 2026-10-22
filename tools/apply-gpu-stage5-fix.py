@@ -348,7 +348,7 @@ def main():
 \t    curr_rptr, w, consumed, poll_i, rbbm_status, cp_hw_fault, cp_int_stat, cp_scratch2);
 
 \t/* Step 22: Invalidate CPU cache on scratch buffer and verify GPU writes */
-\tinvalidate_dcache64(fence_pa, 64, TRUE);
+\tflush_dcache64(fence_pa, 64, TRUE);
 \t__asm__ volatile ("dsb sy" ::: "memory");
 
 \tuint32_t val0 = scratch[0];
