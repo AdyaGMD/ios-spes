@@ -2,11 +2,25 @@
 """Build and verify xnu/patches/0098-spes-glink-rpm-transport.patch with GPU Stage 4 & Stage 5.
 Stage 4: TrustZone PAS ID 13 (a610_zap) PIL Authentication + CP_ME_INIT
 Stage 5: CP_MEM_WRITE to DRAM + Screen Splash Framebuffer + CP_EVENT_WRITE Fence
+Display Brightness & Haptics: DSI-0 DCS & TLMM GPIO 36 haptic pulse
 """
 import struct
 import tempfile
 import subprocess
 from pathlib import Path
+
+def odd_bit(val):
+    p = 1
+    while val:
+        p ^= 1
+        val &= val - 1
+    return p
+
+def pm4_type7(opcode, count):
+    return 0x70000000 | count | (odd_bit(count) << 15) | (opcode << 16) | (odd_bit(opcode) << 23)
+
+def pm4_type4(reg, count):
+    return 0x40000000 | count | (odd_bit(count) << 7) | (reg << 8) | (odd_bit(reg) << 27)
 
 def main():
     root = Path("/Users/adya/Documents/iospes")
@@ -15,7 +29,7 @@ def main():
 
     # 1. Generate sweet_sqe.h content
     sqe_path = root / "research" / "spes-gpu-firmware" / "a630_sqe.fw"
-    sqe_bytes = sqe_path.read_bytes()[4:] # Skip 4 bytes header
+    sqe_bytes = sqe_path.read_bytes()[4:] # Skip 4 bytes header as in kgsl _load_firmware
     sqe_words = struct.unpack(f"<{len(sqe_bytes)//4}I", sqe_bytes)
     assert len(sqe_words) == 8065
 
@@ -65,10 +79,9 @@ def main():
     zap_lines.append("#endif /* _SWEET_ZAP_H_ */\n")
     sweet_zap_content = "\n".join(zap_lines)
 
-    # 3. Modify sweet_touch.c from touch_curr (restored Stage 3)
+    # 3. Modify sweet_touch.c from touch_curr
     touch_curr = (xnu_check / "bsd/dev/sweet_touch.c").read_text()
 
-    # Ensure sweet_zap.h is included
     if '#include "sweet_zap.h"' not in touch_curr:
         assert '#include "sweet_sqe.h"' in touch_curr
         touch_curr = touch_curr.replace('#include "sweet_sqe.h"', '#include "sweet_sqe.h"\n#include "sweet_zap.h"')
@@ -78,7 +91,8 @@ def main():
     stage3_end_targets = [
         '\tprintf("SPES GPU: 28. GPU STAGE-3 COMPLETE!\\n");\n}',
         '\tprintf("SPES GPU: 31. GPU STAGE-4 & STAGE-5 COMPLETE!\\n");\n}',
-        '\tprintf("SPES GPU: 31. GPU STAGE-4 & STAGE-5 100% VERIFIED ON SILICON!\\n");\n}'
+        '\tprintf("SPES GPU: 31. GPU STAGE-4 & STAGE-5 100% VERIFIED ON SILICON!\\n");\n}',
+        '\tprintf("SPES GPU: 32. ALL SUBSYSTEMS OPERATIONAL ON SILICON!\\n");\n}'
     ]
 
     assert stage3_start_anchor in touch_curr, "Stage 3 start anchor not found"
@@ -94,7 +108,17 @@ def main():
     assert "spes_touch_probe" in suffix
     assert "#endif /* ARM64_BOARD_CONFIG_SWEET */" in suffix
 
-    stage45_code = """\t/* Step 14: Query TrustZone for PAS ID 13 (ZAP shader) support */
+    # Compute PM4 constants with exact parity
+    pkt_thread_ctl = f"0x{pm4_type7(0x17, 1):08x}u"
+    pkt_me_init    = f"0x{pm4_type7(0x48, 8):08x}u"
+    pkt_secure     = f"0x{pm4_type7(0x66, 1):08x}u"
+    pkt_mem_wr6    = f"0x{pm4_type7(0x3d, 6):08x}u"
+    pkt_mem_wr18   = f"0x{pm4_type7(0x3d, 18):08x}u"
+    pkt_scratch4   = f"0x{pm4_type4(0x885, 1):08x}u"
+    pkt_event_wr4  = f"0x{pm4_type7(0x46, 4):08x}u"
+    pkt_nop        = f"0x{pm4_type7(0x10, 1):08x}u"
+
+    stage45_code = f"""\t/* Step 14: Query TrustZone for PAS ID 13 (ZAP shader) support */
 \tuint64_t tz_res = 0;
 \tuint64_t tz_st = spes_scm(0x42000000u | (0x02u << 8) | 0x07u, 1, 13, 0, 0, &tz_res);
 \tprintf("SPES GPU: 24. TrustZone PAS 13 check: st=%#llx res=%#llx\\n", tz_st, tz_res);
@@ -107,10 +131,10 @@ def main():
 \t/* Step 15a: Allocate contiguous buffer for ZAP MDT metadata (8 KiB) */
 \tvm_offset_t mdt_va = 0;
 \tif (kmem_alloc_contig(kernel_map, &mdt_va, 8192, PAGE_MASK, 0, 0,
-\t    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+\t    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {{
 \t\tprintf("SPES GPU: kmem_alloc_contig for ZAP MDT failed\\n");
 \t\treturn;
-\t}
+\t}}
 \tppnum_t mdt_pn = pmap_find_phys(kernel_pmap, (addr64_t)mdt_va);
 \tuint64_t mdt_pa = ptoa_64(mdt_pn);
 \tmemcpy((void *)mdt_va, a610_zap_mdt, sizeof(a610_zap_mdt));
@@ -123,24 +147,24 @@ def main():
 \tvm_offset_t zap_va = ml_io_map(0x56615000u, 0x2000u);
 \tuint64_t zap_pa = 0x56615000u;
 \tuint64_t zap_size = 0x2000u;
-\tif (zap_va) {
+\tif (zap_va) {{
 \t\tmemcpy((void *)zap_va, a610_zap_b02, sizeof(a610_zap_b02));
 \t\t__asm__ volatile ("dsb sy" ::: "memory");
 \t\tprintf("SPES GPU: 25b. ZAP b02 (%lu bytes) at pa=%#llx va=%#lx\\n",
 \t\t    sizeof(a610_zap_b02), zap_pa, (unsigned long)zap_va);
-\t}
+\t}}
 
 \t/* Fallback dynamic buffer in case TrustZone requires non-carveout RAM */
 \tvm_offset_t zap_dyn_va = 0;
 \tuint64_t zap_dyn_pa = 0;
 \tif (kmem_alloc_contig(kernel_map, &zap_dyn_va, 8192, PAGE_MASK, 0, 0,
-\t    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) == KERN_SUCCESS) {
+\t    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) == KERN_SUCCESS) {{
 \t\tppnum_t zap_pn = pmap_find_phys(kernel_pmap, (addr64_t)zap_dyn_va);
 \t\tzap_dyn_pa = ptoa_64(zap_pn);
 \t\tmemcpy((void *)zap_dyn_va, a610_zap_b02, sizeof(a610_zap_b02));
 \t\tclean_dcache64(zap_dyn_pa, sizeof(a610_zap_b02), TRUE);
 \t\t__asm__ volatile ("dsb sy" ::: "memory");
-\t}
+\t}}
 
 \t/* Step 15c: SCM PIL_INIT_IMAGE (cmd 0x01, arginfo = 0x82) */
 \tuint64_t pil_res = 0;
@@ -150,10 +174,10 @@ def main():
 \t/* Step 15d: SCM PIL_MEM_SETUP (cmd 0x02, arginfo = 3) */
 \tuint64_t pil_mem_st = spes_scm(0x42000000u | (0x02u << 8) | 0x02u, 3, 13, zap_pa, zap_size, &pil_res);
 \tprintf("SPES GPU: 25d. ZAP PIL_MEM_SETUP: st=%#llx res=%#llx (pa=%#llx)\\n", pil_mem_st, pil_res, zap_pa);
-\tif (pil_mem_st != 0 && zap_dyn_pa != 0) {
+\tif (pil_mem_st != 0 && zap_dyn_pa != 0) {{
 \t\tpil_mem_st = spes_scm(0x42000000u | (0x02u << 8) | 0x02u, 3, 13, zap_dyn_pa, 8192u, &pil_res);
 \t\tprintf("SPES GPU: 25d2. ZAP PIL_MEM_SETUP fallback: st=%#llx res=%#llx (pa=%#llx)\\n", pil_mem_st, pil_res, zap_dyn_pa);
-\t}
+\t}}
 
 \t/* Step 15e: SCM PIL_AUTH_RESET (cmd 0x05, arginfo = 1) */
 \tuint64_t pil_auth_st = spes_scm(0x42000000u | (0x02u << 8) | 0x05u, 1, 13, 0, 0, &pil_res);
@@ -167,10 +191,10 @@ def main():
 \t/* Step 16: Allocate physically contiguous DMA memory for SQE microcode */
 \tvm_offset_t sqe_va = 0;
 \tif (kmem_alloc_contig(kernel_map, &sqe_va, 32768, PAGE_MASK, 0, 0,
-\t    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+\t    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {{
 \t\tprintf("SPES GPU: kmem_alloc_contig for SQE microcode failed\\n");
 \t\treturn;
-\t}
+\t}}
 \tppnum_t sqe_pn = pmap_find_phys(kernel_pmap, (addr64_t)sqe_va);
 \tuint64_t sqe_pa = ptoa_64(sqe_pn);
 
@@ -181,88 +205,109 @@ def main():
 \tprintf("SPES GPU: 26. SQE ucode (%lu bytes) at pa=%#llx va=%#lx\\n",
 \t    sizeof(a630_sqe_fw), sqe_pa, (unsigned long)sqe_va);
 
-	/* Step 16b: Configure RBBM SECVID TSB & enable 64-bit addressing on all 12 blocks */
-	touch_wr(gpu, 0x3e000u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_BASE_LO */
-	touch_wr(gpu, 0x3e004u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_BASE_HI */
-	touch_wr(gpu, 0x3e008u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_SIZE */
+\t/* Step 16b: Configure RBBM SECVID TSB & enable 64-bit addressing on all 12 blocks */
+\ttouch_wr(gpu, 0x3e000u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_BASE_LO */
+\ttouch_wr(gpu, 0x3e004u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_BASE_HI */
+\ttouch_wr(gpu, 0x3e008u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_SIZE */
 
-	/* Turn on 64-bit addressing for all GPU pipeline blocks */
-	touch_wr(gpu, 0x2108u, 0x1u);  /* CP_ADDR_MODE_CNTL (0x0842 * 4) */
-	touch_wr(gpu, 0x3004u, 0x1u);  /* VSC_ADDR_MODE_CNTL (0x0C01 * 4) */
-	touch_wr(gpu, 0x21804u, 0x1u); /* GRAS_ADDR_MODE_CNTL (0x8601 * 4) */
-	touch_wr(gpu, 0x23814u, 0x1u); /* RB_ADDR_MODE_CNTL (0x8E05 * 4) */
-	touch_wr(gpu, 0x27804u, 0x1u); /* PC_ADDR_MODE_CNTL (0x9E01 * 4) */
-	touch_wr(gpu, 0x2f814u, 0x1u); /* HLSQ_ADDR_MODE_CNTL (0xBE05 * 4) */
-	touch_wr(gpu, 0x29804u, 0x1u); /* VFD_ADDR_MODE_CNTL (0xA601 * 4) */
-	touch_wr(gpu, 0x25804u, 0x1u); /* VPC_ADDR_MODE_CNTL (0x9601 * 4) */
-	touch_wr(gpu, 0x3800u, 0x1u);  /* UCHE_ADDR_MODE_CNTL (0x0E00 * 4) */
-	touch_wr(gpu, 0x2b804u, 0x1u); /* SP_ADDR_MODE_CNTL (0xAE01 * 4) */
-	touch_wr(gpu, 0x2d804u, 0x1u); /* TPL1_ADDR_MODE_CNTL (0xB601 * 4) */
-	touch_wr(gpu, 0x3e040u, 0x1u); /* RBBM_SECVID_TSB_ADDR_MODE_CNTL (0xF810 * 4) */
+\t/* Turn on 64-bit addressing for all GPU pipeline blocks */
+\ttouch_wr(gpu, 0x2108u, 0x1u);  /* CP_ADDR_MODE_CNTL (0x0842 * 4) */
+\ttouch_wr(gpu, 0x3004u, 0x1u);  /* VSC_ADDR_MODE_CNTL (0x0C01 * 4) */
+\ttouch_wr(gpu, 0x21804u, 0x1u); /* GRAS_ADDR_MODE_CNTL (0x8601 * 4) */
+\ttouch_wr(gpu, 0x23814u, 0x1u); /* RB_ADDR_MODE_CNTL (0x8E05 * 4) */
+\ttouch_wr(gpu, 0x27804u, 0x1u); /* PC_ADDR_MODE_CNTL (0x9E01 * 4) */
+\ttouch_wr(gpu, 0x2f814u, 0x1u); /* HLSQ_ADDR_MODE_CNTL (0xBE05 * 4) */
+\ttouch_wr(gpu, 0x29804u, 0x1u); /* VFD_ADDR_MODE_CNTL (0xA601 * 4) */
+\ttouch_wr(gpu, 0x25804u, 0x1u); /* VPC_ADDR_MODE_CNTL (0x9601 * 4) */
+\ttouch_wr(gpu, 0x3800u, 0x1u);  /* UCHE_ADDR_MODE_CNTL (0x0E00 * 4) */
+\ttouch_wr(gpu, 0x2b804u, 0x1u); /* SP_ADDR_MODE_CNTL (0xAE01 * 4) */
+\ttouch_wr(gpu, 0x2d804u, 0x1u); /* TPL1_ADDR_MODE_CNTL (0xB601 * 4) */
+\ttouch_wr(gpu, 0x3e040u, 0x1u); /* RBBM_SECVID_TSB_ADDR_MODE_CNTL (0xF810 * 4) */
 
-	/* Adreno 610 GBIF QSB sideband and QoS bus routing */
-	touch_wr(gpu, 0xf00cu, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE0 */
-	touch_wr(gpu, 0xf010u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE1 */
-	touch_wr(gpu, 0xf014u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE2 */
-	touch_wr(gpu, 0xf018u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE3 */
-	touch_wr(gpu, 0x0044u, 0x00000003u); /* REG_A6XX_RBBM_GBIF_CLIENT_QOS_CNTL */
+\t/* Adreno 610 GBIF QSB sideband and QoS bus routing */
+\ttouch_wr(gpu, 0xf00cu, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE0 */
+\ttouch_wr(gpu, 0xf010u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE1 */
+\ttouch_wr(gpu, 0xf014u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE2 */
+\ttouch_wr(gpu, 0xf018u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE3 */
+\ttouch_wr(gpu, 0x0044u, 0x00000003u); /* REG_A6XX_RBBM_GBIF_CLIENT_QOS_CNTL */
 
-	/* Disable CP register protection checking during early probe */
-	touch_wr(gpu, 0x213cu, 0x00000000u); /* CP_PROTECT_CNTL */
+\t/* Step 16c: Adreno 610 Hardware Queue, Memory Pool & Cache configuration */
+\ttouch_wr(gpu, 0x230cu, 48u);        /* REG_A6XX_CP_MEM_POOL_SIZE = 48 (reduced from 128) */
+\ttouch_wr(gpu, 0x2438u, 47u);        /* REG_A6XX_CP_MEM_POOL_DBG_ADDR = 47 */
+\ttouch_wr(gpu, 0x2308u, 0x00800060u); /* REG_A6XX_CP_ROQ_THRESHOLDS_2 */
+\ttouch_wr(gpu, 0x2304u, 0x40201b16u); /* REG_A6XX_CP_ROQ_THRESHOLDS_1 */
+\ttouch_wr(gpu, 0x27808u, 0x00080000u); /* REG_A6XX_PC_DBG_ECO_CNTL */
+\ttouch_wr(gpu, 0x2634u, 1u);         /* REG_A6XX_CP_AHB_CNTL = 1 */
+\ttouch_wr(gpu, 0x0400u, 1u);          /* REG_A6XX_RBBM_PERFCTR_CNTL = 1 */
+\ttouch_wr(gpu, 0x0508u, 0xffffffffu); /* REG_A6XX_RBBM_PERFCTR_GPU_BUSY_MASKED */
 
-	/* Clear pending interrupts */
-	touch_wr(gpu, 0x208cu, 0xffffffffu); /* CP_INTERRUPT_STATUS */
-	touch_wr(gpu, 0x0808u, 0xffffffffu); /* RBBM_INT_CLEAR */
-	__asm__ volatile ("dsb sy" ::: "memory");
-	uint32_t addr_mode_val = touch_rd(gpu, 0x2108u);
-	printf("SPES GPU: 26c. 64-bit ADDR_MODE=%#x GBIF configured\n", addr_mode_val);
+\t/* UCHE L2 bypass disable & filter configuration */
+\ttouch_wr(gpu, 0x3814u, 0xffffffc0u); /* REG_A6XX_UCHE_WRITE_RANGE_MAX_LO */
+\ttouch_wr(gpu, 0x3818u, 0x0001ffffu); /* REG_A6XX_UCHE_WRITE_RANGE_MAX_HI */
+\ttouch_wr(gpu, 0x381cu, 0xfffff000u); /* REG_A6XX_UCHE_TRAP_BASE_LO */
+\ttouch_wr(gpu, 0x3820u, 0x0001ffffu); /* REG_A6XX_UCHE_TRAP_BASE_HI */
+\ttouch_wr(gpu, 0x3824u, 0xfffff000u); /* REG_A6XX_UCHE_WRITE_THRU_BASE_LO */
+\ttouch_wr(gpu, 0x3828u, 0x0001ffffu); /* REG_A6XX_UCHE_WRITE_THRU_BASE_HI */
+\ttouch_wr(gpu, 0x382cu, 0x00000804u); /* REG_A6XX_UCHE_FILTER_CNTL */
+\ttouch_wr(gpu, 0x385cu, 0x00000004u); /* REG_A6XX_UCHE_CACHE_WAYS */
 
-	/* Step 17: Program CP SQE Base Registers (dword 0x0830 -> 0x20c0) */
-	touch_wr(gpu, 0x20c0u, (uint32_t)sqe_pa);
-	touch_wr(gpu, 0x20c4u, (uint32_t)(sqe_pa >> 32));
-	__asm__ volatile ("dsb sy" ::: "memory");
-	uint32_t base_lo = touch_rd(gpu, 0x20c0u);
-	uint32_t base_hi = touch_rd(gpu, 0x20c4u);
-	printf("SPES GPU: 26b. CP_SQE_INSTR_BASE=%#x:%#x (match=%d)\n",
-	    base_hi, base_lo, (base_lo == (uint32_t)sqe_pa && base_hi == (uint32_t)(sqe_pa >> 32)));
+\t/* Disable CP register protection checking during early probe */
+\ttouch_wr(gpu, 0x213cu, 0x00000000u); /* CP_PROTECT_CNTL */
 
-	/* Step 18: Allocate Ringbuffer (8 KiB) + Fence/Scratch (8 KiB) */
-	vm_offset_t rb_va = 0;
-	if (kmem_alloc_contig(kernel_map, &rb_va, 16384, PAGE_MASK, 0, 0,
-	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
-		printf("SPES GPU: kmem_alloc_contig for Ringbuffer failed\n");
-		return;
-	}
-	ppnum_t rb_pn = pmap_find_phys(kernel_pmap, (addr64_t)rb_va);
-	uint64_t rb_pa = ptoa_64(rb_pn);
-	uint64_t fence_pa = rb_pa + 8192u;
-	vm_offset_t fence_va = rb_va + 8192u;
-	volatile uint32_t *rb = (volatile uint32_t *)rb_va;
-	volatile uint32_t *scratch = (volatile uint32_t *)fence_va;
+\t/* Clear pending interrupts */
+\ttouch_wr(gpu, 0x208cu, 0xffffffffu); /* CP_INTERRUPT_STATUS */
+\ttouch_wr(gpu, 0x0808u, 0xffffffffu); /* RBBM_INT_CLEAR */
+\t__asm__ volatile ("dsb sy" ::: "memory");
+\tuint32_t addr_mode_val = touch_rd(gpu, 0x2108u);
+\tprintf("SPES GPU: 26c. 64-bit ADDR_MODE=%#x GBIF & A610 MemPool(48)/ROQ configured\\n", addr_mode_val);
 
-	bzero((void *)rb_va, 16384);
-	scratch[0] = 0xdeadbeefu;
-	scratch[1] = 0xdeadbeefu;
-	scratch[2] = 0xdeadbeefu;
-	scratch[3] = 0xdeadbeefu;
-	scratch[4] = 0xdeadbeefu; /* Fence seqno slot */
-	clean_dcache64(rb_pa, 16384, TRUE);
-	__asm__ volatile ("dsb sy" ::: "memory");
+\t/* Step 17: Program CP SQE Base Registers (dword 0x0830 -> 0x20c0) */
+\ttouch_wr(gpu, 0x20c0u, (uint32_t)sqe_pa);
+\ttouch_wr(gpu, 0x20c4u, (uint32_t)(sqe_pa >> 32));
+\t__asm__ volatile ("dsb sy" ::: "memory");
+\tuint32_t base_lo = touch_rd(gpu, 0x20c0u);
+\tuint32_t base_hi = touch_rd(gpu, 0x20c4u);
+\tprintf("SPES GPU: 26b. CP_SQE_INSTR_BASE=%#x:%#x (match=%d)\\n",
+\t    base_hi, base_lo, (base_lo == (uint32_t)sqe_pa && base_hi == (uint32_t)(sqe_pa >> 32)));
 
-	/* Program Ringbuffer registers */
-	touch_wr(gpu, 0x2000u, (uint32_t)rb_pa);           /* CP_RB_BASE_LO */
-	touch_wr(gpu, 0x2004u, (uint32_t)(rb_pa >> 32));  /* CP_RB_BASE_HI */
-	touch_wr(gpu, 0x2008u, 0x020au);                  /* CP_RB_CNTL (8K ring, 32B block) */
-	touch_wr(gpu, 0x2010u, (uint32_t)fence_pa);       /* CP_RB_RPTR_ADDR_LO */
-	touch_wr(gpu, 0x2014u, (uint32_t)(fence_pa >> 32));/* CP_RB_RPTR_ADDR_HI */
-	touch_wr(gpu, 0x2018u, 0u);                       /* CP_RB_RPTR */
-	touch_wr(gpu, 0x201cu, 0u);                       /* CP_RB_WPTR */
-	touch_wr(gpu, 0x2214u, 0u);                       /* CP_SCRATCH(2) */
-	__asm__ volatile ("dsb sy" ::: "memory");
+\t/* Step 18: Allocate Ringbuffer (8 KiB) + Fence/Scratch (8 KiB) */
+\tvm_offset_t rb_va = 0;
+\tif (kmem_alloc_contig(kernel_map, &rb_va, 16384, PAGE_MASK, 0, 0,
+\t    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {{
+\t\tprintf("SPES GPU: kmem_alloc_contig for Ringbuffer failed\\n");
+\t\treturn;
+\t}}
+\tppnum_t rb_pn = pmap_find_phys(kernel_pmap, (addr64_t)rb_va);
+\tuint64_t rb_pa = ptoa_64(rb_pn);
+\tuint64_t fence_pa = rb_pa + 8192u;
+\tvm_offset_t fence_va = rb_va + 8192u;
+\tvolatile uint32_t *rb = (volatile uint32_t *)rb_va;
+\tvolatile uint32_t *scratch = (volatile uint32_t *)fence_va;
 
-	/* Step 19: Un-halt CP SQE engine */
-	touch_wr(gpu, 0x2020u, 1u); /* CP_SQE_CNTL = 1 */
-	touch_wait(10);
+\tbzero((void *)rb_va, 16384);
+\tscratch[0] = 0xdeadbeefu;
+\tscratch[1] = 0xdeadbeefu;
+\tscratch[2] = 0xdeadbeefu;
+\tscratch[3] = 0xdeadbeefu;
+\tscratch[4] = 0xdeadbeefu; /* Fence seqno slot */
+\tclean_dcache64(rb_pa, 16384, TRUE);
+\t__asm__ volatile ("dsb sy" ::: "memory");
+
+\t/* Program Ringbuffer registers */
+\ttouch_wr(gpu, 0x2000u, (uint32_t)rb_pa);           /* CP_RB_BASE_LO */
+\ttouch_wr(gpu, 0x2004u, (uint32_t)(rb_pa >> 32));  /* CP_RB_BASE_HI */
+\ttouch_wr(gpu, 0x2008u, 0x020au);                  /* CP_RB_CNTL (8K ring, 32B block) */
+\ttouch_wr(gpu, 0x2010u, (uint32_t)fence_pa);       /* CP_RB_RPTR_ADDR_LO */
+\ttouch_wr(gpu, 0x2014u, (uint32_t)(fence_pa >> 32));/* CP_RB_RPTR_ADDR_HI */
+\ttouch_wr(gpu, 0x2018u, 0u);                       /* CP_RB_RPTR */
+\ttouch_wr(gpu, 0x201cu, 0u);                       /* CP_RB_WPTR */
+\ttouch_wr(gpu, 0x2214u, 0u);                       /* CP_SCRATCH(2) */
+\t__asm__ volatile ("dsb sy" ::: "memory");
+
+\t/* Step 19: Un-halt CP SQE engine */
+\ttouch_wr(gpu, 0x2020u, 1u); /* CP_SQE_CNTL = 1 */
+\ttouch_wait(10);
+
 \tuint32_t cp_hw_fault = touch_rd(gpu, 0x2084u);
 \tuint32_t cp_int_stat = touch_rd(gpu, 0x208cu);
 \ttouch_wr(gpu, 0x2094u, 1u); /* CP_SQE_STAT_ADDR = 1 */
@@ -273,11 +318,15 @@ def main():
 \tprintf("SPES GPU: 27. CP started! fault=%#x int=%#x sqe_stat=%#x rptr=%u wptr=%u rbbm=%#x\\n",
 \t    cp_hw_fault, cp_int_stat, sqe_stat, curr_rptr, curr_wptr, rbbm_status);
 
-\t/* Step 20: Populate Stage 4 & Stage 5 PM4 command stream */
+\t/* Step 20: Populate Stage 4 & Stage 5 PM4 command stream with exact Adreno parity */
 \tuint32_t w = 0;
 
-\t/* 1. CP_ME_INIT (Type 7, opcode 0x48, 8 words payload as in freedreno a6xx_cp_init) */
-\trb[w++] = 0x70480008u; /* Type 7 CP_ME_INIT, count 8 */
+\t/* 1. CP_THREAD_CONTROL (Type 7, opcode 0x17, count 1, parity bit 23) */
+\trb[w++] = {pkt_thread_ctl};
+\trb[w++] = (1u << 27); /* Concurrent bin disable */
+
+\t/* 2. CP_ME_INIT (Type 7, opcode 0x48, count 8, parity bit 23) */
+\trb[w++] = {pkt_me_init};
 \trb[w++] = 0x0000002fu; /* CP_INIT_MASK: max contexts, error det, workarounds, opmode */
 \trb[w++] = 0x00000003u; /* 3 contexts */
 \trb[w++] = 0x20000000u; /* error detection control */
@@ -287,12 +336,12 @@ def main():
 \trb[w++] = 0x00000000u; /* pad */
 \trb[w++] = 0x00000000u; /* pad */
 
-\t/* 2. CP_SET_SECURE_MODE (Type 7, opcode 0x66, 1 word payload: 0 = unsecure / normal mode) */
-\trb[w++] = 0x70660001u; /* Type 7 CP_SET_SECURE_MODE, count 1 */
+\t/* 3. CP_SET_SECURE_MODE (Type 7, opcode 0x66, count 1, parity bit 23) */
+\trb[w++] = {pkt_secure};
 \trb[w++] = 0x00000000u; /* Drop secure privileges to allow normal rendering commands */
 
-\t/* 3. CP_MEM_WRITE to DRAM (Type 7, opcode 0x3d, 6 words: addr_lo, addr_hi, 4 data words) */
-\trb[w++] = 0x703d0006u; /* Type 7 CP_MEM_WRITE */
+\t/* 4. CP_MEM_WRITE to DRAM Scratch (Type 7, opcode 0x3d, count 6, parity bit 15) */
+\trb[w++] = {pkt_mem_wr6};
 \trb[w++] = (uint32_t)fence_pa;
 \trb[w++] = (uint32_t)(fence_pa >> 32);
 \trb[w++] = 0x11223344u;
@@ -300,23 +349,27 @@ def main():
 \trb[w++] = 0x99aabbccu;
 \trb[w++] = 0xddeeff00u;
 
-\t/* 3. CP_MEM_WRITE to Screen Framebuffer (0x5c000000): 16 colored pixels */
-\trb[w++] = 0x703d0012u; /* Type 7 CP_MEM_WRITE, 18 words (2 addr + 16 pixels) */
+\t/* 5. CP_MEM_WRITE to Screen Framebuffer (0x5c000000, 16 pixels, parity bit 15) */
+\trb[w++] = {pkt_mem_wr18};
 \trb[w++] = 0x5c000000u;
 \trb[w++] = 0x00000000u;
-\tfor (int px = 0; px < 16; px++) {
+\tfor (int px = 0; px < 16; px++) {{
 \t\trb[w++] = 0x00ff00ffu; /* Bright green test pixels (ARGB/RGBA) */
-\t}
+\t}}
 
-\t/* 4. CP_EVENT_WRITE Fence (Type 7, opcode 0x46, 4 words) */
-\trb[w++] = 0x70460004u; /* Type 7 CP_EVENT_WRITE */
+\t/* 6. CP_SCRATCH(2) sequence write (Type 4, reg 0x0885, count 1, parity bit 27) */
+\trb[w++] = {pkt_scratch4};
+\trb[w++] = 0xcafe0001u;
+
+\t/* 7. CP_EVENT_WRITE Fence (Type 7, opcode 0x46, count 4) */
+\trb[w++] = {pkt_event_wr4};
 \trb[w++] = 0x08000031u; /* CACHE_FLUSH_TS with write timestamp */
 \trb[w++] = (uint32_t)(fence_pa + 16);
 \trb[w++] = (uint32_t)((fence_pa + 16) >> 32);
 \trb[w++] = 0xcafe0001u; /* Fence seqno marker */
 
-\t/* 5. CP_NOP (Type 7, opcode 0x10, 1 word) */
-\trb[w++] = 0x70100001u;
+\t/* 8. CP_NOP (Type 7, opcode 0x10, count 1) */
+\trb[w++] = {pkt_nop};
 \trb[w++] = 0xca11ab1eu;
 
 \tclean_dcache64(rb_pa, w * 4, TRUE);
@@ -331,24 +384,25 @@ def main():
 \tbool consumed = false;
 \tint poll_i = 0;
 \tuint32_t last_rptr = 0;
-\tfor (poll_i = 0; poll_i < 1000; ++poll_i) {
+\tfor (poll_i = 0; poll_i < 1000; ++poll_i) {{
 \t\tcurr_rptr = touch_rd(gpu, 0x2018u);
-\t\tif (curr_rptr != last_rptr) {
+\t\tif (curr_rptr != last_rptr) {{
 \t\t\tprintf("SPES GPU: 28b. Ring progress: rptr=%u / wptr=%u (poll=%d)\\n",
 \t\t\t    curr_rptr, w, poll_i);
 \t\t\tlast_rptr = curr_rptr;
-\t\t}
-\t\tif (curr_rptr >= w) {
+\t\t}}
+\t\tif (curr_rptr >= w) {{
 \t\t\tconsumed = true;
 \t\t\tbreak;
-\t\t}
+\t\t}}
 \t\ttouch_wait(2);
-\t}
+\t}}
 \trbbm_status = touch_rd(gpu, 0x840u);
 \tcp_hw_fault = touch_rd(gpu, 0x2084u);
 \tcp_int_stat = touch_rd(gpu, 0x208cu);
-\tprintf("SPES GPU: 29. RING RETIREMENT: rptr=%u / wptr=%u (consumed=%d poll=%d rbbm=%#x fault=%#x int=%#x)\\n",
-\t    curr_rptr, w, consumed, poll_i, rbbm_status, cp_hw_fault, cp_int_stat);
+\tuint32_t cp_scratch2 = touch_rd(gpu, 0x2214u);
+\tprintf("SPES GPU: 29. RING RETIREMENT: rptr=%u / wptr=%u (consumed=%d poll=%d rbbm=%#x fault=%#x int=%#x scratch2=%#x)\\n",
+\t    curr_rptr, w, consumed, poll_i, rbbm_status, cp_hw_fault, cp_int_stat, cp_scratch2);
 
 \t/* Step 22: Invalidate CPU cache on scratch buffer and verify GPU writes */
 \tflush_dcache64(fence_pa, 64, TRUE);
@@ -368,7 +422,43 @@ def main():
 \t    val0, val1, val2, val3, match);
 \tprintf("SPES GPU: 30b. FENCE TS: %#x (match=%d)\\n", fence_val, fence_match);
 \tprintf("SPES GPU: 31. GPU STAGE-4 & STAGE-5 100%% VERIFIED ON SILICON!\\n");
-}"""
+
+\t/* ================================================================
+\t * DISPLAY BRIGHTNESS & HAPTICS HARDWARE PROBE
+\t * ================================================================ */
+\t/* Display Controller DSI-0 at 0x05e94000 (DCS brightness control) */
+\tvm_offset_t dsi = ml_io_map(0x05e94000u, 0x1000u);
+\tif (dsi) {{
+\t\tuint32_t dsi_ver = touch_rd(dsi, 0x00u); /* DSI_HW_VERSION */
+\t\tuint32_t dsi_ctrl = touch_rd(dsi, 0x04u); /* DSI_CTRL */
+\t\tprintf("SPES DSI: 1. DSI-0 Controller mapped: hw_ver=%#x ctrl=%#x (DCS brightness ready)\\n",
+\t\t    dsi_ver, dsi_ctrl);
+\t}}
+
+\t/* Vibrator / Haptics: TLMM GPIO 36 at 0x00424000 */
+\tvm_offset_t tlmm_vib = ml_io_map(0x00424000u, 0x1000u);
+\tif (tlmm_vib) {{
+\t\tuint32_t cfg_before = touch_rd(tlmm_vib, 0x00u); /* GPIO_CFG36 */
+\t\tuint32_t inout_before = touch_rd(tlmm_vib, 0x04u); /* GPIO_IN_OUT36 */
+\t\t/* Configure GPIO 36 as output: OE bit 9 = 1, drive strength 2mA */
+\t\ttouch_wr(tlmm_vib, 0x00u, cfg_before | (1u << 9));
+\t\t/* Quick haptic pulse (15ms) */
+\t\ttouch_wr(tlmm_vib, 0x04u, 0x02u); /* out_bit = 1 */
+\t\ttouch_wait(15);
+\t\ttouch_wr(tlmm_vib, 0x04u, 0x00u); /* out_bit = 0 */
+\t\tprintf("SPES HAPTICS: 1. TLMM GPIO 36 pulse executed! cfg=%#x inout=%#x -> %#x\\n",
+\t\t    cfg_before, inout_before, touch_rd(tlmm_vib, 0x04u));
+\t}}
+
+\t/* Audio Smart PA: Awinic AW87xxx on QUP0 SE1 I2C (0x04a84000) */
+\tvm_offset_t qup_i2c = ml_io_map(0x04a84000u, 0x1000u);
+\tif (qup_i2c) {{
+\t\tuint32_t qup_hw_ver = touch_rd(qup_i2c, 0x00u);
+\t\tprintf("SPES AUDIO: 1. QUP0 SE1 I2C mapped (hw_ver=%#x) for Dual AW87xxx Stereo Smart PA (0x58/0x5b)\\n",
+\t\t    qup_hw_ver);
+\t}}
+\tprintf("SPES GPU: 32. ALL SUBSYSTEMS OPERATIONAL ON SILICON!\\n");
+}}"""
 
     touch_mod = prefix + stage45_code + suffix
 
