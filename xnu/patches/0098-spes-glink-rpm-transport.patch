@@ -1463,7 +1463,7 @@ index 7dd8949..2c09d18 100644
 +	    touch_rd(cc, 0x108c), touch_rd(cc, 0x10a4), touch_rd(cc, 0x1054));
 +
 +	/* Step 11: Map Adreno 610 MMIO (16 KiB aperture) and unhalt GBIF */
-+	vm_offset_t gpu = ml_io_map(0x05900000u, 0x4000u);
++	vm_offset_t gpu = ml_io_map(0x05900000u, 0x90000u);
 +	if (!gpu) {
 +		printf("SPES GPU: GPU core MMIO map failed\n");
 +		return;
