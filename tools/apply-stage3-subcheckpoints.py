@@ -1,10 +1,18 @@
 #!/usr/bin/env python3
-import sys
+import subprocess
 from pathlib import Path
 
 def main():
-    patch_path = Path("/Users/adya/Documents/iospes/xnu/patches/0098-spes-glink-rpm-transport.patch")
-    lines = patch_path.read_text().splitlines(keepends=True)
+    repo = Path("/Users/adya/Documents/iospes")
+    patch_path = repo / "xnu/patches/0098-spes-glink-rpm-transport.patch"
+
+    # Get c095a44 version of patch as baseline
+    patch_c095a44 = subprocess.check_output(
+        ["git", "show", "c095a44:xnu/patches/0098-spes-glink-rpm-transport.patch"],
+        cwd=repo,
+        text=True
+    )
+    lines = patch_c095a44.splitlines(keepends=True)
 
     hunk2_idx = None
     hunk3_idx = None
@@ -22,9 +30,7 @@ def main():
     hunk2_lines = lines[hunk2_idx:hunk3_idx]
     suffix = lines[hunk3_idx:]
 
-    target_start_marker = '\tvm_offset_t smmu = 0;\n'
-    if not any(l == "+" + target_start_marker for l in hunk2_lines):
-        target_start_marker = '\t/* Step 13: Map GPU SMMU MMIO aperture (0x059a0000, 64 KiB) */\n'
+    target_start_marker = '\t/* Step 13: Map GPU SMMU MMIO aperture (0x059a0000, 64 KiB) */\n'
     target_end_marker = '\t/* Step 20: Submit CP_ME_INIT (Linux upstream A6xx sequence) */\n'
 
     start_idx = None
@@ -39,7 +45,7 @@ def main():
     assert start_idx is not None, "target_start_marker not found"
     assert end_idx is not None, "target_end_marker not found"
 
-    print(f"Replacement range in hunk2: {start_idx}..{end_idx}")
+    print(f"Replacement range in hunk2 of c095a44: {start_idx}..{end_idx}")
 
     rep_block = """\tvm_offset_t smmu = 0;
 \tuint32_t cb0_off = 0;
@@ -88,6 +94,14 @@ def main():
 \t    touch_rd(smmu, 0x800u), touch_rd(smmu, 0x804u), touch_rd(smmu, 0x808u), touch_rd(smmu, 0x80cu));
 \tprintf("SPES GPU: 23d. Boot S2CR: 0=%#x 1=%#x 2=%#x 3=%#x\\n",
 \t    touch_rd(smmu, 0xc00u), touch_rd(smmu, 0xc04u), touch_rd(smmu, 0xc08u), touch_rd(smmu, 0xc0cu));
+\tprintf("SPES GPU: 23e. CBAR0-4: %#x %#x %#x %#x %#x\\n",
+\t    touch_rd(smmu, stride + 0x00u), touch_rd(smmu, stride + 0x04u),
+\t    touch_rd(smmu, stride + 0x08u), touch_rd(smmu, stride + 0x0cu),
+\t    touch_rd(smmu, stride + 0x10u));
+\tprintf("SPES GPU: 23e2. CB SCTLRs: 0=%#x 1=%#x 2=%#x 3=%#x 4=%#x\\n",
+\t    touch_rd(smmu, cb0_off + 0 * stride), touch_rd(smmu, cb0_off + 1 * stride),
+\t    touch_rd(smmu, cb0_off + 2 * stride), touch_rd(smmu, cb0_off + 3 * stride),
+\t    touch_rd(smmu, cb0_off + 4 * stride));
 
 \t/* Map 64 KiB contiguous DMA carveout in continuous splash RAM (< 4GB DRAM) at 0x5ca00000 */
 \tvm_offset_t gpu_dma_va = ml_io_map(0x5ca00000u, 0x10000u);
@@ -186,7 +200,6 @@ def main():
 \tfor (unsigned i = 0; i < 16; i++) {
 \t\tl3_dma[i] = (0x5ca00000u + i * 4096u) | SPES_PTE_CORE | SPES_PTE_PAGE;
 \t}
-\tto_memory(pt_va, 0u);
 
 \t/* Checkpoint 3 (23-2): After allocating and populating SMMU page tables */
 \tLOG_CP("23-2 (Post-PT-Populate)");
@@ -261,35 +274,30 @@ def main():
 \t/* Checkpoint 10 (23-9): After programming SMR0 and SMR2 */
 \tLOG_CP("23-9 (Post-SMR)");
 
-\tuint32_t smr_rb[4], s2cr_rb[4];
-\tfor (unsigned i = 0; i < 4; i++) {
-\t\tsmr_rb[i]  = touch_rd(smmu, 0x800u + i * 4u);
-\t\ts2cr_rb[i] = touch_rd(smmu, 0xc00u + i * 4u);
-\t}
-\tuint32_t s2cr0_type = (s2cr_rb[0] >> 16) & 3u;
-\tuint32_t s2cr0_cb   = s2cr_rb[0] & 0xffu;
+\tuint32_t smr0_rb  = touch_rd(smmu, 0x800u);
+\tuint32_t smr1_rb  = touch_rd(smmu, 0x804u);
+\tuint32_t smr2_rb  = touch_rd(smmu, 0x808u);
+\tuint32_t smr3_rb  = touch_rd(smmu, 0x80cu);
+\tuint32_t s2cr0_rb = touch_rd(smmu, 0xc00u);
+\tuint32_t s2cr1_rb = touch_rd(smmu, 0xc04u);
+\tuint32_t s2cr2_rb = touch_rd(smmu, 0xc08u);
+\tuint32_t s2cr3_rb = touch_rd(smmu, 0xc0cu);
+\tuint32_t s2cr0_type = (s2cr0_rb >> 16) & 3u;
+\tuint32_t s2cr0_cb   = s2cr0_rb & 0xffu;
+\tuint32_t s2cr0_sh   = (s2cr0_rb >> 8) & 3u;
+
+\t/* Read-only decode of SMR and S2CR entries (no writes/probes) */
 \tprintf("SPES GPU: 23f. SMR[0-1]: [0]=%#x (v=%d id=%u mask=%#x) [1]=%#x (v=%d id=%u mask=%#x)\\n",
-\t    smr_rb[0], (smr_rb[0] >> 31) & 1, smr_rb[0] & 0x7fffu, (smr_rb[0] >> 16) & 0x7fffu,
-\t    smr_rb[1], (smr_rb[1] >> 31) & 1, smr_rb[1] & 0x7fffu, (smr_rb[1] >> 16) & 0x7fffu);
+\t    smr0_rb, (smr0_rb >> 31) & 1, smr0_rb & 0x7fffu, (smr0_rb >> 16) & 0x7fffu,
+\t    smr1_rb, (smr1_rb >> 31) & 1, smr1_rb & 0x7fffu, (smr1_rb >> 16) & 0x7fffu);
 \tprintf("SPES GPU: 23f2. SMR[2-3]: [2]=%#x (v=%d id=%u mask=%#x) [3]=%#x (v=%d id=%u mask=%#x)\\n",
-\t    smr_rb[2], (smr_rb[2] >> 31) & 1, smr_rb[2] & 0x7fffu, (smr_rb[2] >> 16) & 0x7fffu,
-\t    smr_rb[3], (smr_rb[3] >> 31) & 1, smr_rb[3] & 0x7fffu, (smr_rb[3] >> 16) & 0x7fffu);
+\t    smr2_rb, (smr2_rb >> 31) & 1, smr2_rb & 0x7fffu, (smr2_rb >> 16) & 0x7fffu,
+\t    smr3_rb, (smr3_rb >> 31) & 1, smr3_rb & 0x7fffu, (smr3_rb >> 16) & 0x7fffu);
 \tprintf("SPES GPU: 23f3. S2CR[0-3]: [0]=%#x (t=%u cb=%u sh=%u) [1]=%#x(t=%u) [2]=%#x(t=%u cb=%u sh=%u) [3]=%#x(t=%u)\\n",
-\t    s2cr_rb[0], (s2cr_rb[0] >> 16) & 3u, s2cr_rb[0] & 0xffu, (s2cr_rb[0] >> 8) & 3u,
-\t    s2cr_rb[1], (s2cr_rb[1] >> 16) & 3u,
-\t    s2cr_rb[2], (s2cr_rb[2] >> 16) & 3u, s2cr_rb[2] & 0xffu, (s2cr_rb[2] >> 8) & 3u,
-\t    s2cr_rb[3], (s2cr_rb[3] >> 16) & 3u);
-
-\t/* SMR2 writeability probe: test if SMR2 accepts writes or is locked/hypervisor-trapped */
-\ttouch_wr(smmu, 0x808u, 0x12345678u);
-\t__asm__ volatile ("dsb sy" ::: "memory");
-\tuint32_t smr2_test1 = touch_rd(smmu, 0x808u);
-
-\ttouch_wr(smmu, 0x808u, (1u << 31) | 2u);
-\t__asm__ volatile ("dsb sy" ::: "memory");
-\tuint32_t smr2_test2 = touch_rd(smmu, 0x808u);
-\tprintf("SPES GPU: 23f4. SMR2 write test: wr(0x12345678)->%#x wr(VALID|2)->%#x\\n",
-\t    smr2_test1, smr2_test2);
+\t    s2cr0_rb, s2cr0_type, s2cr0_cb, s2cr0_sh,
+\t    (s2cr1_rb >> 16) & 3u,
+\t    (s2cr2_rb >> 16) & 3u, s2cr2_rb & 0xffu, (s2cr2_rb >> 8) & 3u,
+\t    (s2cr3_rb >> 16) & 3u);
 
 \tuint32_t hw_sctlr    = touch_rd(smmu, context + 0x00u);
 \tuint32_t hw_ttbr0_lo = touch_rd(smmu, context + 0x20u);
@@ -302,6 +310,8 @@ def main():
 \tuint32_t hw_cbar0    = touch_rd(smmu, stride + 0x00u);
 \tuint32_t hw_cba2r0   = touch_rd(smmu, stride + 0x800u);
 
+\tprintf("SPES GPU: 23f4. CB0: SCTLR=%#x TTBR0=%#llx (lo=%#x hi=%#x pt_pa=%#llx)\\n",
+\t    hw_sctlr, hw_ttbr0, hw_ttbr0_lo, hw_ttbr0_hi, pt_pa);
 \tprintf("SPES GPU: 23f5. TCR=%#x TCR2=%#x MAIR=%#x:%#x CBAR0=%#x CBA2R0=%#x\\n",
 \t    hw_tcr, hw_tcr2, hw_mair1, hw_mair0, hw_cbar0, hw_cba2r0);
 \tprintf("SPES GPU: 23g. PTE 0x01100000: L1[0]=%#llx L2[8]=%#llx L3[256]=%#llx (pa=%#llx)\\n",
@@ -309,7 +319,7 @@ def main():
 
 \tif (s2cr0_type == 2u || s2cr0_cb == 0xffu) {
 \t\tprintf("SPES GPU: S2CR0 stuck in FAULT (raw=%#x type=%u cb=%u); stopping BEFORE SQE\\n",
-\t\t    s2cr_rb[0], s2cr0_type, s2cr0_cb);
+\t\t    s2cr0_rb, s2cr0_type, s2cr0_cb);
 \t\treturn;
 \t}
 
@@ -347,22 +357,34 @@ def main():
 \ttouch_wr(gpu, 0xf010u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE1 */
 \ttouch_wr(gpu, 0xf014u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE2 */
 \ttouch_wr(gpu, 0xf018u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE3 */
-\ttouch_wr(gpu, 0xf000u, 0x00080707u); /* REG_A6XX_GBIF_QSB_SIDE_HALT */
-\ttouch_wr(gpu, 0x2030u, 0x00000000u); /* CP_ROQ_THRESH_CONFIG */
-\ttouch_wr(gpu, 0x2034u, 0x00000000u); /* CP_MEM_POOL_DBG_CNTL */
-\ttouch_wr(gpu, 0x0e00u, 0x00000001u); /* UCHE_WRITE_THRU_BASE_LO */
-\ttouch_wr(gpu, 0x0e04u, 0x00000000u); /* UCHE_WRITE_THRU_BASE_HI */
-\ttouch_wr(gpu, 0x0e08u, 0x00000000u); /* UCHE_TRAP_BASE_LO */
-\ttouch_wr(gpu, 0x0e0cu, 0x00000000u); /* UCHE_TRAP_BASE_HI */
-\ttouch_wr(gpu, 0x0e010u, 0x00000001u); /* UCHE_MODE_CNTL (line size 64B) */
-\ttouch_wr(gpu, 0x0824u, 0x00001802u); /* RBBM_INTERFACE_HANG_INT_CNTL */
-\ttouch_wr(gpu, 0x0818u, 0x00000000u); /* RBBM_INT_CLEAR_CMD */
+\ttouch_wr(gpu, 0x0044u, 0x00000003u); /* REG_A6XX_RBBM_GBIF_CLIENT_QOS_CNTL */
+
+\t/* Adreno 610 Hardware Queue, Memory Pool & Cache configuration */
+\ttouch_wr(gpu, 0x230cu, 48u);        /* REG_A6XX_CP_MEM_POOL_SIZE = 48 */
+\ttouch_wr(gpu, 0x2438u, 47u);        /* REG_A6XX_CP_MEM_POOL_DBG_ADDR = 47 */
+\ttouch_wr(gpu, 0x2308u, 0x00800060u); /* REG_A6XX_CP_ROQ_THRESHOLDS_2 */
+\ttouch_wr(gpu, 0x2304u, 0x40201b16u); /* REG_A6XX_CP_ROQ_THRESHOLDS_1 */
+\ttouch_wr(gpu, 0x27808u, 0x00080000u); /* REG_A6XX_PC_DBG_ECO_CNTL */
+\ttouch_wr(gpu, 0x2634u, 1u);         /* REG_A6XX_CP_AHB_CNTL = 1 */
+\ttouch_wr(gpu, 0x0400u, 1u);          /* REG_A6XX_RBBM_PERFCTR_CNTL = 1 */
+\ttouch_wr(gpu, 0x0508u, 0xffffffffu); /* REG_A6XX_RBBM_PERFCTR_GPU_BUSY_MASKED */
+
+\t/* UCHE L2 bypass disable & filter configuration */
+\ttouch_wr(gpu, 0x3814u, 0xffffffc0u); /* REG_A6XX_UCHE_WRITE_RANGE_MAX_LO */
+\ttouch_wr(gpu, 0x3818u, 0x0001ffffu); /* REG_A6XX_UCHE_WRITE_RANGE_MAX_HI */
+\ttouch_wr(gpu, 0x381cu, 0xfffff000u); /* REG_A6XX_UCHE_TRAP_BASE_LO */
+\ttouch_wr(gpu, 0x3820u, 0x0001ffffu); /* REG_A6XX_UCHE_TRAP_BASE_HI */
+\ttouch_wr(gpu, 0x3824u, 0xfffff000u); /* REG_A6XX_UCHE_WRITE_THRU_BASE_LO */
+\ttouch_wr(gpu, 0x3828u, 0x0001ffffu); /* REG_A6XX_UCHE_WRITE_THRU_BASE_HI */
+\ttouch_wr(gpu, 0x382cu, 0x00000804u); /* REG_A6XX_UCHE_FILTER_CNTL */
+\ttouch_wr(gpu, 0x385cu, 0x00000004u); /* REG_A6XX_UCHE_CACHE_WAYS */
 \t__asm__ volatile ("dsb sy" ::: "memory");
 \t/* Checkpoint 2C: after GBIF/CP/UCHE hardware configuration */
 \tLOG_CP("25c. CP-2C (GBIF)");
 
-\t/* Clear any pending interrupts latched during bus configuration */
-\ttouch_wr(gpu, 0x00dcu, 0x31c002c2u); /* RBBM_INT_0_CLEAR */
+\t/* Clear pending interrupts in RBBM and CP */
+\ttouch_wr(gpu, 0x00dcu, 0xffffffffu); /* RBBM_INT_CLEAR_CMD */
+\ttouch_wr(gpu, 0x0808u, 0x00000000u); /* RBBM_INT_0_MASK */
 \t__asm__ volatile ("dsb sy" ::: "memory");
 \t/* Checkpoint 2D: after RBBM interrupt-clear operations */
 \tLOG_CP("25d. CP-2D (INTCLR)");
@@ -398,10 +420,6 @@ def main():
 \ttouch_wr(gpu, 0x2018u, 0u);                    /* CP_RB_RPTR */
 \ttouch_wr(gpu, 0x201cu, 0u);                    /* CP_RB_WPTR */
 \ttouch_wr(gpu, 0x2214u, 0u);                    /* CP_SCRATCH(2) */
-\t__asm__ volatile ("dsb sy" ::: "memory");
-\t/* Checkpoint 2F: after Ringbuffer base/control/pointer programming */
-\tLOG_CP("26c3. CP-2F (RBCONFIG)");
-
 \t/* 0x2090 is CP_PROTECT_STATUS, NOT CP_INT_ACK. Do not write it. */
 \ttouch_wr(gpu, 0x2110u, (1u << 6) | (1u << 5) | (1u << 3) | (1u << 2) | (1u << 1)); /* CP_APRIV_CNTL = 0x6e */
 \t__asm__ volatile ("dsb sy" ::: "memory");
@@ -457,7 +475,7 @@ def main():
     # Write back
     new_content = "".join(prefix + new_hunk2 + suffix)
     patch_path.write_text(new_content)
-    print("Patch updated successfully.")
+    print("Clean instrumentation-only patch generated successfully.")
 
 if __name__ == "__main__":
     main()

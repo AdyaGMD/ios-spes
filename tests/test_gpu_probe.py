@@ -19,7 +19,7 @@ class GPUProbeTests(unittest.TestCase):
         init = init[:init.index('__asm__')]
         render = src[src.index('/* 1. CP_SET_SECURE_MODE'):]
         render = render[:render.index('__asm__')]
-        code = '#include <stdint.h>\n#include <stddef.h>\n'
+        code = '#include <stdint.h>\n#include <stddef.h>\n#define LOG_CP(tag) ((void)0)\n'
         code += 'void tables(uint64_t *buf) { uintptr_t pt_va=(uintptr_t)buf; uint64_t pt_pa=0x100000000ULL, rb_pa=0x5ca08000, sqe_pa=0x5ca00000, fence_pa=0x5ca0c000;\n' + tables + '\n}\n'
         code += 'unsigned packets(uint32_t *rb) {\n' + init + '\n' + render + '\nreturn w; }\n'
         cls.tmp = tempfile.TemporaryDirectory()
