@@ -1,3 +1,15 @@
+# Stage 5 S2CR0 0x300 write attempt & 5-context bank diagnostic — 2026-10-22
+
+- **Revised Controlled Diagnostic (per GPT Review)**:
+  * **No Risky Bypass**: Skipped speculative `0x10000` (BYPASS) writes to preserve memory isolation and prevent ambiguous firmware fault clamping.
+  * **Qualcomm Linux S2CR Payload (`0x300`)**:
+    - Replaced `0u` write with `0x300` (`S2CR_TYPE_TRANS = 0`, `CBNDX = 0`, `S2CR_SHCFG_NSH = 3` at bits [9:8]), matching Qualcomm Linux `arm_smmu_write_s2cr` standard configuration.
+  * **Full 5-Context Bank Baseline**:
+    - Added read-only dump of `CBAR0-4` (`stride + 0x00..0x10`) and `CB0-4` `SCTLR` registers before any writes to identify which banks firmware owns.
+  * **Fail-Safe S2CR Gate Before SQE**:
+    - If `S2CR0` remains in `FAULT` mode (`type == 2` or `cb == 0xff`), the probe prints decoded fields (`raw`, `type`, `cb`, `sh`) and terminates cleanly BEFORE unhalting the SQE microengine.
+- All 17 host tests pass in `tests/test_gpu_probe.py`; hunk math verified (964 lines in hunk 1).
+
 # Stage 5 firmware copy regression resolved & SMMU bootloader handoff dump — 2026-10-22
 
 - **Peer Review Verification & Correction**:
