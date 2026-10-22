@@ -19,11 +19,8 @@ def main():
     assert hunk2_idx is not None, "Hunk 2 not found"
     assert hunk3_idx is not None, "Hunk 3 not found"
 
-    # Everything before hunk 2
     prefix = lines[:hunk2_idx]
-    # Hunk 2 lines
     hunk2_lines = lines[hunk2_idx:hunk3_idx]
-    # Hunk 3 and beyond
     suffix = lines[hunk3_idx:]
 
     target_start = "\t/* Ensure bypass mode on CB0 (M=0) */\n"
@@ -44,21 +41,29 @@ def main():
     print(f"Replacing lines {start_line_idx} to {end_line_idx} in hunk 2 (total {len(hunk2_lines)} lines)")
 
     replacement_body = """\t/* Ensure bypass mode on CB0 (M=0) */
-\tif (cb0_sctlr & 1u) {
-\t\ttouch_wr(smmu, cb0_off, 0u);
-\t\t__asm__ volatile ("dsb sy" ::: "memory");
-\t\tprintf("SPES GPU: 23c. CB0 SCTLR forced to bypass: %#x\\n", touch_rd(smmu, cb0_off));
-\t}
-
-\t/* SMMUv2 Stream Match Bypass: Stream ID 0 (gfx3d_user) and Stream ID 2 (gfx3d_secure) */
-\ttouch_wr(smmu, 0x800u, (1u << 31) | 0u);  /* SMR0: VALID=1, ID=0 */
-\ttouch_wr(smmu, 0xc00u, (1u << 16));       /* S2CR0: TYPE=1 (bypass) */
-\ttouch_wr(smmu, 0x804u, (1u << 31) | 2u);  /* SMR1: VALID=1, ID=2 */
-\ttouch_wr(smmu, 0xc04u, (1u << 16));       /* S2CR1: TYPE=1 (bypass) */
+\ttouch_wr(smmu, cb0_off, 0u);                      /* CB0 SCTLR = 0 (M=0, HUPCF=0, CFRE=0, CFIE=0) */
+\ttouch_wr(smmu, cb0_off + 0x58u, 0xffffffffu);     /* CB0 FSR = 0xffffffff (clear any faults) */
+\ttouch_wr(smmu, 0x1000u, 0u);                      /* CBAR0 = 0 (Stage 1 translation, VMID=0) */
+\ttouch_wr(smmu, 0x1800u, 0u);                      /* CBA2R0 = 0 (32-bit address space) */
 \t__asm__ volatile ("dsb sy" ::: "memory");
-\tprintf("SPES GPU: 23e. SMR0=%#x S2CR0=%#x SMR1=%#x S2CR1=%#x\\n",
+
+\t/* Route all 4 GPU streams (<0 4>) to Context Bank 0 with Stage 1 disabled (pass-through) */
+\ttouch_wr(smmu, 0xc00u, 0u);                /* S2CR0: TYPE=0 (CB translation), CBNDX=0 */
+\ttouch_wr(smmu, 0x800u, (1u << 31) | 0u);   /* SMR0: VALID=1, ID=0 (gfx3d_user) */
+
+\ttouch_wr(smmu, 0xc04u, 0u);                /* S2CR1: TYPE=0 (CB translation), CBNDX=0 */
+\ttouch_wr(smmu, 0x804u, (1u << 31) | 1u);   /* SMR1: VALID=1, ID=1 */
+
+\ttouch_wr(smmu, 0xc08u, 0u);                /* S2CR2: TYPE=0 (CB translation), CBNDX=0 */
+\ttouch_wr(smmu, 0x808u, (1u << 31) | 2u);   /* SMR2: VALID=1, ID=2 (gfx3d_secure) */
+
+\ttouch_wr(smmu, 0xc0cu, 0u);                /* S2CR3: TYPE=0 (CB translation), CBNDX=0 */
+\ttouch_wr(smmu, 0x80cu, (1u << 31) | 3u);   /* SMR3: VALID=1, ID=3 */
+\t__asm__ volatile ("dsb sy" ::: "memory");
+\tprintf("SPES GPU: 23e. SMR0=%#x S2CR0=%#x SMR2=%#x S2CR2=%#x CB0_SCTLR=%#x\\n",
 \t    touch_rd(smmu, 0x800u), touch_rd(smmu, 0xc00u),
-\t    touch_rd(smmu, 0x804u), touch_rd(smmu, 0xc04u));
+\t    touch_rd(smmu, 0x808u), touch_rd(smmu, 0xc08u),
+\t    touch_rd(smmu, cb0_off));
 
 \t/* Map 64 KiB contiguous DMA carveout in continuous splash RAM (< 4GB DRAM) at 0x5ca00000 */
 \tvm_offset_t gpu_dma_va = ml_io_map(0x5ca00000u, 0x10000u);
@@ -179,16 +184,22 @@ def main():
 \tprintf("SPES GPU: 27. CP started! fault=%#x int=%#x sqe_stat=%#x rptr=%u wptr=%u rbbm=%#x\\n",
 \t    cp_hw_fault, cp_int_stat, sqe_stat, curr_rptr, curr_wptr, rbbm_status);
 
-\t/* Step 20: Submit CP_ME_INIT (Freedreno/Linux upstream sequence) */
+\t/* Step 20: Submit CP_THREAD_CONTROL & CP_ME_INIT (Linux upstream sequence) */
 \tuint32_t w = 0;
-\trb[w++] = 0x70c80008u; /* CP_ME_INIT (opcode 0x48, count 8) */
-\trb[w++] = 0x0000002fu; /* CP_INIT_MASK: max contexts, error det, header dump, reset state, ucode wa */
+\trb[w++] = 0x70970001u; /* CP_THREAD_CONTROL: disable concurrent binning (1u << 27) */
+\trb[w++] = 0x08000000u;
+
+\trb[w++] = 0x70c8000bu; /* CP_ME_INIT (opcode 0x48, count 11) */
+\trb[w++] = 0x0000016fu; /* CP_INIT_MASK: max contexts, error det, header dump, reset state, ucode wa, opmode, reglist */
 \trb[w++] = 0x00000003u; /* max contexts = 3 */
 \trb[w++] = 0x20000000u; /* error detection control */
 \trb[w++] = 0x00000000u; /* header dump address LO */
 \trb[w++] = 0x00000000u; /* header dump address HI */
-\trb[w++] = 0x00000000u; /* header dump size */
 \trb[w++] = 0x00000000u; /* ucode workaround */
+\trb[w++] = 0x00000002u; /* operation mode (disable save/restore across preemption) */
+\trb[w++] = 0x00000000u; /* pwrup reglist LO */
+\trb[w++] = 0x00000000u; /* pwrup reglist HI */
+\trb[w++] = 0x00000000u; /* pwrup reglist size */
 \trb[w++] = 0x00000000u; /* pad */
 
 \ttouch_wr(gpu, 0x201cu, w);
