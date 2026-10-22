@@ -1037,7 +1037,7 @@ index 7dd8949..2c09d18 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +684,805 @@ spes_gpu_power_probe(void)
+@@ -677,6 +684,814 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -1559,7 +1559,10 @@ index 7dd8949..2c09d18 100644
 +	uint64_t zap_pa = 0x56615000u;
 +	uint64_t zap_size = 0x2000u;
 +	vm_offset_t zap_va = dma_va + 0x0000u;
-+	memcpy((void *)zap_va, a610_zap_b02, sizeof(a610_zap_b02));
++	volatile uint32_t *zap_dst = (volatile uint32_t *)zap_va;
++	for (unsigned zi = 0; zi < sizeof(a610_zap_b02) / sizeof(uint32_t); zi++) {
++		zap_dst[zi] = a610_zap_b02[zi];
++	}
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +	printf("SPES GPU: 25b. ZAP b02 (%lu bytes) at pa=%#llx va=%#lx\n",
 +	    sizeof(a610_zap_b02), zap_pa, (unsigned long)zap_va);
@@ -1585,17 +1588,24 @@ index 7dd8949..2c09d18 100644
 +	/* Step 16: Place SQE microcode, Ringbuffer, and Scratch in 32-bit DMA carveout (< 4GB) */
 +	uint64_t sqe_pa = 0x56617000u;
 +	vm_offset_t sqe_va = dma_va + 0x2000u;
-+	memcpy((void *)sqe_va, a630_sqe_fw, sizeof(a630_sqe_fw));
++	volatile uint32_t *sqe_dst = (volatile uint32_t *)sqe_va;
++	for (unsigned si = 0; si < sizeof(a630_sqe_fw) / sizeof(uint32_t); si++) {
++		sqe_dst[si] = a630_sqe_fw[si];
++	}
 +
 +	uint64_t rb_pa = 0x56625000u;
 +	vm_offset_t rb_va = dma_va + 0x10000u;
 +	volatile uint32_t *rb = (volatile uint32_t *)rb_va;
-+	bzero((void *)rb_va, 8192);
++	for (unsigned ri = 0; ri < 8192 / sizeof(uint32_t); ri++) {
++		rb[ri] = 0;
++	}
 +
 +	uint64_t fence_pa = 0x56627000u;
 +	vm_offset_t fence_va = dma_va + 0x12000u;
 +	volatile uint32_t *scratch = (volatile uint32_t *)fence_va;
-+	bzero((void *)fence_va, 8192);
++	for (unsigned fi = 0; fi < 8192 / sizeof(uint32_t); fi++) {
++		scratch[fi] = 0;
++	}
 +	scratch[0] = 0xdeadbeefu;
 +	scratch[1] = 0xdeadbeefu;
 +	scratch[2] = 0xdeadbeefu;
@@ -1784,8 +1794,7 @@ index 7dd8949..2c09d18 100644
 +	printf("SPES GPU: 29. RING RETIREMENT: rptr=%u / wptr=%u (consumed=%d poll=%d rbbm=%#x fault=%#x int=%#x scratch2=%#x)\n",
 +	    curr_rptr, w, consumed, poll_i, rbbm_status, cp_hw_fault, cp_int_stat, cp_scratch2);
 +
-+	/* Step 22: Invalidate CPU cache on scratch buffer and verify GPU writes */
-+	flush_dcache64(fence_pa, 64, TRUE);
++	/* Step 22: Ensure memory barrier on scratch buffer and verify GPU writes */
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
 +	uint32_t val0 = scratch[0];
@@ -1843,7 +1852,7 @@ index 7dd8949..2c09d18 100644
  static void
  touch_thread(void *arg, wait_result_t result)
  {
-@@ -704,6 +1510,7 @@ touch_thread(void *arg, wait_result_t result)
+@@ -704,6 +1519,7 @@ touch_thread(void *arg, wait_result_t result)
  		goto out;
  	}
  	spes_gpu_power_probe();
