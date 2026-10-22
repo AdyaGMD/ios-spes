@@ -1037,7 +1037,7 @@ index 7dd8949..2c09d18 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +684,872 @@ spes_gpu_power_probe(void)
+@@ -677,6 +684,918 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -1517,38 +1517,6 @@ index 7dd8949..2c09d18 100644
 +	printf("SPES GPU: 23b. CB0 SCTLR=%#x FSR=%#x CBAR0=%#x CBA2R0=%#x\n",
 +	    cb0_sctlr, cb0_fsr, cbar0, cba2r0);
 +
-+	/* SMMU Configuration: CBAR Stage 1 (0x0001f300) + CBA2R 64-bit */
-+	for (unsigned smr_i = 0; smr_i < 8; smr_i++) {
-+		touch_wr(smmu, 0x800u + smr_i * 4u, 0u);
-+		spes_scm(0x42000502u, 2, 0x059a0800u + smr_i * 4u, 0u, 0, NULL);
-+	}
-+	touch_wr(smmu, cb0_off, 0u);                      /* CB0 SCTLR = 0 (M=0 pass-through) */
-+	touch_wr(smmu, cb0_off + 0x58u, 0xffffffffu);     /* CB0 FSR = 0xffffffff (clear faults) */
-+	touch_wr(smmu, 0x1800u, 1u);                      /* CBA2R0 = 1 (64-bit translation format) */
-+	spes_scm(0x42000502u, 2, 0x059a1800u, 1u, 0, NULL);
-+	touch_wr(smmu, 0x1000u, (1u << 16) | (3u << 8) | (0xfu << 12)); /* CBAR0 = Stage 1 (0x0001f300) */
-+	spes_scm(0x42000502u, 2, 0x059a1000u, (1u << 16) | (3u << 8) | (0xfu << 12), 0, NULL);
-+	__asm__ volatile ("dsb sy" ::: "memory");
-+
-+	/* Route all 4 GPU streams (<0 4>) to Context Bank 0 */
-+	for (unsigned s2cr_i = 0; s2cr_i < 8; s2cr_i++) {
-+		touch_wr(smmu, 0xc00u + s2cr_i * 4u, 0u);
-+		spes_scm(0x42000502u, 2, 0x059a0c00u + s2cr_i * 4u, 0u, 0, NULL);
-+	}
-+	touch_wr(smmu, 0x800u, (1u << 31) | 0u);
-+	spes_scm(0x42000502u, 2, 0x059a0800u, (1u << 31) | 0u, 0, NULL);
-+	touch_wr(smmu, 0x808u, (1u << 31) | 2u);
-+	spes_scm(0x42000502u, 2, 0x059a0808u, (1u << 31) | 2u, 0, NULL);
-+	__asm__ volatile ("dsb sy" ::: "memory");
-+
-+	uint64_t scm_s2cr0 = 0, scm_s2cr2 = 0;
-+	spes_scm(0x42000501u, 1, 0x059a0c00u, 0, 0, &scm_s2cr0);
-+	spes_scm(0x42000501u, 1, 0x059a0c08u, 0, 0, &scm_s2cr2);
-+	printf("SPES GPU: 23e. SMR0=%#x S2CR0=%#x(scm=%#llx) SMR2=%#x S2CR2=%#x(scm=%#llx) CBAR0=%#x CB0_SCTLR=%#x\n",
-+	    touch_rd(smmu, 0x800u), touch_rd(smmu, 0xc00u), scm_s2cr0,
-+	    touch_rd(smmu, 0x808u), touch_rd(smmu, 0xc08u), scm_s2cr2,
-+	    touch_rd(smmu, 0x1000u), touch_rd(smmu, cb0_off));
-+
 +	/* Map 64 KiB contiguous DMA carveout in continuous splash RAM (< 4GB DRAM) at 0x5ca00000 */
 +	vm_offset_t gpu_dma_va = ml_io_map(0x5ca00000u, 0x10000u);
 +	if (!gpu_dma_va) {
@@ -1571,17 +1539,114 @@ index 7dd8949..2c09d18 100644
 +	}
 +
 +	volatile uint32_t *scratch = (volatile uint32_t *)(gpu_dma_va + 0xc000u);
-+	for (unsigned fi = 0; fi < 16384 / sizeof(uint32_t); fi++) {
-+		scratch[fi] = 0;
++	for (unsigned fi = 0; fi < 4096 / sizeof(uint32_t); fi++) {
++		scratch[fi] = 0xdeadbeefu;
 +	}
-+	scratch[0] = 0xdeadbeefu;
-+	scratch[1] = 0xdeadbeefu;
-+	scratch[2] = 0xdeadbeefu;
-+	scratch[3] = 0xdeadbeefu;
-+	scratch[4] = 0xdeadbeefu;
++	clean_dcache64(gpu_dma_pa, 0x10000u, TRUE);
 +	__asm__ volatile ("dsb sy" ::: "memory");
-+	printf("SPES GPU: 26. SQE ucode (%lu bytes) at pa=%#llx va=%#lx rb_pa=%#llx\n",
-+	    sizeof(a630_sqe_fw), sqe_pa, (unsigned long)(gpu_dma_va), rb_pa);
++
++	/* Allocate 32 KiB (8 contiguous 4K pages) for SMMU Stage 1 Page Tables */
++	vm_offset_t pt_va = 0;
++	if (kmem_alloc_contig(kernel_map, &pt_va, 32768, PAGE_MASK, 0, 0,
++	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
++		printf("SPES GPU: kmem_alloc_contig for SMMU page tables failed\n");
++		return;
++	}
++	uint64_t pt_pa = ptoa_64(pmap_find_phys(kernel_pmap, (addr64_t)pt_va));
++	memset((void *)pt_va, 0, 32768);
++
++	/* ARM SMMUv2 3-level page tables (4K granule, 39-bit VA):
++	 * L1 root table: pt_va + 0x0000 (pt_pa + 0x0000)
++	 * L2 table:      pt_va + 0x1000 (pt_pa + 0x1000)
++	 * L3 Core:       pt_va + 0x2000 (pt_pa + 0x2000) -> 0x01000000..0x011fffff
++	 * L3 Target:     pt_va + 0x3000 (pt_pa + 0x3000) -> 0x10000000..0x101fffff
++	 * L3 FB:         pt_va + 0x4000 (pt_pa + 0x4000) -> 0x5c000000..0x5c1fffff
++	 * L3 DMA:        pt_va + 0x5000 (pt_pa + 0x5000) -> 0x5ca00000..0x5cbfffff
++	 */
++	uint64_t *l1 = (uint64_t *)(pt_va + 0x0000u);
++	uint64_t *l2 = (uint64_t *)(pt_va + 0x1000u);
++	uint64_t *l3_core = (uint64_t *)(pt_va + 0x2000u);
++	uint64_t *l3_target = (uint64_t *)(pt_va + 0x3000u);
++	uint64_t *l3_fb = (uint64_t *)(pt_va + 0x4000u);
++	uint64_t *l3_dma = (uint64_t *)(pt_va + 0x5000u);
++
++	uint64_t l2_pa = pt_pa + 0x1000u;
++	uint64_t l3_core_pa = pt_pa + 0x2000u;
++	uint64_t l3_target_pa = pt_pa + 0x3000u;
++	uint64_t l3_fb_pa = pt_pa + 0x4000u;
++	uint64_t l3_dma_pa = pt_pa + 0x5000u;
++
++	#define SPES_PTE_TABLE   3ull
++	#define SPES_PTE_PAGE    3ull
++	#define SPES_PTE_CORE    ((1ull << 6) | (2ull << 8) | (1ull << 10) | (1ull << 11))
++	#define SPES_PTE_RO      (1ull << 7)
++
++	l1[0] = l2_pa | SPES_PTE_TABLE;
++	l2[8]   = l3_core_pa | SPES_PTE_TABLE;
++	l2[128] = l3_target_pa | SPES_PTE_TABLE;
++	l2[464] = l3_fb_pa | SPES_PTE_TABLE;
++	l2[469] = l3_dma_pa | SPES_PTE_TABLE;
++
++	/* Core mappings */
++	for (unsigned i = 0; i < 4; i++) {
++		l3_core[i] = (rb_pa + i * 4096u) | SPES_PTE_CORE | SPES_PTE_PAGE;
++	}
++	for (unsigned i = 0; i < 8; i++) {
++		l3_core[256 + i] = (sqe_pa + i * 4096u) | SPES_PTE_CORE | SPES_PTE_RO | SPES_PTE_PAGE;
++	}
++	l3_core[496] = fence_pa | SPES_PTE_CORE | SPES_PTE_PAGE;
++
++	/* Target mappings */
++	for (unsigned i = 0; i < 16; i++) {
++		l3_target[i] = (fence_pa + (i % 4) * 4096u) | SPES_PTE_CORE | SPES_PTE_PAGE;
++	}
++
++	/* FB mappings (0x5c000000..0x5c1fffff identity) */
++	for (unsigned i = 0; i < 512; i++) {
++		l3_fb[i] = (0x5c000000u + i * 4096u) | SPES_PTE_CORE | SPES_PTE_PAGE;
++	}
++
++	/* DMA mappings (0x5ca00000..0x5cbfffff identity) */
++	for (unsigned i = 0; i < 512; i++) {
++		l3_dma[i] = (0x5ca00000u + i * 4096u) | SPES_PTE_CORE | SPES_PTE_PAGE;
++	}
++
++	clean_dcache64(pt_pa, 32768, TRUE);
++	__asm__ volatile ("dsb sy" ::: "memory");
++
++	/* Configure SMMU Context Bank 0 */
++	uint32_t context = cb0_off;
++	touch_wr(smmu, context + 0x00u, 0u);                      /* CB0_SCTLR = 0 (quiesce) */
++	touch_wr(smmu, stride + 0x800u, 1u);                     /* CBA2R0 = 1 (64-bit translation format) */
++	touch_wr(smmu, stride + 0x000u, (1u << 16) | (3u << 8) | (0xfu << 12)); /* CBAR0 = 0x1f300 (Stage 1) */
++	touch_wr(smmu, context + 0x10u, (1u | 1u << 4 | 7u << 15)); /* CB0_TCR2: 36-bit PA, 16-bit ASID */
++	touch_wr(smmu, context + 0x30u, (25u | 1u << 8 | 1u << 10 | 3u << 12 | 1u << 23)); /* CB0_TCR: 39-bit VA, 4K granule, inner/outer WB WA */
++	touch_wr(smmu, context + 0x20u, (uint32_t)pt_pa);         /* CB0_TTBR0_LO */
++	touch_wr(smmu, context + 0x24u, (uint32_t)(pt_pa >> 32)); /* CB0_TTBR0_HI */
++	touch_wr(smmu, context + 0x28u, 0u);                      /* CB0_TTBR1_LO = 0 */
++	touch_wr(smmu, context + 0x2cu, 0u);                      /* CB0_TTBR1_HI = 0 */
++	touch_wr(smmu, context + 0x38u, 0xf404ff44u);             /* CB0_MAIR0: 0=uncached, 1=cached, 2=device */
++	touch_wr(smmu, context + 0x3cu, 0u);                      /* CB0_MAIR1 = 0 */
++	touch_wr(smmu, context + 0x58u, 0xc00001feu);             /* CB0_FSR: clear all faults */
++	touch_wr(smmu, context + 0x610u, 0u);                     /* CB0_TLBIASID: invalidate ASID 0 */
++	touch_wr(smmu, context + 0x7f0u, 1u);                     /* CB0_TLBSYNC = 1 */
++	for (int ti = 0; ti < 1000 && (touch_rd(smmu, context + 0x7f4u) & 1); ti++) {
++		touch_wait(1);
++	}
++	touch_wr(smmu, context + 0x00u, (1u << 0) | (1u << 1) | (1u << 2) | (1u << 5) | (1u << 12)); /* CB0_SCTLR = ON */
++	__asm__ volatile ("dsb sy" ::: "memory");
++
++	/* Route Stream 0 (with mask 1: covers stream 0 and 1) to Context Bank 0 */
++	touch_wr(smmu, 0xc00u, 0u);                               /* S2CR0: context 0, type 0 = translate */
++	touch_wr(smmu, 0x800u, (1u << 31) | (1u << 16) | 0u);     /* SMR0: valid, mask 1, stream 0 */
++	touch_wr(smmu, 0xc04u, 0u);                               /* S2CR1: context 0, type 0 = translate */
++	touch_wr(smmu, 0x804u, (1u << 31) | 1u);                  /* SMR1: valid, mask 0, stream 1 */
++	__asm__ volatile ("dsb sy" ::: "memory");
++
++	printf("SPES GPU: 23e. SMR0=%#x S2CR0=%#x SMR1=%#x S2CR1=%#x CBAR0=%#x CB0_SCTLR=%#x TTBR0=%#llx\n",
++	    touch_rd(smmu, 0x800u), touch_rd(smmu, 0xc00u),
++	    touch_rd(smmu, 0x804u), touch_rd(smmu, 0xc04u),
++	    touch_rd(smmu, stride), touch_rd(smmu, context), pt_pa);
 +
 +	/* Configure RBBM SECVID TSB & enable 64-bit addressing on all 12 blocks */
 +	touch_wr(gpu, 0x3e000u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_BASE_LO */
@@ -1634,25 +1699,28 @@ index 7dd8949..2c09d18 100644
 +	touch_wr(gpu, 0x208cu, 0xffffffffu); /* CP_INTERRUPT_STATUS */
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
-+	/* Program CP SQE Base Registers (dword 0x0830 -> 0x20c0) */
-+	touch_wr(gpu, 0x20c0u, (uint32_t)sqe_pa);
-+	touch_wr(gpu, 0x20c4u, (uint32_t)(sqe_pa >> 32));
++	printf("SPES GPU: 26. SQE ucode (%lu bytes) at pa=%#llx va=%#lx rb_pa=%#llx\n",
++	    sizeof(a630_sqe_fw), sqe_pa, (unsigned long)gpu_dma_va, rb_pa);
++
++	/* Point SQE instruction base to 0x01100000 (mapped to sqe_pa in Context 0!) */
++	touch_wr(gpu, 0x20c0u, 0x01100000u);           /* CP_SQE_INSTR_BASE_LO */
++	touch_wr(gpu, 0x20c4u, 0x00000000u);           /* CP_SQE_INSTR_BASE_HI */
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +	uint32_t base_lo = touch_rd(gpu, 0x20c0u);
 +	uint32_t base_hi = touch_rd(gpu, 0x20c4u);
 +	printf("SPES GPU: 26b. CP_SQE_INSTR_BASE=%#x:%#x (match=%d)\n",
-+	    base_hi, base_lo, (base_lo == (uint32_t)sqe_pa && base_hi == (uint32_t)(sqe_pa >> 32)));
++	    base_hi, base_lo, (base_lo == 0x01100000u && base_hi == 0u));
 +
-+	/* Program Ringbuffer registers (A610: bit 27 = NO_APRIV) */
-+	touch_wr(gpu, 0x2000u, (uint32_t)rb_pa);           /* CP_RB_BASE_LO */
-+	touch_wr(gpu, 0x2004u, (uint32_t)(rb_pa >> 32));  /* CP_RB_BASE_HI */
-+	touch_wr(gpu, 0x2008u, 0x0800020au);              /* CP_RB_CNTL (8K ring, 32B block, bit 27 = NO_APRIV) */
-+	touch_wr(gpu, 0x2010u, (uint32_t)fence_pa);       /* CP_RB_RPTR_ADDR_LO */
-+	touch_wr(gpu, 0x2014u, (uint32_t)(fence_pa >> 32));/* CP_RB_RPTR_ADDR_HI */
-+	touch_wr(gpu, 0x2018u, 0u);                       /* CP_RB_RPTR */
-+	touch_wr(gpu, 0x201cu, 0u);                       /* CP_RB_WPTR */
-+	touch_wr(gpu, 0x2214u, 0u);                       /* CP_SCRATCH(2) */
-+	touch_wr(gpu, 0x2090u, 0xffffffffu);               /* CP_INT_ACK: clear pending interrupts */
++	/* Program Ringbuffer registers: ring at 0x01000000, RPTR scratch at 0x011f0000 */
++	touch_wr(gpu, 0x2000u, 0x01000000u);           /* CP_RB_BASE_LO */
++	touch_wr(gpu, 0x2004u, 0x00000000u);           /* CP_RB_BASE_HI */
++	touch_wr(gpu, 0x2008u, 0x0800020au);           /* CP_RB_CNTL (8K ring, 32B block, bit 27 = NO_APRIV) */
++	touch_wr(gpu, 0x2010u, 0x011f0000u);           /* CP_RB_RPTR_ADDR_LO */
++	touch_wr(gpu, 0x2014u, 0x00000000u);           /* CP_RB_RPTR_ADDR_HI */
++	touch_wr(gpu, 0x2018u, 0u);                    /* CP_RB_RPTR */
++	touch_wr(gpu, 0x201cu, 0u);                    /* CP_RB_WPTR */
++	touch_wr(gpu, 0x2214u, 0u);                    /* CP_SCRATCH(2) */
++	touch_wr(gpu, 0x2090u, 0xffffffffu);            /* CP_INT_ACK: clear pending interrupts */
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
 +	/* Step 19: Un-halt CP SQE engine BEFORE submitting init */
@@ -1677,61 +1745,39 @@ index 7dd8949..2c09d18 100644
 +	rb[w++] = 0x70c8000bu; /* CP_ME_INIT (opcode 0x48, count 11) */
 +	rb[w++] = 0x0000016fu; /* CP_INIT_MASK: max contexts, error det, header dump, reset state, ucode wa, opmode, reglist */
 +	rb[w++] = 0x00000003u; /* max contexts = 3 */
-+	rb[w++] = 0x20000000u; /* error detection control */
-+	rb[w++] = 0x00000000u; /* header dump address LO */
-+	rb[w++] = 0x00000000u; /* header dump address HI */
-+	rb[w++] = 0x00000000u; /* ucode workaround */
-+	rb[w++] = 0x00000002u; /* operation mode (disable save/restore across preemption) */
-+	rb[w++] = 0x00000000u; /* pwrup reglist LO */
-+	rb[w++] = 0x00000000u; /* pwrup reglist HI */
-+	rb[w++] = 0x00000000u; /* pwrup reglist size */
-+	rb[w++] = 0x00000000u; /* pad */
++	rb[w++] = 0x00000000u; /* error detection = 0 */
++	rb[w++] = 0x00000000u; /* header dump = 0 */
++	rb[w++] = 0x00000000u; /* reset state = 0 */
++	rb[w++] = 0x00000000u; /* ucode wa = 0 */
++	rb[w++] = 0x00000000u; /* opmode = 0 */
++	rb[w++] = 0x00000000u; /* reglist count = 0 */
++	rb[w++] = 0x00000000u; /* reglist addr lo = 0 */
++	rb[w++] = 0x00000000u; /* reglist addr hi = 0 */
++	rb[w++] = 0x00000000u;
 +
-+	touch_wr(gpu, 0x201cu, w);
++	/* CP_NOP padding to 16 dwords */
++	while (w < 16) {
++		rb[w++] = 0x70100000u;
++	}
 +	__asm__ volatile ("dsb sy" ::: "memory");
-+	touch_wait(10);
 +
-+	bool me_init_ok = false;
-+	for (int mi = 0; mi < 500; mi++) {
-+		if (touch_rd(gpu, 0x2018u) >= w) {
-+			me_init_ok = true;
-+			break;
-+		}
++	touch_wr(gpu, 0x201cu, w); /* Kick WPTR */
++	__asm__ volatile ("dsb sy" ::: "memory");
++	printf("SPES GPU: 27b. CP_ME_INIT submitted: wptr=%u\n", w);
++
++	/* Wait for CP_ME_INIT retirement */
++	for (int wi = 0; wi < 500; wi++) {
++		curr_rptr = touch_rd(gpu, 0x2018u);
++		if (curr_rptr >= w) break;
 +		touch_wait(1);
 +	}
-+	printf("SPES GPU: 27b. CP_ME_INIT: rptr=%u / wptr=%u (ok=%d int=%#x rbbm=%#x)\n",
-+	    touch_rd(gpu, 0x2018u), w, me_init_ok, touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x840u));
++	cp_hw_fault = touch_rd(gpu, 0x2084u);
++	cp_int_stat = touch_rd(gpu, 0x208cu);
++	rbbm_status = touch_rd(gpu, 0x840u);
++	printf("SPES GPU: 27c. CP_ME_INIT: rptr=%u / wptr=%u (ok=%d int=%#x fault=%#x rbbm=%#x)\n",
++	    curr_rptr, w, (curr_rptr >= w), cp_int_stat, cp_hw_fault, rbbm_status);
 +
-+	/* ================================================================
-+	 * STAGE 4: TrustZone PAS ID 13 (a610_zap) PIL Authentication
-+	 * Per Linux a6xx_rb_start: ZAP load is executed AFTER CP_ME_INIT!
-+	 * ================================================================ */
-+	printf("SPES GPU: starting Stage 4 (ZAP PIL authentication)...\n");
-+
-+	/* Query TrustZone for PAS ID 13 support */
-+	uint64_t tz_res = 0;
-+	uint64_t tz_st = spes_scm(0x42000000u | (0x02u << 8) | 0x07u, 1, 13, 0, 0, &tz_res);
-+	printf("SPES GPU: 24. TrustZone PAS 13 check: st=%#llx res=%#llx\n", tz_st, tz_res);
-+
-+	/* Allocate contiguous buffer for ZAP MDT metadata (8 KiB) */
-+	vm_offset_t mdt_va = 0;
-+	if (kmem_alloc_contig(kernel_map, &mdt_va, 8192, PAGE_MASK, 0, 0,
-+	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
-+		printf("SPES GPU: kmem_alloc_contig for ZAP MDT failed\n");
-+		return;
-+	}
-+	ppnum_t mdt_pn = pmap_find_phys(kernel_pmap, (addr64_t)mdt_va);
-+	uint64_t mdt_pa = ptoa_64(mdt_pn);
-+	volatile uint32_t *mdt_dst = (volatile uint32_t *)mdt_va;
-+	for (unsigned mi = 0; mi < sizeof(a610_zap_mdt) / sizeof(uint32_t); mi++) {
-+		mdt_dst[mi] = a610_zap_mdt[mi];
-+	}
-+	clean_dcache64(mdt_pa, sizeof(a610_zap_mdt), TRUE);
-+	__asm__ volatile ("dsb sy" ::: "memory");
-+	printf("SPES GPU: 25a. ZAP MDT (%lu bytes) at pa=%#llx va=%#lx\n",
-+	    sizeof(a610_zap_mdt), mdt_pa, (unsigned long)mdt_va);
-+
-+	/* Map 8 KiB contiguous DMA buffer at 0x56615000 (< 4GB DRAM) for ZAP */
++	/* Map ZAP firmware staging DMA area (0x56615000) */
 +	vm_offset_t dma_va = ml_io_map(0x56615000u, 0x2000u);
 +	if (!dma_va) {
 +		printf("SPES GPU: ml_io_map(0x56615000) failed\n");
@@ -1766,14 +1812,14 @@ index 7dd8949..2c09d18 100644
 +	 * ================================================================ */
 +	printf("SPES GPU: starting Stage 5 (draw commands & framebuffer render)...\n");
 +
-+	/* 1. CP_SET_SECURE_MODE (Type 7, opcode 0x66, count 1) - drop protected mode */
++	/* 1. CP_SET_SECURE_MODE (drop protected mode) */
 +	rb[w++] = 0x70e60001u;
 +	rb[w++] = 0x00000000u;
 +
-+	/* 2. CP_MEM_WRITE to DRAM Scratch (Type 7, opcode 0x3d, count 6, parity bit 15) */
++	/* 2. CP_MEM_WRITE to Scratch VA 0x011f0000 (mapped to fence_pa!) */
 +	rb[w++] = 0x703d8006u;
-+	rb[w++] = (uint32_t)fence_pa;
-+	rb[w++] = (uint32_t)(fence_pa >> 32);
++	rb[w++] = 0x011f0000u;
++	rb[w++] = 0x00000000u;
 +	rb[w++] = 0x11223344u;
 +	rb[w++] = 0x55667788u;
 +	rb[w++] = 0x99aabbccu;
@@ -1791,11 +1837,11 @@ index 7dd8949..2c09d18 100644
 +	rb[w++] = 0x48088501u;
 +	rb[w++] = 0xcafe0001u;
 +
-+	/* 5. CP_EVENT_WRITE Fence (Type 7, opcode 0x46, count 4) */
++	/* 5. CP_EVENT_WRITE Fence to 0x011f0010 (fence_pa + 16!) */
 +	rb[w++] = 0x70460004u;
 +	rb[w++] = 0x08000031u; /* CACHE_FLUSH_TS with write timestamp */
-+	rb[w++] = (uint32_t)(fence_pa + 16);
-+	rb[w++] = (uint32_t)((fence_pa + 16) >> 32);
++	rb[w++] = 0x011f0010u;
++	rb[w++] = 0x00000000u;
 +	rb[w++] = 0xcafe0001u; /* Fence seqno marker */
 +
 +	/* 6. CP_NOP (Type 7, opcode 0x10, count 1) */
@@ -1910,7 +1956,7 @@ index 7dd8949..2c09d18 100644
  static void
  touch_thread(void *arg, wait_result_t result)
  {
-@@ -704,6 +1577,7 @@ touch_thread(void *arg, wait_result_t result)
+@@ -704,6 +1623,7 @@ touch_thread(void *arg, wait_result_t result)
  		goto out;
  	}
  	spes_gpu_power_probe();
