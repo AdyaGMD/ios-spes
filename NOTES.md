@@ -1,3 +1,24 @@
+# Stage 5 SQE illegal instruction root cause resolution & SMMU stream unlock — 2026-10-22
+
+- Silicon boot of commit e83c3a0 verified via photo (media_1792694574465_b9dee0ea.png):
+  * **Line 26**: SQE ucode (32260 bytes) at pa=0x5ca00000 va=0xfffffe4518050000 rb_pa=0x5ca08000
+  * **Line 26b**: CP_SQE_INSTR_BASE=0:0x1100000 (match=1)
+  * **Line 27**: SQE released (not yet validated): fault=0 int=0x80 sqe_stat=0 rptr=0 wptr=0 rbbm=0x1
+  * **Line 27 fetch faults**: GFSR=0 FSR=0x400 FSYNR=0x10028 FAR=0x4001:0x905b6040
+- **Root Cause Analysis**:
+  1. **The `int=0x80` (`CP_ILLEGAL_INSTR_ERROR`) Smoking Gun**:
+     - `a630_sqe_fw[8065]` starts with `0x016ee197u`, which is the 4-byte firmware version header, NOT executable microcode instructions (confirmed in `redwood_adreno.c:2574` and Linux `adreno_a6xx.c:1020`).
+     - Probe copied `sqe_dst[0] = a630_sqe_fw[0]`. When unhalted at `0x01100000`, the SQE microengine immediately attempted to decode `0x016ee197` as an instruction, latching `CP_ILLEGAL_INSTR_ERROR` (`int=0x80`).
+     - Fix: Copy `sqe_dst[si - 1] = a630_sqe_fw[si]` from `si = 1` to `8064` words (`32256` bytes).
+  2. **MMU-500 SMR / S2CR Hardware Locking & Mask Alignment**:
+     - On Khaje/SM6225 (`spes`), DTB specifies `gfx3d_user: iommus = <&kgsl_smmu 0 1>` (Stream ID 0, mask 1). Writing `mask = 0x400` was rejected by hardware, leaving SMR0=0.
+     - ARM SMMUv2 requires invalidating SMRs first (`touch_wr(smmu, 0x800 + i*4, 0)`) before writing S2CR, then programming S2CR to Context Bank 0, and re-enabling exact SMR matches.
+  3. **Missing `CP_APRIV_CNTL`**:
+     - Set `CP_APRIV_CNTL = 0x6e` at `gpu + 0x2110` before unhalting SQE to grant command processor access (per `redwood_adreno.c:2748`).
+  4. **CB0_SCTLR HUPCF Flag**:
+     - Set bit 8 (`HUPCF = 1`) in `CB0_SCTLR` (`0x1127`) to serve requests after fault.
+- All 17 host tests pass in `tests/test_gpu_probe.py`; hunk math verified.
+
 # Stage 5 SMMU routing alignment with Redwood/Qualcomm 0x400 mask & SQE diagnostics — 2026-10-22
 
 - Silicon boot of commit a3d21e1 verified via photo (media_1792693371803_c3f4cb27.png):
