@@ -1,3 +1,21 @@
+# Stage 5 SMMU routing alignment with Redwood/Qualcomm 0x400 mask & SQE diagnostics — 2026-10-22
+
+- Silicon boot of commit a3d21e1 verified via photo (media_1792693371803_c3f4cb27.png):
+  * **Zero panic**: The clean_dcache64 phystokv_range panic on 0x5ca00000 is 100% eliminated by to_memory().
+  * Entire boot sequence through Touch driver executed smoothly: Focaltech 54:52 selected, 1080x2400.
+  * Line 23b & 23e confirmed:
+    - SMMU base=0x059a0000, ID0=0x4c817e04, ID1=0x20000005 (4K page size, 8 pages, 5 CBs).
+    - Context Bank 0 successfully configured and enabled: CBAR0=0x1f300, CB0_SCTLR=0x27 (ON=1), TTBR0=0x103278000!
+  * Gate check stopped before SQE because S2CR0/S2CR1 retained 0x20209ff and 0x4600ff:
+    - Root cause: Qualcomm SMMU MMU-500 stream matching strictly requires SMMU_STREAM_MASK = 0x400 (per Redwood reference redwood_adreno.c:1187 & DTB stream-id-range <0 0x400>).
+    - When written with mask=0, hardware rejects SMR writes, leaving S2CR in default fault state.
+    - Redwood reference maps Stream 0 to Match 0 and Stream 1 to Match 2.
+- Fix:
+  * Aligned SMR/S2CR programming to Redwood reference: S2CR write + SMR with mask 0x400 (Match 0 and Match 2).
+  * Removed early return block on S2CR so probe unhalts SQE and displays live hardware diagnostic registers:
+    fault, int_stat, sqe_stat, GFSR, FSR, FSYNR, FAR to isolate exact fetch behavior on silicon.
+  * Verified all 17 host tests pass in tests/test_gpu_probe.py and hunk math verified.
+
 # Stage 5 panic resolution: phystokv_range 0x5ca00000 eliminated via to_memory — 2026-10-22
 
 - Silicon boot of CI 39823399736 executed on handset fed264b1.
