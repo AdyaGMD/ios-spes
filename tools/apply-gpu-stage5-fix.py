@@ -47,28 +47,43 @@ def main():
 \ttouch_wr(smmu, 0x1800u, 0u);                      /* CBA2R0 = 0 (32-bit address space) */
 \t__asm__ volatile ("dsb sy" ::: "memory");
 
-	/* Invalidate all 8 SMR entries (VALID=0) first so hardware unlocks S2CR writes */
+	/* Program SMMU Stream Mapping via TrustZone SCM io_writel (0x42000502u) & direct MMIO */
 	for (unsigned smr_i = 0; smr_i < 8; smr_i++) {
+		uint32_t smr_pa = 0x059a0800u + smr_i * 4u;
 		touch_wr(smmu, 0x800u + smr_i * 4u, 0u);
+		spes_scm(0x42000502u, 2, smr_pa, 0u, 0, NULL);
 	}
 	__asm__ volatile ("dsb sy" ::: "memory");
 
-	/* Program S2CR entries to Context Bank 0 (TYPE=0 CB translation, CBNDX=0) */
+	/* Route all 4 GPU streams (<0 4>) to Context Bank 0 with Stage 1 disabled (pass-through) */
 	for (unsigned s2cr_i = 0; s2cr_i < 8; s2cr_i++) {
+		uint32_t s2cr_pa = 0x059a0c00u + s2cr_i * 4u;
 		touch_wr(smmu, 0xc00u + s2cr_i * 4u, 0u);
+		spes_scm(0x42000502u, 2, s2cr_pa, 0u, 0, NULL);
 	}
 	__asm__ volatile ("dsb sy" ::: "memory");
 
 	/* Re-enable Stream Match Registers for all 4 GPU streams */
-	touch_wr(smmu, 0x800u, (1u << 31) | 0u);   /* SMR0: VALID=1, ID=0 (gfx3d_user) */
-	touch_wr(smmu, 0x804u, (1u << 31) | 1u);   /* SMR1: VALID=1, ID=1 */
-	touch_wr(smmu, 0x808u, (1u << 31) | 2u);   /* SMR2: VALID=1, ID=2 (gfx3d_secure) */
-	touch_wr(smmu, 0x80cu, (1u << 31) | 3u);   /* SMR3: VALID=1, ID=3 */
-\t__asm__ volatile ("dsb sy" ::: "memory");
-\tprintf("SPES GPU: 23e. SMR0=%#x S2CR0=%#x SMR2=%#x S2CR2=%#x CB0_SCTLR=%#x\\n",
-\t    touch_rd(smmu, 0x800u), touch_rd(smmu, 0xc00u),
-\t    touch_rd(smmu, 0x808u), touch_rd(smmu, 0xc08u),
-\t    touch_rd(smmu, cb0_off));
+	touch_wr(smmu, 0x800u, (1u << 31) | 0u);
+	spes_scm(0x42000502u, 2, 0x059a0800u, (1u << 31) | 0u, 0, NULL);
+
+	touch_wr(smmu, 0x804u, (1u << 31) | 1u);
+	spes_scm(0x42000502u, 2, 0x059a0804u, (1u << 31) | 1u, 0, NULL);
+
+	touch_wr(smmu, 0x808u, (1u << 31) | 2u);
+	spes_scm(0x42000502u, 2, 0x059a0808u, (1u << 31) | 2u, 0, NULL);
+
+	touch_wr(smmu, 0x80cu, (1u << 31) | 3u);
+	spes_scm(0x42000502u, 2, 0x059a080cu, (1u << 31) | 3u, 0, NULL);
+	__asm__ volatile ("dsb sy" ::: "memory");
+
+	uint64_t scm_s2cr0 = 0, scm_s2cr2 = 0;
+	spes_scm(0x42000501u, 1, 0x059a0c00u, 0, 0, &scm_s2cr0);
+	spes_scm(0x42000501u, 1, 0x059a0c08u, 0, 0, &scm_s2cr2);
+	printf("SPES GPU: 23e. SMR0=%#x S2CR0=%#x(scm=%#llx) SMR2=%#x S2CR2=%#x(scm=%#llx) CB0_SCTLR=%#x\n",
+	    touch_rd(smmu, 0x800u), touch_rd(smmu, 0xc00u), scm_s2cr0,
+	    touch_rd(smmu, 0x808u), touch_rd(smmu, 0xc08u), scm_s2cr2,
+	    touch_rd(smmu, cb0_off));
 
 \t/* Map 64 KiB contiguous DMA carveout in continuous splash RAM (< 4GB DRAM) at 0x5ca00000 */
 \tvm_offset_t gpu_dma_va = ml_io_map(0x5ca00000u, 0x10000u);
@@ -101,8 +116,7 @@ def main():
 \tscratch[3] = 0xdeadbeefu;
 \tscratch[4] = 0xdeadbeefu;
 \t__asm__ volatile ("dsb sy" ::: "memory");
-\tprintf("SPES GPU: 26. SQE ucode (%lu bytes) at pa=%#llx va=%#lx rb_pa=%#llx\\n",
-\t    sizeof(a630_sqe_fw), sqe_pa, (unsigned long)(gpu_dma_va), rb_pa);
+\tprintf("SPES GPU: 26. SQE ucode (%lu bytes) at pa=%#llx va=%#lx rb_pa=%#llx\\n", \t    sizeof(a630_sqe_fw), sqe_pa, (unsigned long)(gpu_dma_va), rb_pa);
 
 \t/* Configure RBBM SECVID TSB & enable 64-bit addressing on all 12 blocks */
 \ttouch_wr(gpu, 0x3e000u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_BASE_LO */
@@ -161,8 +175,7 @@ def main():
 \t__asm__ volatile ("dsb sy" ::: "memory");
 \tuint32_t base_lo = touch_rd(gpu, 0x20c0u);
 \tuint32_t base_hi = touch_rd(gpu, 0x20c4u);
-\tprintf("SPES GPU: 26b. CP_SQE_INSTR_BASE=%#x:%#x (match=%d)\\n",
-\t    base_hi, base_lo, (base_lo == (uint32_t)sqe_pa && base_hi == (uint32_t)(sqe_pa >> 32)));
+\tprintf("SPES GPU: 26b. CP_SQE_INSTR_BASE=%#x:%#x (match=%d)\\n", \t    base_hi, base_lo, (base_lo == (uint32_t)sqe_pa && base_hi == (uint32_t)(sqe_pa >> 32)));
 
 \t/* Program Ringbuffer registers (A610: bit 27 = NO_APRIV) */
 \ttouch_wr(gpu, 0x2000u, (uint32_t)rb_pa);           /* CP_RB_BASE_LO */
@@ -186,8 +199,7 @@ def main():
 \tuint32_t curr_rptr = touch_rd(gpu, 0x2018u);
 \tuint32_t curr_wptr = touch_rd(gpu, 0x201cu);
 \trbbm_status = touch_rd(gpu, 0x840u);
-\tprintf("SPES GPU: 27. CP started! fault=%#x int=%#x sqe_stat=%#x rptr=%u wptr=%u rbbm=%#x\\n",
-\t    cp_hw_fault, cp_int_stat, sqe_stat, curr_rptr, curr_wptr, rbbm_status);
+\tprintf("SPES GPU: 27. CP started! fault=%#x int=%#x sqe_stat=%#x rptr=%u wptr=%u rbbm=%#x\\n", \t    cp_hw_fault, cp_int_stat, sqe_stat, curr_rptr, curr_wptr, rbbm_status);
 
 \t/* Step 20: Submit CP_THREAD_CONTROL & CP_ME_INIT (Linux upstream sequence) */
 \tuint32_t w = 0;
@@ -219,8 +231,7 @@ def main():
 \t\t}
 \t\ttouch_wait(1);
 \t}
-\tprintf("SPES GPU: 27b. CP_ME_INIT: rptr=%u / wptr=%u (ok=%d int=%#x rbbm=%#x)\\n",
-\t    touch_rd(gpu, 0x2018u), w, me_init_ok, touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x840u));
+\tprintf("SPES GPU: 27b. CP_ME_INIT: rptr=%u / wptr=%u (ok=%d int=%#x rbbm=%#x)\\n", \t    touch_rd(gpu, 0x2018u), w, me_init_ok, touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x840u));
 
 \t/* ================================================================
 \t * STAGE 4: TrustZone PAS ID 13 (a610_zap) PIL Authentication
@@ -248,8 +259,7 @@ def main():
 \t}
 \tclean_dcache64(mdt_pa, sizeof(a610_zap_mdt), TRUE);
 \t__asm__ volatile ("dsb sy" ::: "memory");
-\tprintf("SPES GPU: 25a. ZAP MDT (%lu bytes) at pa=%#llx va=%#lx\\n",
-\t    sizeof(a610_zap_mdt), mdt_pa, (unsigned long)mdt_va);
+\tprintf("SPES GPU: 25a. ZAP MDT (%lu bytes) at pa=%#llx va=%#lx\\n", \t    sizeof(a610_zap_mdt), mdt_pa, (unsigned long)mdt_va);
 
 \t/* Map 8 KiB contiguous DMA buffer at 0x56615000 (< 4GB DRAM) for ZAP */
 \tvm_offset_t dma_va = ml_io_map(0x56615000u, 0x2000u);
@@ -265,8 +275,7 @@ def main():
 \t\tzap_dst[zi] = a610_zap_b02[zi];
 \t}
 \t__asm__ volatile ("dsb sy" ::: "memory");
-\tprintf("SPES GPU: 25b. ZAP b02 (%lu bytes) at pa=%#llx va=%#lx\\n",
-\t    sizeof(a610_zap_b02), zap_pa, (unsigned long)dma_va);
+\tprintf("SPES GPU: 25b. ZAP b02 (%lu bytes) at pa=%#llx va=%#lx\\n", \t    sizeof(a610_zap_b02), zap_pa, (unsigned long)dma_va);
 
 \t/* SCM PIL_INIT_IMAGE (cmd 0x01, arginfo = 0x82) */
 \tuint64_t pil_res = 0;
@@ -336,8 +345,7 @@ def main():
 \tfor (poll_i = 0; poll_i < 1000; ++poll_i) {
 \t\tcurr_rptr = touch_rd(gpu, 0x2018u);
 \t\tif (curr_rptr != last_rptr) {
-\t\t\tprintf("SPES GPU: 28b. Ring progress: rptr=%u / wptr=%u (poll=%d)\\n",
-\t\t\t    curr_rptr, w, poll_i);
+\t\t\tprintf("SPES GPU: 28b. Ring progress: rptr=%u / wptr=%u (poll=%d)\\n", \t\t\t    curr_rptr, w, poll_i);
 \t\t\tlast_rptr = curr_rptr;
 \t\t}
 \t\tif (curr_rptr >= w) {
@@ -350,8 +358,7 @@ def main():
 \tcp_hw_fault = touch_rd(gpu, 0x2084u);
 \tcp_int_stat = touch_rd(gpu, 0x208cu);
 \tuint32_t cp_scratch2 = touch_rd(gpu, 0x2214u);
-\tprintf("SPES GPU: 29. RING RETIREMENT: rptr=%u / wptr=%u (consumed=%d poll=%d rbbm=%#x fault=%#x int=%#x scratch2=%#x)\\n",
-\t    curr_rptr, w, consumed, poll_i, rbbm_status, cp_hw_fault, cp_int_stat, cp_scratch2);
+\tprintf("SPES GPU: 29. RING RETIREMENT: rptr=%u / wptr=%u (consumed=%d poll=%d rbbm=%#x fault=%#x int=%#x scratch2=%#x)\\n", \t    curr_rptr, w, consumed, poll_i, rbbm_status, cp_hw_fault, cp_int_stat, cp_scratch2);
 
 \t/* Step 22: Verify GPU writes */
 \t__asm__ volatile ("dsb sy" ::: "memory");
@@ -365,8 +372,7 @@ def main():
 \t             val2 == 0x99aabbccu && val3 == 0xddeeff00u);
 \tint fence_match = (fence_val == 0xcafe0001u);
 
-\tprintf("SPES GPU: 30. DRAM WRITE: [%#x, %#x, %#x, %#x] (match=%d)\\n",
-\t    val0, val1, val2, val3, match);
+\tprintf("SPES GPU: 30. DRAM WRITE: [%#x, %#x, %#x, %#x] (match=%d)\\n", \t    val0, val1, val2, val3, match);
 \tprintf("SPES GPU: 30b. FENCE TS: %#x (match=%d)\\n", fence_val, fence_match);
 \tprintf("SPES GPU: 31. GPU STAGE-4 & STAGE-5 100%% VERIFIED ON SILICON!\\n");
 

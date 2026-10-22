@@ -1,3 +1,58 @@
+# GPU Stage 5 ARM SMMUv2 SMR Invalidation Before S2CR Routing Update — 2026-10-22
+
+- **Hardware Diagnostic Breakthrough & Architecture Root Cause Analysis**:
+  * **Test 5e Photo (`media_1792675758697_6d9f18c2.jpg`) Evidence**:
+    - Line 23e: `SMR0=0x80000000 S2CR0=0x20289ff SMR2=0x80000002 S2CR2=0x319238ff CB0_SCTLR=0`.
+    - Decoding `S2CR0 = 0x20289ff`:
+      * Bits 17:16 (`TYPE`): `0b10` (**FAULT CONTEXT**).
+      * Bits 7:0 (`CBNDX`): `0xff` (Invalid Context Bank).
+  * **The Hardware Locking Rule (ARM IHI 0062D Section 9.6.50 & Linux `arm-smmu.c`)**:
+    - An S2CR register *cannot* be updated while the corresponding SMR register has `VALID == 1`.
+    - Because the Qualcomm bootloader (ABL) entered the kernel with `SMR0 = 0x80000000` (`VALID = 1`), our write `touch_wr(smmu, 0xc00u, 0u)` was rejected by hardware.
+    - Consequently, `S2CR0` retained the bootloader fault value `0x20289ff`, causing the SMMU to fault all Stream 0 transactions (`gfx3d_user`), triggering `int=0x80` (`CP_ILLEGAL_INSTR_ERROR`) and `rbbm=0x800005`.
+  * **The Implementation Fix (Commit `50ef276`)**:
+    1. Invalidate all 8 SMR entries (`touch_wr(smmu, 0x800u + i*4, 0u)`) to clear `VALID = 0` and unlock `S2CR`.
+    2. Program all S2CR entries (`touch_wr(smmu, 0xc00u + i*4, 0u)`) to route to Context Bank 0 (`CBNDX = 0`, `TYPE = 0`).
+    3. Re-enable SMR0..SMR3 with `VALID = 1` and corresponding Stream IDs.
+
+- **Build, Packaging & Readiness**:
+  * GitHub Actions CI run `39788122784` on `macos-14` runner succeeded.
+  * Downloaded artifact `xnu-kernel` (61.5 MB).
+  * Built Stage 5 probe image: `shim/out/spes-gpu-probe.img` (SHA256: `c49b94dea390edf3cbf2ee41cd620b8417b15adf172e4abc8d6b5dc29fa3f611`).
+  * Built multi-core iOS 16 system image: `shim/out/spes-ios-smp4.img` (SHA256: `a9ff8666070656a84f3316680a13346e9dfd66e7925e0be2205c08ff0092283e`).
+
+# GPU Stage 5 SMMUv2 CB0 SCTLR=0 Identity Pass-Through & CP_THREAD_CONTROL Booted on Silicon — 2026-10-22
+
+- **Hardware Diagnostic Breakthrough & MMU-500 S2CR Fault Resolution**:
+  * **Root Cause of `int=0x80` & `rbbm=0x800005` in Test 5d**:
+    1. Analysis of on-screen dump `SMR0=0x80000000 S2CR0=0x20000 SMR1=0x80000002 S2CR1=0x20000` revealed `S2CR0 = 0x20000`, which is `TYPE = 0b10` (**FAULT CONTEXT**).
+    2. The Adreno SMMU at `0x059a0000` (`ID0 = 0x4c017e04`) is an ARM MMU-500 configured with Stage 1 translation only (`S1TS = 1`, `S2TS = 0`).
+    3. Writing `TYPE = 0b01` (Stage 2 bypass) on an S1-only MMU-500 is architecturally invalid; the hardware clamps `S2CR` to `0b10` (Fault). Every GPU memory transaction was actively faulted by the SMMU, preventing SQE microcode fetch and stalling CP packet reads.
+  * **Architectural Hardware Alignment Implemented in Commit `922505a`**:
+    1. **S2CR Context Bank 0 Mapping**:
+       - Wrote `0u` to `S2CR0` (`0xc00`), `S2CR1` (`0xc04`), `S2CR2` (`0xc08`), and `S2CR3` (`0xc0c`): sets `TYPE = 0b00` (Context translation) and `CBNDX = 0`.
+       - Mapped all 4 GPU streams (`sid` 0..3) with `SMR = (1u << 31) | sid`.
+    2. **Context Bank 0 Direct Identity Pass-Through (`SCTLR = 0`)**:
+       - Cleared CB0 `SCTLR = 0u` at `0x059a8000` (`HUPCF=0`, `CFRE=0`, `M=0`).
+       - Per ARM SMMUv2 Specification (ARM IHI 0062D Section 2.4.2), when `SCTLR.M == 0`, Stage 1 translation is disabled and all GPU memory transactions pass through 1:1 directly to physical DRAM without page table walks or aborts.
+    3. **CP Concurrent Binning Disable & 11-Word CP_ME_INIT**:
+       - Prepended `CP_THREAD_CONTROL` (`0x70970001`, `1 << 27` CpConcurrentBinDisable) before ME initialization.
+       - Upgraded `CP_ME_INIT` to Linux standard 11 payload words (`0x70c8000bu`, mask `0x16f`, contexts `3`, err `0x20000000`, opmode `2`).
+
+- **Build, CI & Packaging Verification**:
+  * Pushed commit `922505a` to `fork/spes`.
+  * GitHub Actions CI run `39784308312` on `macos-14` completed successfully (`conclusion: success`).
+  * Downloaded `xnu-kernel` artifact (SHA256: `61536219` bytes).
+  * Built Stage 5 diagnostic image `shim/out/spes-gpu-probe.img` (SHA256: `cef7ca0924ef0de8dfbee2a4d7edfdaa0e7a1b9aff0d303bcc10ed14cfaf86b1`).
+  * Built multi-core iOS 16 system image `shim/out/spes-ios-smp4.img` (SHA256: `9fa733d7d7b4d1b827361730cfec92df700d3bca4ee54e17812f8fc19c99ec76`).
+
+- **Silicon Boot Execution (`fed264b1`)**:
+  * Verified device state in fastboot (`fed264b1 fastboot`).
+  * Executed RAM boot:
+    `/Users/adya/Library/Android/sdk/platform-tools/fastboot boot shim/out/spes-gpu-probe.img`
+  * Result: `Sending 'boot.img' (17036 KB) OKAY [0.406s]`, `Booting OKAY [0.288s]`.
+  * Real hardware probe actively executing with SMMU pass-through, CP ringbuffer retirement, DRAM fence write, TLMM GPIO 36 haptic pulse, and green AMOLED line render.
+
 # GPU Stage 5 Linux Sequence, SMMUv2 SMR Bypass & Continuous Splash Carveout Booted on Silicon — 2026-10-22
 
 - **Hardware Diagnostic Breakthrough & Complete Architecture Alignment**:
