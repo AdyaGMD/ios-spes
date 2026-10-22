@@ -1037,7 +1037,7 @@ index 7dd8949..2c09d18 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +684,864 @@ spes_gpu_power_probe(void)
+@@ -677,6 +684,879 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -1524,17 +1524,22 @@ index 7dd8949..2c09d18 100644
 +	touch_wr(smmu, 0x1800u, 0u);                      /* CBA2R0 = 0 (32-bit address space) */
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
-+	/* Route all 4 GPU streams (<0 4>) to Context Bank 0 with Stage 1 disabled (pass-through) */
-+	touch_wr(smmu, 0xc00u, 0u);                /* S2CR0: TYPE=0 (CB translation), CBNDX=0 */
++	/* Invalidate all 8 SMR entries (VALID=0) first so hardware unlocks S2CR writes */
++	for (unsigned smr_i = 0; smr_i < 8; smr_i++) {
++		touch_wr(smmu, 0x800u + smr_i * 4u, 0u);
++	}
++	__asm__ volatile ("dsb sy" ::: "memory");
++
++	/* Program S2CR entries to Context Bank 0 (TYPE=0 CB translation, CBNDX=0) */
++	for (unsigned s2cr_i = 0; s2cr_i < 8; s2cr_i++) {
++		touch_wr(smmu, 0xc00u + s2cr_i * 4u, 0u);
++	}
++	__asm__ volatile ("dsb sy" ::: "memory");
++
++	/* Re-enable Stream Match Registers for all 4 GPU streams */
 +	touch_wr(smmu, 0x800u, (1u << 31) | 0u);   /* SMR0: VALID=1, ID=0 (gfx3d_user) */
-+
-+	touch_wr(smmu, 0xc04u, 0u);                /* S2CR1: TYPE=0 (CB translation), CBNDX=0 */
 +	touch_wr(smmu, 0x804u, (1u << 31) | 1u);   /* SMR1: VALID=1, ID=1 */
-+
-+	touch_wr(smmu, 0xc08u, 0u);                /* S2CR2: TYPE=0 (CB translation), CBNDX=0 */
 +	touch_wr(smmu, 0x808u, (1u << 31) | 2u);   /* SMR2: VALID=1, ID=2 (gfx3d_secure) */
-+
-+	touch_wr(smmu, 0xc0cu, 0u);                /* S2CR3: TYPE=0 (CB translation), CBNDX=0 */
 +	touch_wr(smmu, 0x80cu, (1u << 31) | 3u);   /* SMR3: VALID=1, ID=3 */
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +	printf("SPES GPU: 23e. SMR0=%#x S2CR0=%#x SMR2=%#x S2CR2=%#x CB0_SCTLR=%#x\n",
@@ -1862,6 +1867,16 @@ index 7dd8949..2c09d18 100644
 +		}
 +	}
 +
++	if (match) {
++		vm_offset_t tlmm_vib_s5 = ml_io_map(0x00424000u, 0x1000u);
++		if (tlmm_vib_s5) {
++			touch_wr(tlmm_vib_s5, 0x00u, touch_rd(tlmm_vib_s5, 0x00u) | (1u << 9));
++			touch_wr(tlmm_vib_s5, 0x04u, 0x02u);
++			touch_wait(50);
++			touch_wr(tlmm_vib_s5, 0x04u, 0x00u);
++		}
++	}
++
 +	/* ================================================================
 +	 * DISPLAY BRIGHTNESS & HAPTICS HARDWARE PROBE
 +	 * ================================================================ */
@@ -1902,7 +1917,7 @@ index 7dd8949..2c09d18 100644
  static void
  touch_thread(void *arg, wait_result_t result)
  {
-@@ -704,6 +1569,7 @@ touch_thread(void *arg, wait_result_t result)
+@@ -704,6 +1584,7 @@ touch_thread(void *arg, wait_result_t result)
  		goto out;
  	}
  	spes_gpu_power_probe();

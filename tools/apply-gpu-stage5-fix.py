@@ -47,18 +47,23 @@ def main():
 \ttouch_wr(smmu, 0x1800u, 0u);                      /* CBA2R0 = 0 (32-bit address space) */
 \t__asm__ volatile ("dsb sy" ::: "memory");
 
-\t/* Route all 4 GPU streams (<0 4>) to Context Bank 0 with Stage 1 disabled (pass-through) */
-\ttouch_wr(smmu, 0xc00u, 0u);                /* S2CR0: TYPE=0 (CB translation), CBNDX=0 */
-\ttouch_wr(smmu, 0x800u, (1u << 31) | 0u);   /* SMR0: VALID=1, ID=0 (gfx3d_user) */
+	/* Invalidate all 8 SMR entries (VALID=0) first so hardware unlocks S2CR writes */
+	for (unsigned smr_i = 0; smr_i < 8; smr_i++) {
+		touch_wr(smmu, 0x800u + smr_i * 4u, 0u);
+	}
+	__asm__ volatile ("dsb sy" ::: "memory");
 
-\ttouch_wr(smmu, 0xc04u, 0u);                /* S2CR1: TYPE=0 (CB translation), CBNDX=0 */
-\ttouch_wr(smmu, 0x804u, (1u << 31) | 1u);   /* SMR1: VALID=1, ID=1 */
+	/* Program S2CR entries to Context Bank 0 (TYPE=0 CB translation, CBNDX=0) */
+	for (unsigned s2cr_i = 0; s2cr_i < 8; s2cr_i++) {
+		touch_wr(smmu, 0xc00u + s2cr_i * 4u, 0u);
+	}
+	__asm__ volatile ("dsb sy" ::: "memory");
 
-\ttouch_wr(smmu, 0xc08u, 0u);                /* S2CR2: TYPE=0 (CB translation), CBNDX=0 */
-\ttouch_wr(smmu, 0x808u, (1u << 31) | 2u);   /* SMR2: VALID=1, ID=2 (gfx3d_secure) */
-
-\ttouch_wr(smmu, 0xc0cu, 0u);                /* S2CR3: TYPE=0 (CB translation), CBNDX=0 */
-\ttouch_wr(smmu, 0x80cu, (1u << 31) | 3u);   /* SMR3: VALID=1, ID=3 */
+	/* Re-enable Stream Match Registers for all 4 GPU streams */
+	touch_wr(smmu, 0x800u, (1u << 31) | 0u);   /* SMR0: VALID=1, ID=0 (gfx3d_user) */
+	touch_wr(smmu, 0x804u, (1u << 31) | 1u);   /* SMR1: VALID=1, ID=1 */
+	touch_wr(smmu, 0x808u, (1u << 31) | 2u);   /* SMR2: VALID=1, ID=2 (gfx3d_secure) */
+	touch_wr(smmu, 0x80cu, (1u << 31) | 3u);   /* SMR3: VALID=1, ID=3 */
 \t__asm__ volatile ("dsb sy" ::: "memory");
 \tprintf("SPES GPU: 23e. SMR0=%#x S2CR0=%#x SMR2=%#x S2CR2=%#x CB0_SCTLR=%#x\\n",
 \t    touch_rd(smmu, 0x800u), touch_rd(smmu, 0xc00u),
