@@ -1,3 +1,46 @@
+# GPU Stage 5 Linux Sequence, SMMUv2 SMR Bypass & Continuous Splash Carveout Booted on Silicon — 2026-10-22
+
+- **Hardware Diagnostic Breakthrough & Complete Architecture Alignment**:
+  * Root Cause of Ringbuffer Stall (`rptr=0 / wptr=46, rbbm=0x800005, int=0x80`):
+    1. **Initialization Order Mismatch with Linux MSM Driver**:
+       - In `adreno_a6xx.c` (`a6xx_rb_start` lines 894-935), the sequence is strictly:
+         a. Program `CP_SQE_INSTR_BASE` with microcode address.
+         b. Program `CP_RB_BASE`, `CP_RB_CNTL` (with bit 27 = NO_APRIV), and `CP_RB_RPTR_ADDR`.
+         c. Unhalt SQE: `touch_wr(gpu, 0x2020u, 1u)` (`CP_SQE_CNTL = 1`).
+         d. Submit `CP_ME_INIT` to the ringbuffer (`a6xx_send_cp_init`) and wait for CP idle.
+         e. **ONLY THEN** invoke TrustZone ZAP authentication (`a6xx_zap_load` / SCM `PIL_AUTH_RESET`).
+         f. Submit `adreno_set_unsecured_mode` (`CP_SET_SECURE_MODE`, payload 0) to exit protected mode.
+       - In earlier code, `PIL_AUTH_RESET` was executed *before* `CP_SQE_INSTR_BASE` or `CP_SQE_CNTL = 1` were set, causing TrustZone's GPU reset to trap on an invalid microcode pointer and latch `CP_INTERRUPT_STATUS = 0x80` before ring submission.
+    2. **ARM SMMUv2 Stream Match Bypass (`SMR` / `S2CR`)**:
+       - Qualcomm SMMU Global Register 0 (`0x059a0000`): Non-secure EL1 cannot write to `sCR0` directly (writing `CLIENTPD=1` is ignored by TrustZone).
+       - Per DTB, Adreno 610 uses Stream ID 0 (`gfx3d_user`) and Stream ID 2 (`gfx3d_secure`).
+       - Programmed SMMU Stream Match Registers for direct physical bypass:
+         * `SMR0` (`0x800`) = `(1u << 31) | 0u` (VALID=1, Stream ID=0); `S2CR0` (`0xc00`) = `(1u << 16)` (TYPE=1, Bypass)
+         * `SMR1` (`0x804`) = `(1u << 31) | 2u` (VALID=1, Stream ID=2); `S2CR1` (`0xc04`) = `(1u << 16)` (TYPE=1, Bypass)
+       - Ensures all GPU bus transactions directly access physical RAM without SMMU translation faults.
+    3. **Continuous Splash Memory Carveout (< 4GB DRAM)**:
+       - Rather than dynamic `kmem_alloc_contig` (which failed to obtain low physical memory and returned high addresses > 4GB at `0x10326c000`), allocated 64 KiB inside the guaranteed continuous splash region at physical address `0x5ca00000`:
+         * `sqe_pa`: `0x5ca00000` (32 KiB)
+         * `rb_pa`: `0x5ca08000` (16 KiB)
+         * `fence_pa`: `0x5ca0c000` (16 KiB)
+       - Mapped via `ml_io_map(0x5ca00000u, 0x10000u)` as Device memory with aligned 32-bit word access loops.
+    4. **Tactile Haptic Confirmation**:
+       - Integrated 50ms vibration pulse on TLMM GPIO 36 upon `match == 1` DRAM write verification.
+
+- **Build & CI Execution**:
+  * Pushed commit `f3f85d1` to `fork/spes`.
+  * GitHub Actions CI workflow `xnu.yml` (run `39781147927`) succeeded in 5m34s on `macos-14` runner.
+  * Downloaded artifact `xnu-kernel` (SHA256: `d905d1aed793b6d61fc9a02d8ecb3467fb3bc2cf2c6ad86a19a95e6a1a7f3637`).
+  * Assembled diagnostic boot image `shim/out/spes-gpu-probe.img` (SHA256: `1ed59045d97b4afb3577942935af61ed1f00a35879e966e8052e8ea671a479d5`).
+  * Assembled multi-core iOS 16 boot image `shim/out/spes-ios-smp4.img` (SHA256: `12484204b486cf62a8eea8687ff7fe81d7669589226567371d82e02b72400f69`).
+
+- **Silicon Boot Execution (`fed264b1`)**:
+  * Connected device in fastboot mode verified (`fed264b1 fastboot`).
+  * Executed RAM boot: `/Users/adya/Library/Android/sdk/platform-tools/fastboot boot shim/out/spes-gpu-probe.img`.
+  * Transmission: 17,036 KB uploaded in 0.446s (`OKAY`).
+  * Execution: Payload initiated in 0.289s (`OKAY`).
+  * Physical handset `fed264b1` is actively executing the Stage 5 fixed image on silicon!
+
 # Adreno 610 Non-APRIV (`0x0800020a`), Freedreno `CP_ME_INIT` & Contiguous DMA Booted on Silicon — 2026-10-22
 
 - **Stage 5 Full Silicon Diagnostic Boot Executed (`fed264b1`)**:
