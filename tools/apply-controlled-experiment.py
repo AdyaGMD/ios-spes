@@ -22,8 +22,7 @@ def main():
     hunk2_lines = lines[hunk2_idx:hunk3_idx]
     suffix = lines[hunk3_idx:]
 
-    # Target: from `/* Step 20: Submit CP_ME_INIT` down to `/* Allocate contiguous buffer for ZAP MDT metadata (8 KiB) */`
-    target_start_marker = "\t/* Step 20: Submit CP_ME_INIT"
+    target_start_marker = '\t/* Step 20: Submit CP_ME_INIT'
     target_end_marker = '\t/* Allocate contiguous buffer for ZAP MDT metadata (8 KiB) */\n'
 
     start_idx = None
@@ -63,12 +62,22 @@ def main():
 \t__asm__ volatile ("dsb sy" ::: "memory");
 \tprintf("SPES GPU: 27. Test 1: CP_ME_INIT submitted (wptr=%u)\\n", w);
 
-\t/* Bounded poll for CP_ME_INIT retirement */
+\t/* Bounded poll for CP_ME_INIT retirement with inline fault checking */
 \tint poll_init;
 \tbool init_adv = false;
 \tuint32_t rptr_init = 0;
 \tfor (poll_init = 0; poll_init < 1000; poll_init++) {
 \t\trptr_init = touch_rd(gpu, 0x2018u);
+\t\tuint32_t pf  = touch_rd(gpu, 0x2084u);
+\t\tuint32_t pi0 = touch_rd(gpu, 0x804u);
+\t\tuint32_t pgf = touch_rd(smmu, 0x48u);
+\t\tuint32_t pfs = touch_rd(smmu, context + 0x58u);
+
+\t\t/* Break early on newly asserted hardware fault, error IRQ, or translation fault */
+\t\tif (pf != 0 || ((pi0 & ~cp1_rbbm_int) & 0x31c002c2u) != 0 ||
+\t\t    pgf != 0 || (pfs & 0xc00000feu) != 0) {
+\t\t\tbreak;
+\t\t}
 \t\tif (rptr_init > 0) {
 \t\t\tinit_adv = true;
 \t\t\tif (rptr_init >= w) break;
@@ -81,16 +90,18 @@ def main():
 \tuint32_t cp4a_int   = touch_rd(gpu, 0x208cu);
 \tuint32_t cp4a_int0  = touch_rd(gpu, 0x804u);
 \trbbm_status         = touch_rd(gpu, 0x840u);
-\tuint32_t smmu_gfsr  = touch_rd(smmu, 0x48u);
-\tuint32_t smmu_fsr   = touch_rd(smmu, context + 0x58u);
+\tuint32_t smmu_gfsr_4a = touch_rd(smmu, 0x48u);
+\tuint32_t smmu_fsr_4a  = touch_rd(smmu, context + 0x58u);
+\tbool smmu_fault_4a    = (smmu_gfsr_4a != 0) || ((smmu_fsr_4a & 0xc00000feu) != 0);
+\tbool int0_new_err_4a  = ((cp4a_int0 & ~cp1_rbbm_int) & 0x31c002c2u) != 0;
 
 \tprintf("SPES GPU: 27b. Checkpoint 4A (CP_ME_INIT): rptr=%u / wptr=%u (adv=%d ok=%d poll=%d rbbm=%#x)\\n",
 \t    rptr_init, w, init_adv, (rptr_init >= w), poll_init, rbbm_status);
-\tprintf("SPES GPU: 27c. Checkpoint 4A diag: fault=%#x int=%#x int0=%#x GFSR=%#x FSR=%#x\\n",
-\t    cp4a_fault, cp4a_int, cp4a_int0, smmu_gfsr, smmu_fsr);
+\tprintf("SPES GPU: 27c. Checkpoint 4A diag: fault=%#x int=%#x int0=%#x GFSR=%#x FSR=%#x (smmu_err=%d int0_err=%d)\\n",
+\t    cp4a_fault, cp4a_int, cp4a_int0, smmu_gfsr_4a, smmu_fsr_4a, smmu_fault_4a, int0_new_err_4a);
 
 \t/* Verify Stage A success before attempting Stage B (CP_MEM_WRITE) */
-\tif (!init_adv || rptr_init < w || cp4a_fault != 0 || (smmu_gfsr != 0)) {
+\tif (!init_adv || rptr_init < w || cp4a_fault != 0 || int0_new_err_4a || smmu_fault_4a) {
 \t\ttouch_wr(gpu, 0x2020u, 3u); /* CP_SQE_CNTL = 3 (halt SQE) */
 \t\tprintf("SPES GPU: 27d. Test 1 (CP_ME_INIT) FAILED; halted safely, skipping MEM_WRITE\\n");
 \t\treturn;
@@ -115,12 +126,21 @@ def main():
 \t__asm__ volatile ("dsb sy" ::: "memory");
 \tprintf("SPES GPU: 28. Test 2: CP_MEM_WRITE submitted (wptr=%u)\\n", w2);
 
-\t/* Bounded poll for CP_MEM_WRITE retirement */
+\t/* Bounded poll for CP_MEM_WRITE retirement with inline fault checking */
 \tint poll_mem;
 \tbool mem_adv = false;
 \tuint32_t rptr_mem = 0;
 \tfor (poll_mem = 0; poll_mem < 1000; poll_mem++) {
 \t\trptr_mem = touch_rd(gpu, 0x2018u);
+\t\tuint32_t pf  = touch_rd(gpu, 0x2084u);
+\t\tuint32_t pi0 = touch_rd(gpu, 0x804u);
+\t\tuint32_t pgf = touch_rd(smmu, 0x48u);
+\t\tuint32_t pfs = touch_rd(smmu, context + 0x58u);
+
+\t\tif (pf != 0 || ((pi0 & ~cp1_rbbm_int) & 0x31c002c2u) != 0 ||
+\t\t    pgf != 0 || (pfs & 0xc00000feu) != 0) {
+\t\t\tbreak;
+\t\t}
 \t\tif (rptr_mem > w) {
 \t\t\tmem_adv = true;
 \t\t\tif (rptr_mem >= w2) break;
@@ -133,22 +153,36 @@ def main():
 \tuint32_t cp4b_int   = touch_rd(gpu, 0x208cu);
 \tuint32_t cp4b_int0  = touch_rd(gpu, 0x804u);
 \trbbm_status         = touch_rd(gpu, 0x840u);
+\tuint32_t smmu_gfsr_4b = touch_rd(smmu, 0x48u);
+\tuint32_t smmu_fsr_4b  = touch_rd(smmu, context + 0x58u);
+\tuint32_t smmu_fsynr_4b= touch_rd(smmu, context + 0x68u);
+\tuint32_t smmu_far_hi_4b= touch_rd(smmu, context + 0x64u);
+\tuint32_t smmu_far_lo_4b= touch_rd(smmu, context + 0x60u);
+\tbool smmu_fault_4b    = (smmu_gfsr_4b != 0) || ((smmu_fsr_4b & 0xc00000feu) != 0);
+\tbool int0_new_err_4b  = ((cp4b_int0 & ~cp1_rbbm_int) & 0x31c002c2u) != 0;
+
 \t__asm__ volatile ("dsb sy" ::: "memory");
 \tuint32_t scratch0   = scratch[0];
 \tint scratch_match   = (scratch0 == 0xcafe0001u);
 
 \tprintf("SPES GPU: 28b. Checkpoint 4B (MEM_WRITE): rptr=%u / wptr=%u (adv=%d ok=%d poll=%d rbbm=%#x)\\n",
 \t    rptr_mem, w2, mem_adv, (rptr_mem >= w2), poll_mem, rbbm_status);
-\tprintf("SPES GPU: 28c. Checkpoint 4B diag: fault=%#x int=%#x int0=%#x scratch0=%#x (match=%d)\\n",
-\t    cp4b_fault, cp4b_int, cp4b_int0, scratch0, scratch_match);
+\tprintf("SPES GPU: 28c. Checkpoint 4B diag: fault=%#x int=%#x int0=%#x scratch0=%#x (match=%d int0_err=%d)\\n",
+\t    cp4b_fault, cp4b_int, cp4b_int0, scratch0, scratch_match, int0_new_err_4b);
+\tprintf("SPES GPU: 28d. Checkpoint 4B SMMU: GFSR=%#x FSR=%#x (fault=%d) FSYNR=%#x FAR=%#x:%#x\\n",
+\t    smmu_gfsr_4b, smmu_fsr_4b, smmu_fault_4b, smmu_fsynr_4b, smmu_far_hi_4b, smmu_far_lo_4b);
 
 \t/* Halt safely; do not proceed to ZAP or rendering */
 \ttouch_wr(gpu, 0x2020u, 3u); /* CP_SQE_CNTL = 3 */
-\tif (mem_adv && rptr_mem >= w2 && cp4b_fault == 0 && scratch_match) {
-\t\tprintf("SPES GPU: 29. SILICON VERIFIED: SQE init + memory write 100%% SUCCESS! (halted safely)\\n");
+\tbool test2_ok = mem_adv && (rptr_mem >= w2) && (cp4b_fault == 0) &&
+\t                !int0_new_err_4b && !smmu_fault_4b && scratch_match;
+
+\tif (test2_ok) {
+\t\tprintf("SPES GPU: 29. SILICON VERIFIED: CP_ME_INIT + CP_MEM_WRITE verified (scratch0=%#x match=1, halted safely)\\n",
+\t\t    scratch0);
 \t} else {
-\t\tprintf("SPES GPU: 29. STOPPED: rptr=%u wptr=%u match=%d (halted safely)\\n",
-\t\t    rptr_mem, w2, scratch_match);
+\t\tprintf("SPES GPU: 29. STOPPED: rptr=%u wptr=%u match=%d fault=%#x int0_err=%d smmu_err=%d (halted safely)\\n",
+\t\t    rptr_mem, w2, scratch_match, cp4b_fault, int0_new_err_4b, smmu_fault_4b);
 \t}
 \treturn;
 """
