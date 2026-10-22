@@ -181,65 +181,88 @@ def main():
 \tprintf("SPES GPU: 26. SQE ucode (%lu bytes) at pa=%#llx va=%#lx\\n",
 \t    sizeof(a630_sqe_fw), sqe_pa, (unsigned long)sqe_va);
 
-\t/* Step 17: Program CP SQE Base Registers (dword 0x0830 -> 0x20c0) */
-\ttouch_wr(gpu, 0x20c0u, (uint32_t)sqe_pa);
-\ttouch_wr(gpu, 0x20c4u, (uint32_t)(sqe_pa >> 32));
-\t__asm__ volatile ("dsb sy" ::: "memory");
-\tuint32_t base_lo = touch_rd(gpu, 0x20c0u);
-\tuint32_t base_hi = touch_rd(gpu, 0x20c4u);
-\tprintf("SPES GPU: 26b. CP_SQE_INSTR_BASE=%#x:%#x (match=%d)\\n",
-\t    base_hi, base_lo, (base_lo == (uint32_t)sqe_pa && base_hi == (uint32_t)(sqe_pa >> 32)));
+	/* Step 16b: Configure RBBM SECVID TSB & enable 64-bit addressing on all 12 blocks */
+	touch_wr(gpu, 0x3e000u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_BASE_LO */
+	touch_wr(gpu, 0x3e004u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_BASE_HI */
+	touch_wr(gpu, 0x3e008u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_SIZE */
 
-\t/* Step 18: Allocate Ringbuffer (8 KiB) + Fence/Scratch (8 KiB) */
-\tvm_offset_t rb_va = 0;
-\tif (kmem_alloc_contig(kernel_map, &rb_va, 16384, PAGE_MASK, 0, 0,
-\t    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
-\t\tprintf("SPES GPU: kmem_alloc_contig for Ringbuffer failed\\n");
-\t\treturn;
-\t}
-\tppnum_t rb_pn = pmap_find_phys(kernel_pmap, (addr64_t)rb_va);
-\tuint64_t rb_pa = ptoa_64(rb_pn);
-\tuint64_t fence_pa = rb_pa + 8192u;
-\tvm_offset_t fence_va = rb_va + 8192u;
-\tvolatile uint32_t *rb = (volatile uint32_t *)rb_va;
-\tvolatile uint32_t *scratch = (volatile uint32_t *)fence_va;
+	/* Turn on 64-bit addressing for all GPU pipeline blocks */
+	touch_wr(gpu, 0x2108u, 0x1u);  /* CP_ADDR_MODE_CNTL (0x0842 * 4) */
+	touch_wr(gpu, 0x3004u, 0x1u);  /* VSC_ADDR_MODE_CNTL (0x0C01 * 4) */
+	touch_wr(gpu, 0x21804u, 0x1u); /* GRAS_ADDR_MODE_CNTL (0x8601 * 4) */
+	touch_wr(gpu, 0x23814u, 0x1u); /* RB_ADDR_MODE_CNTL (0x8E05 * 4) */
+	touch_wr(gpu, 0x27804u, 0x1u); /* PC_ADDR_MODE_CNTL (0x9E01 * 4) */
+	touch_wr(gpu, 0x2f814u, 0x1u); /* HLSQ_ADDR_MODE_CNTL (0xBE05 * 4) */
+	touch_wr(gpu, 0x29804u, 0x1u); /* VFD_ADDR_MODE_CNTL (0xA601 * 4) */
+	touch_wr(gpu, 0x25804u, 0x1u); /* VPC_ADDR_MODE_CNTL (0x9601 * 4) */
+	touch_wr(gpu, 0x3800u, 0x1u);  /* UCHE_ADDR_MODE_CNTL (0x0E00 * 4) */
+	touch_wr(gpu, 0x2b804u, 0x1u); /* SP_ADDR_MODE_CNTL (0xAE01 * 4) */
+	touch_wr(gpu, 0x2d804u, 0x1u); /* TPL1_ADDR_MODE_CNTL (0xB601 * 4) */
+	touch_wr(gpu, 0x3e040u, 0x1u); /* RBBM_SECVID_TSB_ADDR_MODE_CNTL (0xF810 * 4) */
 
-\tbzero((void *)rb_va, 16384);
-\tscratch[0] = 0xdeadbeefu;
-\tscratch[1] = 0xdeadbeefu;
-\tscratch[2] = 0xdeadbeefu;
-\tscratch[3] = 0xdeadbeefu;
-\tscratch[4] = 0xdeadbeefu; /* Fence seqno slot */
-\tclean_dcache64(rb_pa, 16384, TRUE);
-\t__asm__ volatile ("dsb sy" ::: "memory");
+	/* Adreno 610 GBIF QSB sideband and QoS bus routing */
+	touch_wr(gpu, 0xf00cu, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE0 */
+	touch_wr(gpu, 0xf010u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE1 */
+	touch_wr(gpu, 0xf014u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE2 */
+	touch_wr(gpu, 0xf018u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE3 */
+	touch_wr(gpu, 0x0044u, 0x00000003u); /* REG_A6XX_RBBM_GBIF_CLIENT_QOS_CNTL */
 
-\t/* Step 18b: Configure CP_APRIV_CNTL (dword 0x0844 -> byte 0x2110)
-\t * Privileged access for ICACHE (b0), RBFETCH (b1), RBPRIVLEVEL (b2),
-\t * RBRPWB (b3), SCRATCHWT (b4), CDREAD (b5), CDWRITE (b6)
-\t */
-\ttouch_wr(gpu, 0x2110u, 0x0000007fu);
-\t/* Clear any pending CP and RBBM interrupts */
-\ttouch_wr(gpu, 0x208cu, 0xffffffffu);
-\ttouch_wr(gpu, 0x0808u, 0xffffffffu);
-\t__asm__ volatile ("dsb sy" ::: "memory");
-\tuint32_t apriv_val = touch_rd(gpu, 0x2110u);
-\tprintf("SPES GPU: 26c. CP_APRIV_CNTL=%#x\\n", apriv_val);
+	/* Disable CP register protection checking during early probe */
+	touch_wr(gpu, 0x213cu, 0x00000000u); /* CP_PROTECT_CNTL */
 
-\t/* Program Ringbuffer registers */
-\ttouch_wr(gpu, 0x2000u, (uint32_t)rb_pa);           /* CP_RB_BASE_LO */
-\ttouch_wr(gpu, 0x2004u, (uint32_t)(rb_pa >> 32));  /* CP_RB_BASE_HI */
-\ttouch_wr(gpu, 0x2008u, 0x020au);                  /* CP_RB_CNTL (8K ring, 32B block) */
-\ttouch_wr(gpu, 0x2010u, (uint32_t)fence_pa);       /* CP_RB_RPTR_ADDR_LO */
-\ttouch_wr(gpu, 0x2014u, (uint32_t)(fence_pa >> 32));/* CP_RB_RPTR_ADDR_HI */
-\ttouch_wr(gpu, 0x2018u, 0u);                       /* CP_RB_RPTR */
-\ttouch_wr(gpu, 0x201cu, 0u);                       /* CP_RB_WPTR */
-\ttouch_wr(gpu, 0x2214u, 0u);                       /* CP_SCRATCH(2) */
-\t__asm__ volatile ("dsb sy" ::: "memory");
+	/* Clear pending interrupts */
+	touch_wr(gpu, 0x208cu, 0xffffffffu); /* CP_INTERRUPT_STATUS */
+	touch_wr(gpu, 0x0808u, 0xffffffffu); /* RBBM_INT_CLEAR */
+	__asm__ volatile ("dsb sy" ::: "memory");
+	uint32_t addr_mode_val = touch_rd(gpu, 0x2108u);
+	printf("SPES GPU: 26c. 64-bit ADDR_MODE=%#x GBIF configured\n", addr_mode_val);
 
-\t/* Step 19: Un-halt CP SQE engine */
-\ttouch_wr(gpu, 0x2020u, 1u); /* CP_SQE_CNTL = 1 */
-\ttouch_wait(10);
+	/* Step 17: Program CP SQE Base Registers (dword 0x0830 -> 0x20c0) */
+	touch_wr(gpu, 0x20c0u, (uint32_t)sqe_pa);
+	touch_wr(gpu, 0x20c4u, (uint32_t)(sqe_pa >> 32));
+	__asm__ volatile ("dsb sy" ::: "memory");
+	uint32_t base_lo = touch_rd(gpu, 0x20c0u);
+	uint32_t base_hi = touch_rd(gpu, 0x20c4u);
+	printf("SPES GPU: 26b. CP_SQE_INSTR_BASE=%#x:%#x (match=%d)\n",
+	    base_hi, base_lo, (base_lo == (uint32_t)sqe_pa && base_hi == (uint32_t)(sqe_pa >> 32)));
 
+	/* Step 18: Allocate Ringbuffer (8 KiB) + Fence/Scratch (8 KiB) */
+	vm_offset_t rb_va = 0;
+	if (kmem_alloc_contig(kernel_map, &rb_va, 16384, PAGE_MASK, 0, 0,
+	    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) != KERN_SUCCESS) {
+		printf("SPES GPU: kmem_alloc_contig for Ringbuffer failed\n");
+		return;
+	}
+	ppnum_t rb_pn = pmap_find_phys(kernel_pmap, (addr64_t)rb_va);
+	uint64_t rb_pa = ptoa_64(rb_pn);
+	uint64_t fence_pa = rb_pa + 8192u;
+	vm_offset_t fence_va = rb_va + 8192u;
+	volatile uint32_t *rb = (volatile uint32_t *)rb_va;
+	volatile uint32_t *scratch = (volatile uint32_t *)fence_va;
+
+	bzero((void *)rb_va, 16384);
+	scratch[0] = 0xdeadbeefu;
+	scratch[1] = 0xdeadbeefu;
+	scratch[2] = 0xdeadbeefu;
+	scratch[3] = 0xdeadbeefu;
+	scratch[4] = 0xdeadbeefu; /* Fence seqno slot */
+	clean_dcache64(rb_pa, 16384, TRUE);
+	__asm__ volatile ("dsb sy" ::: "memory");
+
+	/* Program Ringbuffer registers */
+	touch_wr(gpu, 0x2000u, (uint32_t)rb_pa);           /* CP_RB_BASE_LO */
+	touch_wr(gpu, 0x2004u, (uint32_t)(rb_pa >> 32));  /* CP_RB_BASE_HI */
+	touch_wr(gpu, 0x2008u, 0x020au);                  /* CP_RB_CNTL (8K ring, 32B block) */
+	touch_wr(gpu, 0x2010u, (uint32_t)fence_pa);       /* CP_RB_RPTR_ADDR_LO */
+	touch_wr(gpu, 0x2014u, (uint32_t)(fence_pa >> 32));/* CP_RB_RPTR_ADDR_HI */
+	touch_wr(gpu, 0x2018u, 0u);                       /* CP_RB_RPTR */
+	touch_wr(gpu, 0x201cu, 0u);                       /* CP_RB_WPTR */
+	touch_wr(gpu, 0x2214u, 0u);                       /* CP_SCRATCH(2) */
+	__asm__ volatile ("dsb sy" ::: "memory");
+
+	/* Step 19: Un-halt CP SQE engine */
+	touch_wr(gpu, 0x2020u, 1u); /* CP_SQE_CNTL = 1 */
+	touch_wait(10);
 \tuint32_t cp_hw_fault = touch_rd(gpu, 0x2084u);
 \tuint32_t cp_int_stat = touch_rd(gpu, 0x208cu);
 \ttouch_wr(gpu, 0x2094u, 1u); /* CP_SQE_STAT_ADDR = 1 */

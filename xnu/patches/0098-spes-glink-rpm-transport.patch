@@ -1037,7 +1037,7 @@ index 7dd8949..2c09d18 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +684,742 @@ spes_gpu_power_probe(void)
+@@ -677,6 +684,764 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -1611,6 +1611,42 @@ index 7dd8949..2c09d18 100644
 +	printf("SPES GPU: 26. SQE ucode (%lu bytes) at pa=%#llx va=%#lx\n",
 +	    sizeof(a630_sqe_fw), sqe_pa, (unsigned long)sqe_va);
 +
++	/* Step 16b: Configure RBBM SECVID TSB & enable 64-bit addressing on all 12 blocks */
++	touch_wr(gpu, 0x3e000u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_BASE_LO */
++	touch_wr(gpu, 0x3e004u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_BASE_HI */
++	touch_wr(gpu, 0x3e008u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_SIZE */
++
++	/* Turn on 64-bit addressing for all GPU pipeline blocks */
++	touch_wr(gpu, 0x2108u, 0x1u);  /* CP_ADDR_MODE_CNTL (0x0842 * 4) */
++	touch_wr(gpu, 0x3004u, 0x1u);  /* VSC_ADDR_MODE_CNTL (0x0C01 * 4) */
++	touch_wr(gpu, 0x21804u, 0x1u); /* GRAS_ADDR_MODE_CNTL (0x8601 * 4) */
++	touch_wr(gpu, 0x23814u, 0x1u); /* RB_ADDR_MODE_CNTL (0x8E05 * 4) */
++	touch_wr(gpu, 0x27804u, 0x1u); /* PC_ADDR_MODE_CNTL (0x9E01 * 4) */
++	touch_wr(gpu, 0x2f814u, 0x1u); /* HLSQ_ADDR_MODE_CNTL (0xBE05 * 4) */
++	touch_wr(gpu, 0x29804u, 0x1u); /* VFD_ADDR_MODE_CNTL (0xA601 * 4) */
++	touch_wr(gpu, 0x25804u, 0x1u); /* VPC_ADDR_MODE_CNTL (0x9601 * 4) */
++	touch_wr(gpu, 0x3800u, 0x1u);  /* UCHE_ADDR_MODE_CNTL (0x0E00 * 4) */
++	touch_wr(gpu, 0x2b804u, 0x1u); /* SP_ADDR_MODE_CNTL (0xAE01 * 4) */
++	touch_wr(gpu, 0x2d804u, 0x1u); /* TPL1_ADDR_MODE_CNTL (0xB601 * 4) */
++	touch_wr(gpu, 0x3e040u, 0x1u); /* RBBM_SECVID_TSB_ADDR_MODE_CNTL (0xF810 * 4) */
++
++	/* Adreno 610 GBIF QSB sideband and QoS bus routing */
++	touch_wr(gpu, 0xf00cu, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE0 */
++	touch_wr(gpu, 0xf010u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE1 */
++	touch_wr(gpu, 0xf014u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE2 */
++	touch_wr(gpu, 0xf018u, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE3 */
++	touch_wr(gpu, 0x0044u, 0x00000003u); /* REG_A6XX_RBBM_GBIF_CLIENT_QOS_CNTL */
++
++	/* Disable CP register protection checking during early probe */
++	touch_wr(gpu, 0x213cu, 0x00000000u); /* CP_PROTECT_CNTL */
++
++	/* Clear pending interrupts */
++	touch_wr(gpu, 0x208cu, 0xffffffffu); /* CP_INTERRUPT_STATUS */
++	touch_wr(gpu, 0x0808u, 0xffffffffu); /* RBBM_INT_CLEAR */
++	__asm__ volatile ("dsb sy" ::: "memory");
++	uint32_t addr_mode_val = touch_rd(gpu, 0x2108u);
++	printf("SPES GPU: 26c. 64-bit ADDR_MODE=%#x GBIF configured\n", addr_mode_val);
++
 +	/* Step 17: Program CP SQE Base Registers (dword 0x0830 -> 0x20c0) */
 +	touch_wr(gpu, 0x20c0u, (uint32_t)sqe_pa);
 +	touch_wr(gpu, 0x20c4u, (uint32_t)(sqe_pa >> 32));
@@ -1642,18 +1678,6 @@ index 7dd8949..2c09d18 100644
 +	scratch[4] = 0xdeadbeefu; /* Fence seqno slot */
 +	clean_dcache64(rb_pa, 16384, TRUE);
 +	__asm__ volatile ("dsb sy" ::: "memory");
-+
-+	/* Step 18b: Configure CP_APRIV_CNTL (dword 0x0844 -> byte 0x2110)
-+	 * Privileged access for ICACHE (b0), RBFETCH (b1), RBPRIVLEVEL (b2),
-+	 * RBRPWB (b3), SCRATCHWT (b4), CDREAD (b5), CDWRITE (b6)
-+	 */
-+	touch_wr(gpu, 0x2110u, 0x0000007fu);
-+	/* Clear any pending CP and RBBM interrupts */
-+	touch_wr(gpu, 0x208cu, 0xffffffffu);
-+	touch_wr(gpu, 0x0808u, 0xffffffffu);
-+	__asm__ volatile ("dsb sy" ::: "memory");
-+	uint32_t apriv_val = touch_rd(gpu, 0x2110u);
-+	printf("SPES GPU: 26c. CP_APRIV_CNTL=%#x\n", apriv_val);
 +
 +	/* Program Ringbuffer registers */
 +	touch_wr(gpu, 0x2000u, (uint32_t)rb_pa);           /* CP_RB_BASE_LO */
