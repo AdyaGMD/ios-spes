@@ -41,9 +41,9 @@ env:
 
 jobs:
   build:
-    # macos-14 still ships Xcode 15.x: its iig matches the xnu-8796 IORPC ABI
-    # (Xcode 16's iig emits IORPC.kernelContent, which this xnu lacks)
-    runs-on: macos-14
+    # macos-15 has Xcode 15.4 pre-installed and avoids macOS 14 capacity queue limits:
+    # its iig matches the xnu-8796 IORPC ABI
+    runs-on: macos-15
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
