@@ -1,3 +1,20 @@
+# Corrected Stage5 diagnostic queued — 2026-10-22
+
+- Fix commit7d0037e pushed fork/spes; GitHub CI39823399736 remains QUEUED
+  (no runner assigned at last check), not compiled or hardware-tested yet.
+  https://github.com/AdyaGMD/ios-spes/actions/runs/39823399736
+- User was asked to enter Fastboot; no readiness reply yet. Do not reboot
+  without checking their response/device state. Original failing photo is
+  pre-page-table test; current HEAD b8c18d8's CI39821442373 passed but this
+  does not prove it ran on the phone.
+- When CI completes: inspect errors if failed, otherwise download artifact to
+  a NEW directory (e.g. xnu/out-gpu-review), build gpu diagnostic, validate
+  packaging and boot flags, save exact hash, then temporary boot when ready.
+- Added data point: live GPU SMMU has qcom,skip-init/dynamic/no-dynamic-asid,
+  use-3-lvl-tables and ACTLR mapping0/0x3ff/0x30b. Do not treat it as generic
+  MMU-500 with unverified bypass/secure-write rules. Primary source inspected
+  in ignored research/spes-gpu-linux/{a6xx_reg.h,arm-smmu.c,adreno_pm4types.h}.
+
 # Stage5 review: prior success claims invalid; early SQE fault — 2026-10-22
 
 - User photo confirms int0x80 at line27 before any packets (WPTR0); RPTR stays0,
