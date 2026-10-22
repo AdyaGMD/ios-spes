@@ -1037,7 +1037,7 @@ index 7dd8949..2c09d18 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +684,925 @@ spes_gpu_power_probe(void)
+@@ -677,6 +684,933 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -1198,6 +1198,15 @@ index 7dd8949..2c09d18 100644
 +		*res1 = args[1];
 +	}
 +	return args[0];
++}
++
++static void
++to_memory(vm_offset_t start, vm_size_t size)
++{
++	for (vm_offset_t line = start & ~(vm_offset_t)63; line < start + size; line += 64) {
++		__asm__ volatile ("dc civac, %0" : : "r" (line));
++	}
++	__asm__ volatile ("dsb sy" ::: "memory");
 +}
 +
 +static void
@@ -1559,7 +1568,6 @@ index 7dd8949..2c09d18 100644
 +	for (unsigned fi = 0; fi < 4096 / sizeof(uint32_t); fi++) {
 +		scratch[fi] = 0xdeadbeefu;
 +	}
-+	clean_dcache64(gpu_dma_pa, 0x10000u, TRUE);
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
 +	/* Allocate 32 KiB (8 contiguous 4K pages) for SMMU Stage 1 Page Tables */
@@ -1630,8 +1638,7 @@ index 7dd8949..2c09d18 100644
 +		l3_dma[i] = (0x5ca00000u + i * 4096u) | SPES_PTE_CORE | SPES_PTE_PAGE;
 +	}
 +
-+	clean_dcache64(pt_pa, 32768, TRUE);
-+	__asm__ volatile ("dsb sy" ::: "memory");
++	to_memory(pt_va, 32768);
 +
 +	/* Configure SMMU Context Bank 0 */
 +	uint32_t context = cb0_off;
@@ -1655,7 +1662,9 @@ index 7dd8949..2c09d18 100644
 +	touch_wr(smmu, context + 0x00u, (1u << 0) | (1u << 1) | (1u << 2) | (1u << 5) | (1u << 12)); /* CB0_SCTLR = ON */
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
-+	/* Exact stream matches: never overlap mask-1 stream 0 with stream 1. */
++	/* Exact stream matches: invalidate SMRs first to unlock S2CR writes per ARM SMMUv2 spec. */
++	touch_wr(smmu, 0x800u, 0u);                               /* Invalidate SMR0 */
++	touch_wr(smmu, 0x804u, 0u);                               /* Invalidate SMR1 */
 +	touch_wr(smmu, 0xc00u, 0u);                               /* S2CR0: context 0, type 0 = translate */
 +	touch_wr(smmu, 0x800u, (1u << 31) | 0u);                   /* SMR0: exact stream 0, no overlap */
 +	touch_wr(smmu, 0xc04u, 0u);                               /* S2CR1: context 0, type 0 = translate */
@@ -1832,8 +1841,7 @@ index 7dd8949..2c09d18 100644
 +	for (unsigned mi = 0; mi < sizeof(a610_zap_mdt) / sizeof(uint32_t); mi++) {
 +		mdt_dst[mi] = a610_zap_mdt[mi];
 +	}
-+	clean_dcache64(mdt_pa, sizeof(a610_zap_mdt), TRUE);
-+	__asm__ volatile ("dsb sy" ::: "memory");
++	to_memory(mdt_va, sizeof(a610_zap_mdt));
 +	printf("SPES GPU: 25a. ZAP MDT (%lu bytes) at pa=%#llx va=%#lx\n",
 +	    sizeof(a610_zap_mdt), mdt_pa, (unsigned long)mdt_va);
 +
@@ -1963,7 +1971,7 @@ index 7dd8949..2c09d18 100644
  static void
  touch_thread(void *arg, wait_result_t result)
  {
-@@ -704,6 +1640,7 @@ touch_thread(void *arg, wait_result_t result)
+@@ -704,6 +1648,7 @@ touch_thread(void *arg, wait_result_t result)
  		goto out;
  	}
  	spes_gpu_power_probe();

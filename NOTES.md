@@ -1,3 +1,24 @@
+# Stage 5 panic resolution: phystokv_range 0x5ca00000 eliminated via to_memory — 2026-10-22
+
+- Silicon boot of CI 39823399736 executed on handset fed264b1.
+- Photo (media_1792691712303_9fc51adf.jpg) confirms clean progress through:
+  * Stage 2 complete, RBBM_STATUS=0x1 (idle=1)
+  * Memory clocks confirmed: memnoc=0x4221, snoc=0x1, smmu=0x1
+  * SMMU discovery: sCR0=0x22E4B6 ID0=0x4c817e04 ID1=0x20000005 (64K pgsz, 8 pages, 5 CBs)
+  * CB0 initial registers: SCTLR=0x2008100, FSR=0, CBAR0=0, CBA2R0=0
+- Panic observed immediately after line 23b:
+  * "phystokv_range: illegal PA: 0x5ca00000; phys base 0x100000000, size 0xc0000000"
+  * Root cause: XNU manages physical memory above 4 GiB (0x100000000). clean_dcache64(gpu_dma_pa, len, TRUE)
+    called phystokv_range(0x5ca00000), which panicked because 0x5ca00000 < gPhysBase (0x100000000).
+  * In addition, gpu_dma_va (0x5ca00000) was mapped via ml_io_map as Device/uncached memory, making CPU cache
+    clean operations invalid and unnecessary.
+- Fix applied:
+  * Removed clean_dcache64 on gpu_dma_pa (Device memory serialized via dsb sy).
+  * Implemented to_memory() with dc civac loops on virtual addresses for kernel-allocated buffers
+    (page tables pt_va, ZAP MDT mdt_va), avoiding phystokv_range entirely (matches redwood_adreno.c reference).
+  * Added SMR0/SMR1 invalidation before writing S2CR to ensure hardware unlock per ARM SMMUv2 specification.
+  * Updated tests/test_gpu_probe.py; all 17 host tests pass; hunk math verified.
+
 # Corrected Stage5 diagnostic queued — 2026-10-22
 
 - Fix commit7d0037e pushed fork/spes; GitHub CI39823399736 remains QUEUED

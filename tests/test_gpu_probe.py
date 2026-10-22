@@ -14,7 +14,7 @@ class GPUProbeTests(unittest.TestCase):
     def setUpClass(cls):
         patch = (ROOT / 'xnu/patches/0098-spes-glink-rpm-transport.patch').read_text()
         src = '\n'.join(x[1:] for x in patch.splitlines() if x.startswith('+') and not x.startswith('+++'))
-        tables = src[src.index('uint64_t *l1 ='):src.index('clean_dcache64(pt_pa,')]
+        tables = src[src.index('uint64_t *l1 ='):src.index('to_memory(pt_va,')]
         init = src[src.index('uint32_t w = 0;', src.index('Step 20:')):]
         init = init[:init.index('__asm__')]
         render = src[src.index('/* 1. CP_SET_SECURE_MODE'):]
