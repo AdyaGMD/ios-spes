@@ -1,3 +1,21 @@
+# Stage 5 firmware copy regression resolved & SMMU bootloader handoff dump — 2026-10-22
+
+- **Peer Review Verification & Correction**:
+  * **SQE Microcode Double-Skip Corrected**:
+    - `tools/build-0098-stage45.py` had already performed `sqe_bytes = sqe_path.read_bytes()[4:]`, stripping the 4-byte file header (`0x00000000`) and leaving the 8,065-word array `a630_sqe_fw` starting with genuine entry microcode.
+    - Commit `a573add` erroneously skipped word 0 via `si = 1`, copying only 32,256 bytes instead of 32,260 bytes and discarding the first instruction. Restored loop to `si = 0` (full 32,260 bytes).
+  * **FSR=0x400 Clarification**:
+    - In ARM SMMUv2, Translation Fault is bit 1 (`FSR_TF = 0x2`).
+    - Bit 10 (`0x400`) merely denotes the syndrome register format per `redwood_adreno.c:1401` (`status & SMMU_FSR_ALL (0xc00001fe) == 0`).
+    - Context Bank 0 had zero faults, and `GFSR = 0` had zero global faults. SMMU address translation did not fault.
+  * **Bootloader SMMU Handoff Diagnostic Added**:
+    - Added read-only dump of bootloader initial state before any writes:
+      * SMR 0–3 (`0x800`–`0x80c`)
+      * S2CR 0–3 (`0xc00`–`0xc0c`)
+      * CBAR 0–2 (`stride + 0x00`–`stride + 0x08`) and CB1 `SCTLR`/`TTBR0`
+    - Per Linux `arm-smmu.c`, `kgsl-smmu` with `qcom,skip-init` relies on `arm_smmu_handoff_cbs()` to read bootloader stream assignments. Dumping this baseline reveals what Qualcomm firmware established.
+- All 17 host tests pass in `tests/test_gpu_probe.py`; hunk math verified (951 lines in hunk 1).
+
 # Stage 5 SQE illegal instruction root cause resolution & SMMU stream unlock — 2026-10-22
 
 - Silicon boot of commit e83c3a0 verified via photo (media_1792694574465_b9dee0ea.png):
