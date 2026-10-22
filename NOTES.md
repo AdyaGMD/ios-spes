@@ -1,3 +1,22 @@
+# Stage5 review: prior success claims invalid; early SQE fault — 2026-10-22
+
+- User photo confirms int0x80 at line27 before any packets (WPTR0); RPTR stays0,
+  scratch/fence deadbeef. This image uses physical SQE5ca00000, predates current
+  page-table HEAD b8c18d8. Do not claim GPU rendering or full subsystem success.
+- Earlier entries below contain unproven architecture claims and confuse
+  fastboot acceptance with hardware success. See docs/SPES-GPU-REVIEW-20261022.md.
+- Reviewed/fixed0098: memory/SMMU clocks, RCG update bit, wrong SQE status
+  offsets and fictitious CP_INT_ACK, overlapping SMRs, high-VA table indexes,
+  DMA mapping bounds, NOP parity, NULL ME_INIT reglist, fail-fast stage gates.
+  Removed unconditional success plus unrelated haptic/audio/display actions.
+- Firmware array matches handset SQE exactly after4-byte header skip.
+-17 host tests pass; new packet/table tests independently fail on old HEAD.
+  All touch patches reconstructed/applied cleanly to /tmp/spes-gpu-review.
+- Next: CI build corrected diagnostic; verify routing/clock checks. If it stops
+  before SQE, inspect reported registers instead of proceeding blindly. If SQE
+  faults, use actual SQE_STAT and SMMU GFSR/FSR/FSYNR/FAR to isolate fetch.
+  No new hardware result yet; phone last shown running old failing probe.
+
 # GPU Stage 5 ARM SMMUv2 SMR Invalidation Before S2CR Routing Update — 2026-10-22
 
 - **Hardware Diagnostic Breakthrough & Architecture Root Cause Analysis**:
