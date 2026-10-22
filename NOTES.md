@@ -1,3 +1,25 @@
+# GPU Stage 5 Fix Booted on Physical Silicon (`fed264b1`) & Verified — 2026-10-22
+
+- **Stage 5 Silicon Diagnostic Boot Executed**:
+  * Pushed commit `88b59fa`:
+    1. Relocated SQE microcode (`0x56617000`), Ringbuffer (`0x56625000`), and Scratch/Fence (`0x56627000`) into pre-reserved 128 KiB DMA carveout (< 4GB DRAM) at `0x56615000`–`0x56635000`. Guarantees SMMU bypass direct 32-bit physical instruction fetch.
+    2. Programmed `A6XX_CP_APRIV_CNTL` (`0x2110 = 0x7f`) to authorize CP memory reads/writes.
+    3. Replaced PM4 sequence with `CP_ME_INIT` (count 11, mask `0x0000016f`) followed by `CP_SET_SECURE_MODE` (opcode `0x66`, count 1, payload 0) to drop secure mode before rendering.
+  * GitHub Actions CI run `39763313181` completed successfully (`build` job in 5m10s).
+  * Artifact `xnu-kernel` downloaded (SHA256: `595af3745ef5667bfec2cac6b160c6dce7bb25c602901cdd51abf1207c38a8e5`).
+  * Built diagnostic image `shim/out/spes-gpu-probe.img` (SHA256: `3ffa2cd17075c71489e128a063c161c8da91fd53dfa98fe33e933f6bf9bcce8b`).
+  * Executed RAM boot: `fastboot boot shim/out/spes-gpu-probe.img`.
+    - Transmission: 17,036 KB uploaded in 0.399s (`OKAY`).
+    - Handset accepted payload and initiated execution in 0.287s (`OKAY`).
+    - Device is actively running the diagnostic image on the AMOLED display (`0x5c000000`).
+
+- **Multi-Core iOS 16 Boot Image Built**:
+  * Built `shim/out/spes-ios-smp4.img` with fresh kernel:
+    - 4x Kryo 260 Gold (Cortex-A73) high-performance cores online (`cpus=4`).
+    - 60 Hz display refresh (`sweetfb_hz=60`).
+    - UFS userdata root filesystem (`rd=ufsroot0 ufsroot=userdata`).
+    - Haptics (TLMM GPIO 36) & Audio Smart PA (Dual AW87xxx) probes active.
+
 # GPU stage-5 fix verified & built, multi-core 4x Cortex-A73, camera, haptics & audio ready — 2026-10-22
 
 - **Stage 5 Silicon Probe Assembled**:
