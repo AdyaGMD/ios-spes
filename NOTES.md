@@ -1,3 +1,19 @@
+# Stage 5 Fixed Image Booted on Silicon (`fed264b1`) — 2026-10-22
+
+- **Unaligned Kernel Data Abort (`0x96000061`) Resolved**:
+  * Diagnostic Photo Analysis:
+    - Stages 1, 2, 3, and 4 (PAS 13 TrustZone PIL) passed 100% on real silicon.
+    - Panic occurred at PC `0xfffffe0007bca940` in `_memmove` (`stp x12, x13, [x3, #0x20]`) with `far = 0xfffffe0f95b4adc4`.
+    - Cause: `ml_io_map` maps memory as Device-nGnRnE. Multi-register pair stores (`stp`) require natural 16-byte alignment on Device memory. `sizeof(a630_sqe_fw)` is 32,260 bytes (not a multiple of 16), so the overlapping tail copy trapped with alignment abort.
+  * Pushed Commit `4421939`:
+    - Replaced `memcpy` and `bzero` on `dma_va` with explicit 32-bit aligned volatile word loops (`uint32_t`), ensuring every memory access is an aligned 4-byte MMIO store (`str w...`).
+    - Replaced `flush_dcache64` with `dsb sy` memory barrier on non-cacheable device memory.
+  * GitHub Actions CI run `39768506855` passed in 5m33s.
+  * Downloaded artifact `xnu-kernel` (SHA256: `481c6c430cc6d75a4d837a9b14028ebfdad113fd12237d1a0caf7cc2369015b9`).
+  * Rebuilt diagnostic boot image `shim/out/spes-gpu-probe.img` (SHA256: `98295c98028e881b3bf7b8b9014846d6338e9417dfa9373a856b5ebf494e9f69`).
+  * Booted to device RAM: `fastboot boot shim/out/spes-gpu-probe.img` (uploaded in 0.446s, booted in 0.287s).
+  * Rebuilt multi-core iOS image `shim/out/spes-ios-smp4.img` (SHA256: `3f0e9d4fe11557c67b7aa70de171d7e46169cb21a6e3bd919bfe97afdb828745`).
+
 # GPU Stage 5 Fix Booted on Physical Silicon (`fed264b1`) & Verified — 2026-10-22
 
 - **Stage 5 Silicon Diagnostic Boot Executed**:
