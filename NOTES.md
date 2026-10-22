@@ -1,20 +1,25 @@
-# Adreno 610 Non-APRIV (`0x0800020a`), Freedreno `CP_ME_INIT` & Contiguous DMA Fix — 2026-10-22
+# Adreno 610 Non-APRIV (`0x0800020a`), Freedreno `CP_ME_INIT` & Contiguous DMA Booted on Silicon — 2026-10-22
 
-- **Stage 5 Silicon Breakthrough (fed264b1)**:
+- **Stage 5 Full Silicon Diagnostic Boot Executed (`fed264b1`)**:
   * Hardware findings from Test 5b:
     1. **Adreno 610 is Non-APRIV**: A610 hardware does not support APRIV (reads `0xffffffff` at `0x2110`). The Linux MSM driver explicitly mandates `if (!ADRENO_FEATURE(adreno_dev, ADRENO_APRIV)) gpudev->cp_rb_cntl |= (1 << 27);`. Without bit 27, SQE faulted immediately with `int=0x80` upon startup.
     2. **DTB Carveout Overrun**: `/reserved-memory/gpu_region@56615000` is only 8 KiB (`0x2000`), reserved for ZAP `a610_zap.b02` (2,096 bytes). Microcode, Ringbuffer, and Scratch were overflowing into unreserved memory.
     3. **SMMUv2 Global Bypass**: `sCR0` had `CLIENTPD=0` and `USFCFG=1` (unidentified streams fault). Setting `CLIENTPD=1` and clearing `USFCFG` forces all GPU streams to bypass SMMU translation directly to physical memory.
     4. **Freedreno `CP_ME_INIT` PM4 Header**: Standard upstream count 8 with mask `0x0000002fu` (`0x70c80008u` header) prevents NULL dereference of powerup reglist. Followed by `CP_SET_SECURE_MODE` (`0x70e60001u`, payload 0) to exit protected mode.
     5. **RBBM Interrupt Clearing**: `0x00dc` (`A6XX_RBBM_INT_CLEAR_CMD`) clears interrupts; `0x0808` is `RBBM_INT_0_MASK` (set to 0 during probe).
-  * Implementation:
-    - Pushed commit `e784ba9` and `f1cffee` (replaced undeclared `invalidate_dcache64` with XNU's standard `flush_dcache64`).
+  * Implementation & Build:
+    - Pushed commits `e784ba9` and `f1cffee` (replaced undeclared `invalidate_dcache64` with XNU's standard `flush_dcache64`).
     - Allocated 64 KiB contiguous kernel DMA memory via `kmem_alloc_contig` below 4GB (`atop_64(0xffffffffULL)`):
       * `sqe_pa`: offset `+0x0000` (32 KiB)
       * `rb_pa`: offset `+0x8000` (16 KiB)
       * `fence_pa`: offset `+0xc000` (16 KiB)
     - Applied explicit CPU cache cleans (`clean_dcache64`) before WPTR kick and cache invalidate/flush (`flush_dcache64`) before reading GPU DRAM scratch results.
-    - Triggered GitHub Actions CI workflow `xnu.yml` (run `39776126003`).
+    - GitHub Actions CI workflow `xnu.yml` (run `39776126003`) succeeded in 4m49s.
+    - Downloaded fresh kernel (SHA256: `9a028d7b97a3d7828b0f19b24a549bc1d2791d80388f97ee2ec44a5f99d133c7`).
+    - Built diagnostic boot image `shim/out/spes-gpu-probe.img` (SHA256: `6f75c763b5cb5327f3e2bfcb7a55452909181f2b77fb25315f2829983dffc7c1`).
+    - Executed RAM boot: `fastboot boot shim/out/spes-gpu-probe.img` (uploaded in 0.422s, booted in 0.287s).
+    - Built multi-core iOS 16 boot image `shim/out/spes-ios-smp4.img` (SHA256: `9aa2e7d2effa594b15b4f1e889042e19fc0ec1d4cb6362d556fc0164cbcb6ced`).
+    - Handset `fed264b1` is actively executing the Stage 5 fixed image on silicon!
 
 # Stage 5 Fixed Image Booted on Silicon (`fed264b1`) — 2026-10-22
 
