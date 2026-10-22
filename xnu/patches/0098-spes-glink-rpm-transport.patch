@@ -1037,7 +1037,7 @@ index 7dd8949..2c09d18 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +684,1037 @@ spes_gpu_power_probe(void)
+@@ -677,6 +684,1082 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -1867,7 +1867,7 @@ index 7dd8949..2c09d18 100644
 +		return;
 +	}
 +
-+	/* Step 20: Submit CP_ME_INIT & CP_MEM_WRITE (Linux upstream A6xx sequence) */
++	/* Step 20: Submit CP_ME_INIT (Linux upstream A6xx sequence) */
 +	uint32_t w = 0;
 +	rb[w++] = 0x70c80008u; /* CP_ME_INIT (opcode 0x48, count 8) */
 +	rb[w++] = 0x0000002fu; /* ordinal 1: init mask */
@@ -1879,58 +1879,103 @@ index 7dd8949..2c09d18 100644
 +	rb[w++] = 0x00000000u; /* ordinal 7: pad = 0 */
 +	rb[w++] = 0x00000000u; /* ordinal 8: pad = 0 */
 +
-+	rb[w++] = 0x703d8003u; /* CP_MEM_WRITE (opcode 0x3d, count 3) */
-+	rb[w++] = 0x10000000u; /* target address LO (mapped to scratch in Context 0) */
-+	rb[w++] = 0x00000000u; /* target address HI */
-+	rb[w++] = 0xcafe0001u; /* test payload */
-+
 +	/* CP_NOP padding to 16 dwords */
 +	while (w < 16) {
 +		rb[w++] = 0x70108000u; /* zero payload requires count parity bit 15 */
 +	}
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
-+	touch_wr(gpu, 0x201cu, w); /* Kick WPTR */
++	/* Kick WPTR for Test 1: CP_ME_INIT */
++	touch_wr(gpu, 0x201cu, w);
 +	__asm__ volatile ("dsb sy" ::: "memory");
-+	printf("SPES GPU: 27. Kick WPTR: wptr=%u\n", w);
++	printf("SPES GPU: 27. Test 1: CP_ME_INIT submitted (wptr=%u)\n", w);
 +
-+	/* Bounded poll for RPTR advancement */
-+	int poll_i;
-+	bool rptr_adv = false;
-+	uint32_t curr_rptr = 0;
-+	for (poll_i = 0; poll_i < 1000; poll_i++) {
-+		curr_rptr = touch_rd(gpu, 0x2018u);
-+		if (curr_rptr > 0) {
-+			rptr_adv = true;
-+			if (curr_rptr >= w) break;
++	/* Bounded poll for CP_ME_INIT retirement */
++	int poll_init;
++	bool init_adv = false;
++	uint32_t rptr_init = 0;
++	for (poll_init = 0; poll_init < 1000; poll_init++) {
++		rptr_init = touch_rd(gpu, 0x2018u);
++		if (rptr_init > 0) {
++			init_adv = true;
++			if (rptr_init >= w) break;
 +		}
 +		touch_wait(1);
 +	}
 +
-+	/* Checkpoint 4: After submitting CP_ME_INIT and updating ringbuffer WPTR */
-+	uint32_t cp4_fault = touch_rd(gpu, 0x2084u);
-+	uint32_t cp4_int   = touch_rd(gpu, 0x208cu);
-+	uint32_t cp4_int0  = touch_rd(gpu, 0x804u);
-+	rbbm_status        = touch_rd(gpu, 0x840u);
-+	uint32_t scratch0  = scratch[0];
++	/* Checkpoint 4A: CP_ME_INIT results */
++	uint32_t cp4a_fault = touch_rd(gpu, 0x2084u);
++	uint32_t cp4a_int   = touch_rd(gpu, 0x208cu);
++	uint32_t cp4a_int0  = touch_rd(gpu, 0x804u);
++	rbbm_status         = touch_rd(gpu, 0x840u);
++	uint32_t smmu_gfsr  = touch_rd(smmu, 0x48u);
++	uint32_t smmu_fsr   = touch_rd(smmu, context + 0x58u);
 +
-+	printf("SPES GPU: 27b. Checkpoint 4 (Post-WPTR): rptr=%u / wptr=%u (adv=%d ok=%d poll=%d rbbm=%#x)\n",
-+	    curr_rptr, w, rptr_adv, (curr_rptr >= w), poll_i, rbbm_status);
-+	printf("SPES GPU: 27c. Post-WPTR diag: fault=%#x int=%#x int0=%#x scratch0=%#x\n",
-+	    cp4_fault, cp4_int, cp4_int0, scratch0);
-+	printf("SPES GPU: 27d. SMMU: GFSR=%#x FSR=%#x FSYNR=%#x FAR=%#x:%#x\n",
-+	    touch_rd(smmu, 0x48u), touch_rd(smmu, context + 0x58u),
-+	    touch_rd(smmu, context + 0x68u), touch_rd(smmu, context + 0x64u),
-+	    touch_rd(smmu, context + 0x60u));
++	printf("SPES GPU: 27b. Checkpoint 4A (CP_ME_INIT): rptr=%u / wptr=%u (adv=%d ok=%d poll=%d rbbm=%#x)\n",
++	    rptr_init, w, init_adv, (rptr_init >= w), poll_init, rbbm_status);
++	printf("SPES GPU: 27c. Checkpoint 4A diag: fault=%#x int=%#x int0=%#x GFSR=%#x FSR=%#x\n",
++	    cp4a_fault, cp4a_int, cp4a_int0, smmu_gfsr, smmu_fsr);
++
++	/* Verify Stage A success before attempting Stage B (CP_MEM_WRITE) */
++	if (!init_adv || rptr_init < w || cp4a_fault != 0 || (smmu_gfsr != 0)) {
++		touch_wr(gpu, 0x2020u, 3u); /* CP_SQE_CNTL = 3 (halt SQE) */
++		printf("SPES GPU: 27d. Test 1 (CP_ME_INIT) FAILED; halted safely, skipping MEM_WRITE\n");
++		return;
++	}
++	printf("SPES GPU: 27d. Test 1 (CP_ME_INIT) PASSED! SQE alive and taking commands.\n");
++
++	/* Test 2: Submit CP_MEM_WRITE to scratch buffer */
++	uint32_t w2 = w;
++	rb[w2++] = 0x703d8003u; /* CP_MEM_WRITE (opcode 0x3d, count 3) */
++	rb[w2++] = 0x10000000u; /* target address LO (mapped to scratch[0] in Context 0) */
++	rb[w2++] = 0x00000000u; /* target address HI */
++	rb[w2++] = 0xcafe0001u; /* test payload */
++
++	/* CP_NOP padding to 32 dwords */
++	while (w2 < 32) {
++		rb[w2++] = 0x70108000u;
++	}
++	__asm__ volatile ("dsb sy" ::: "memory");
++
++	/* Kick WPTR for Test 2: CP_MEM_WRITE */
++	touch_wr(gpu, 0x201cu, w2);
++	__asm__ volatile ("dsb sy" ::: "memory");
++	printf("SPES GPU: 28. Test 2: CP_MEM_WRITE submitted (wptr=%u)\n", w2);
++
++	/* Bounded poll for CP_MEM_WRITE retirement */
++	int poll_mem;
++	bool mem_adv = false;
++	uint32_t rptr_mem = 0;
++	for (poll_mem = 0; poll_mem < 1000; poll_mem++) {
++		rptr_mem = touch_rd(gpu, 0x2018u);
++		if (rptr_mem > w) {
++			mem_adv = true;
++			if (rptr_mem >= w2) break;
++		}
++		touch_wait(1);
++	}
++
++	/* Checkpoint 4B: CP_MEM_WRITE results */
++	uint32_t cp4b_fault = touch_rd(gpu, 0x2084u);
++	uint32_t cp4b_int   = touch_rd(gpu, 0x208cu);
++	uint32_t cp4b_int0  = touch_rd(gpu, 0x804u);
++	rbbm_status         = touch_rd(gpu, 0x840u);
++	__asm__ volatile ("dsb sy" ::: "memory");
++	uint32_t scratch0   = scratch[0];
++	int scratch_match   = (scratch0 == 0xcafe0001u);
++
++	printf("SPES GPU: 28b. Checkpoint 4B (MEM_WRITE): rptr=%u / wptr=%u (adv=%d ok=%d poll=%d rbbm=%#x)\n",
++	    rptr_mem, w2, mem_adv, (rptr_mem >= w2), poll_mem, rbbm_status);
++	printf("SPES GPU: 28c. Checkpoint 4B diag: fault=%#x int=%#x int0=%#x scratch0=%#x (match=%d)\n",
++	    cp4b_fault, cp4b_int, cp4b_int0, scratch0, scratch_match);
 +
 +	/* Halt safely; do not proceed to ZAP or rendering */
 +	touch_wr(gpu, 0x2020u, 3u); /* CP_SQE_CNTL = 3 */
-+	if (rptr_adv && curr_rptr >= w && cp4_fault == 0) {
-+		printf("SPES GPU: 28. SILICON VERIFIED: Ringbuffer retired %u packets! scratch0=%#x (halted safely)\n",
-+		    curr_rptr, scratch0);
++	if (mem_adv && rptr_mem >= w2 && cp4b_fault == 0 && scratch_match) {
++		printf("SPES GPU: 29. SILICON VERIFIED: SQE init + memory write 100%% SUCCESS! (halted safely)\n");
 +	} else {
-+		printf("SPES GPU: 28. STOPPED: rptr=%u wptr=%u fault=%#x scratch0=%#x (halted safely)\n",
-+		    curr_rptr, w, cp4_fault, scratch0);
++		printf("SPES GPU: 29. STOPPED: rptr=%u wptr=%u match=%d (halted safely)\n",
++		    rptr_mem, w2, scratch_match);
 +	}
 +	return;
 +	/* Allocate contiguous buffer for ZAP MDT metadata (8 KiB) */
@@ -2075,7 +2120,7 @@ index 7dd8949..2c09d18 100644
  static void
  touch_thread(void *arg, wait_result_t result)
  {
-@@ -704,6 +1742,7 @@ touch_thread(void *arg, wait_result_t result)
+@@ -704,6 +1787,7 @@ touch_thread(void *arg, wait_result_t result)
  		goto out;
  	}
  	spes_gpu_power_probe();
