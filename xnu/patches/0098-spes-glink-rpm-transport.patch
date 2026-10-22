@@ -1037,7 +1037,7 @@ index 7dd8949..2c09d18 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +684,1120 @@ spes_gpu_power_probe(void)
+@@ -677,6 +684,1162 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -1750,6 +1750,11 @@ index 7dd8949..2c09d18 100644
 +	}
 +
 +	/* Configure RBBM SECVID TSB & enable 64-bit addressing on all 12 blocks */
++	/* Checkpoint 2A: after SMMU context-bank and stream configuration */
++	printf("SPES GPU: 23h. CP-2A (SMMU): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x\n",
++	    touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x2084u), touch_rd(gpu, 0x804u),
++	    touch_rd(gpu, 0x840u), touch_rd(gpu, 0x2020u));
++
 +	touch_wr(gpu, 0x3e000u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_BASE_LO */
 +	touch_wr(gpu, 0x3e004u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_BASE_HI */
 +	touch_wr(gpu, 0x3e008u, 0x0u); /* RBBM_SECVID_TSB_TRUSTED_SIZE */
@@ -1766,6 +1771,12 @@ index 7dd8949..2c09d18 100644
 +	touch_wr(gpu, 0x2b804u, 0x1u); /* SP_ADDR_MODE_CNTL */
 +	touch_wr(gpu, 0x2d804u, 0x1u); /* TPL1_ADDR_MODE_CNTL */
 +	touch_wr(gpu, 0x3e040u, 0x1u); /* RBBM_SECVID_TSB_ADDR_MODE_CNTL */
++	__asm__ volatile ("dsb sy" ::: "memory");
++	/* Checkpoint 2B: after GPU address-mode and security-register configuration */
++	printf("SPES GPU: 24b. CP-2B (ADDR): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x\n",
++	    touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x2084u), touch_rd(gpu, 0x804u),
++	    touch_rd(gpu, 0x840u), touch_rd(gpu, 0x2020u));
++
 +
 +	/* Adreno 610 GBIF QSB sideband and QoS bus routing */
 +	touch_wr(gpu, 0xf00cu, 0x00071620u); /* REG_A6XX_GBIF_QSB_SIDE0 */
@@ -1793,10 +1804,22 @@ index 7dd8949..2c09d18 100644
 +	touch_wr(gpu, 0x3828u, 0x0001ffffu); /* REG_A6XX_UCHE_WRITE_THRU_BASE_HI */
 +	touch_wr(gpu, 0x382cu, 0x00000804u); /* REG_A6XX_UCHE_FILTER_CNTL */
 +	touch_wr(gpu, 0x385cu, 0x00000004u); /* REG_A6XX_UCHE_CACHE_WAYS */
++	__asm__ volatile ("dsb sy" ::: "memory");
++	/* Checkpoint 2C: after GBIF/CP/UCHE hardware configuration */
++	printf("SPES GPU: 25c. CP-2C (GBIF): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x\n",
++	    touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x2084u), touch_rd(gpu, 0x804u),
++	    touch_rd(gpu, 0x840u), touch_rd(gpu, 0x2020u));
++
 +
 +	/* Clear pending interrupts in RBBM and CP */
 +	touch_wr(gpu, 0x00dcu, 0xffffffffu); /* RBBM_INT_CLEAR_CMD */
 +	touch_wr(gpu, 0x0808u, 0x00000000u); /* RBBM_INT_0_MASK */
++	__asm__ volatile ("dsb sy" ::: "memory");
++	/* Checkpoint 2D: after RBBM interrupt-clear operations */
++	printf("SPES GPU: 25d. CP-2D (INTCLR): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x\n",
++	    touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x2084u), touch_rd(gpu, 0x804u),
++	    touch_rd(gpu, 0x840u), touch_rd(gpu, 0x2020u));
++
 +	/* CP_INTERRUPT_STATUS is a status register, not an interrupt ACK. */
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
@@ -1819,6 +1842,11 @@ index 7dd8949..2c09d18 100644
 +	uint32_t base_hi = touch_rd(gpu, 0x20c4u);
 +	printf("SPES GPU: 26c. CP_SQE_INSTR_BASE=%#x:%#x (match=%d)\n",
 +	    base_hi, base_lo, (base_lo == 0x01100000u && base_hi == 0u));
++	/* Checkpoint 2E: after SQE instruction-base programming */
++	printf("SPES GPU: 26c2. CP-2E (SQEBASE): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x\n",
++	    touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x2084u), touch_rd(gpu, 0x804u),
++	    touch_rd(gpu, 0x840u), touch_rd(gpu, 0x2020u));
++
 +
 +	/* Program Ringbuffer registers: ring at 0x01000000, RPTR scratch at 0x011f0000 */
 +	touch_wr(gpu, 0x2000u, 0x01000000u);           /* CP_RB_BASE_LO */
@@ -1829,16 +1857,30 @@ index 7dd8949..2c09d18 100644
 +	touch_wr(gpu, 0x2018u, 0u);                    /* CP_RB_RPTR */
 +	touch_wr(gpu, 0x201cu, 0u);                    /* CP_RB_WPTR */
 +	touch_wr(gpu, 0x2214u, 0u);                    /* CP_SCRATCH(2) */
++	__asm__ volatile ("dsb sy" ::: "memory");
++	/* Checkpoint 2F: after Ringbuffer base/control/pointer programming */
++	printf("SPES GPU: 26c3. CP-2F (RBCONFIG): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x\n",
++	    touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x2084u), touch_rd(gpu, 0x804u),
++	    touch_rd(gpu, 0x840u), touch_rd(gpu, 0x2020u));
++
 +	/* 0x2090 is CP_PROTECT_STATUS, NOT CP_INT_ACK. Do not write it. */
 +	touch_wr(gpu, 0x2110u, (1u << 6) | (1u << 5) | (1u << 3) | (1u << 2) | (1u << 1)); /* CP_APRIV_CNTL = 0x6e */
++	__asm__ volatile ("dsb sy" ::: "memory");
++	/* Checkpoint 2G: after CP_APRIV programming */
++	printf("SPES GPU: 26c4. CP-2G (APRIV): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x\n",
++	    touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x2084u), touch_rd(gpu, 0x804u),
++	    touch_rd(gpu, 0x840u), touch_rd(gpu, 0x2020u));
++
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +
 +	/* Checkpoint 3: Before and after CP_SQE_CNTL = 1 */
 +	uint32_t cp3a_fault = touch_rd(gpu, 0x2084u);
 +	uint32_t cp3a_int   = touch_rd(gpu, 0x208cu);
 +	uint32_t cp3a_int0  = touch_rd(gpu, 0x804u);
-+	printf("SPES GPU: 26d. Checkpoint 3 (SQE unhalt 1): pre=[fault=%#x int=%#x int0=%#x]\n",
-+	    cp3a_fault, cp3a_int, cp3a_int0);
++	uint32_t cp3a_rbbm  = touch_rd(gpu, 0x840u);
++	uint32_t cp3a_sqe   = touch_rd(gpu, 0x2020u);
++	printf("SPES GPU: 26d. Checkpoint 3 (SQE unhalt 1): pre=[int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x]\n",
++	    cp3a_int, cp3a_fault, cp3a_int0, cp3a_rbbm, cp3a_sqe);
 +
 +	/* Step 19: Un-halt CP SQE engine BEFORE submitting init */
 +	touch_wr(gpu, 0x2020u, 1u); /* CP_SQE_CNTL = 1 */
@@ -2158,7 +2200,7 @@ index 7dd8949..2c09d18 100644
  static void
  touch_thread(void *arg, wait_result_t result)
  {
-@@ -704,6 +1825,7 @@ touch_thread(void *arg, wait_result_t result)
+@@ -704,6 +1867,7 @@ touch_thread(void *arg, wait_result_t result)
  		goto out;
  	}
  	spes_gpu_power_probe();
