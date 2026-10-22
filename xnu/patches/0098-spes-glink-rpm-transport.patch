@@ -1548,7 +1548,7 @@ index 7dd8949..2c09d18 100644
 +	    touch_rd(smmu, 0x800u), touch_rd(smmu, 0xc00u), scm_s2cr0,
 +	    touch_rd(smmu, 0x808u), touch_rd(smmu, 0xc08u), scm_s2cr2,
 +	    touch_rd(smmu, 0x1000u), touch_rd(smmu, cb0_off));
-++
++
 +	/* Map 64 KiB contiguous DMA carveout in continuous splash RAM (< 4GB DRAM) at 0x5ca00000 */
 +	vm_offset_t gpu_dma_va = ml_io_map(0x5ca00000u, 0x10000u);
 +	if (!gpu_dma_va) {
