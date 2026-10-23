@@ -1037,7 +1037,7 @@ index 7dd8949..2c09d18 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +684,1343 @@ spes_gpu_power_probe(void)
+@@ -677,6 +684,1420 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -1248,6 +1248,33 @@ index 7dd8949..2c09d18 100644
 +		*tail = (*tail + 1u) & 2047u;
 +	}
 +	return true;
++}
++
++static bool
++spes_gpu_tlb_sync(vm_offset_t smmu, uint32_t context)
++{
++	touch_wr(smmu, context + 0x610u, 0u); /* ASID 0 */
++	touch_wr(smmu, context + 0x7f0u, 1u);
++	for (unsigned n = 0; n < 1000; ++n) {
++		if (!(touch_rd(smmu, context + 0x7f4u) & 1u)) return true;
++		touch_wait(1);
++	}
++	return false;
++}
++
++static bool
++spes_gpu_replace_pte(vm_offset_t smmu, uint32_t context,
++    volatile uint64_t *entry, uint64_t replacement)
++{
++	/* Caller owns the page and has drained work and fences. Break before make.
++	 * On timeout never restore/reuse backing memory: stop the diagnostic. */
++	*entry = 0;
++	to_memory((vm_offset_t)entry, sizeof(*entry));
++	if (!spes_gpu_tlb_sync(smmu, context)) return false;
++	if (!replacement) return true;
++	*entry = replacement;
++	to_memory((vm_offset_t)entry, sizeof(*entry));
++	return spes_gpu_tlb_sync(smmu, context);
 +}
 +
 +static void
@@ -2374,6 +2401,56 @@ index 7dd8949..2c09d18 100644
 +		    passed && completed == 512 && wraps >= 2 ? "PASS" : "FAIL",
 +		    completed, wraps, scratch[9], touch_rd(gpu, 0x2018u), w);
 +		(void)spes_gpu_retire(gpu, smmu, context, w, "REPEAT_STATUS");
++	}
++	int remap_test = 0;
++	(void)PE_parse_boot_argn("spesgpuremap", &remap_test, sizeof(remap_test));
++	if (passed && remap_test == 1) {
++		/* Unused VA 0x10010000, leaf 16; owned DMA pages +e000 and +f000.
++		 * Ring, firmware, IB and completion fence mappings remain unchanged. */
++		volatile uint32_t *page_a = (volatile uint32_t *)(gpu_dma_va + 0xe000u);
++		volatile uint32_t *page_b = (volatile uint32_t *)(gpu_dma_va + 0xf000u);
++		page_a[0] = 0xaaaaaaaa; page_b[0] = 0xbbbbbbbb;
++		uint32_t expected_a = 0xaaaaaaaa, expected_b = 0xbbbbbbbb;
++		unsigned stages = 0;
++		bool remap_ok = l3_target[16] == 0;
++		for (unsigned step = 0; remap_ok && step < 3; ++step) {
++			uint64_t backing = gpu_dma_pa + ((step == 1) ? 0xf000u : 0xe000u);
++			uint64_t pte = backing | SPES_PTE_CORE | SPES_PTE_PAGE;
++			if (!spes_gpu_retire(gpu, smmu, context, w, NULL) ||
++			    !spes_gpu_replace_pte(smmu, context, &l3_target[16], pte)) {
++				printf("SPES GPU: REMAP stop at mapping step=%u tlb=%#x\n",
++				    step, touch_rd(smmu, context + 0x7f4u));
++				remap_ok = false; break;
++			}
++			uint32_t marker = 0x6d610001u + step, seq = 1024u + step;
++			ib[1] = 0x10010000u; ib[3] = marker;
++			uint32_t commands[10] = {0x70bf8003u, 0x10001000u, 0u, 4u,
++			    0x70268000u, 0x70460004u, 4u, 0x011f0024u, 0u, seq};
++			if (!spes_gpu_ring_append(rb, &w, touch_rd(gpu, 0x2018u), commands, 10)) {
++				remap_ok = false; break;
++			}
++			__asm__ volatile ("dsb sy" ::: "memory");
++			touch_wr(gpu, 0x201cu, w);
++			if (!spes_gpu_retire(gpu, smmu, context, w, NULL)) { remap_ok = false; break; }
++			unsigned poll;
++			for (poll = 0; poll < 1000; ++poll) {
++				__asm__ volatile ("dsb sy" ::: "memory");
++				if (scratch[9] == seq) break;
++				touch_wait(1);
++			}
++			if (step == 1) expected_b = marker; else expected_a = marker;
++			remap_ok = poll < 1000 && page_a[0] == expected_a && page_b[0] == expected_b &&
++			    spes_gpu_retire(gpu, smmu, context, w, NULL);
++			printf("SPES GPU: REMAP step=%u %s A=%#x B=%#x fence=%u\n",
++			    step, remap_ok ? "PASS" : "FAIL", page_a[0], page_b[0], scratch[9]);
++			if (remap_ok) ++stages;
++		}
++		/* Invalidate only after completed work. On failure retain all memory. */
++		bool unmapped = remap_ok && spes_gpu_replace_pte(smmu, context, &l3_target[16], 0);
++		bool clean = spes_gpu_retire(gpu, smmu, context, w, "REMAP_STATUS");
++		printf("SPES GPU: REMAP %s stages=%u/3 unmapped=%u pte=%#llx\n",
++		    remap_ok && stages == 3 && unmapped && clean ? "PASS" : "FAIL",
++		    stages, (unsigned)unmapped, l3_target[16]);
 +	}
 +	touch_wr(gpu, 0x2020u, 3u);
 +}

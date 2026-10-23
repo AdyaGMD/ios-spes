@@ -130,7 +130,7 @@ class RingAppendTests(unittest.TestCase):
     def test_empty_ring_wrap_and_busy_rejection(self):
         patch = (ROOT / 'xnu/patches/0098-spes-glink-rpm-transport.patch').read_text()
         src = '\n'.join(x[1:] for x in patch.splitlines() if x.startswith('+') and not x.startswith('+++'))
-        helper = src[src.index('static bool\nspes_gpu_ring_append'):src.index('static void\nspes_glink_rpm_probe')]
+        helper = src[src.index('static bool\nspes_gpu_ring_append'):src.index('static bool\nspes_gpu_tlb_sync')]
         code = '#include <stdint.h>\n#include <stdbool.h>\n' + helper
         code += '\nint append(uint32_t *r,uint32_t *t,uint32_t h,uint32_t *p,uint32_t n) { return spes_gpu_ring_append(r,t,h,p,n); }'
         with tempfile.TemporaryDirectory() as d:
@@ -156,3 +156,48 @@ class RingAppendTests(unittest.TestCase):
             for head,n in ((old-1,10),(old,0),(old,2048)):
                 self.assertEqual(dll.append(ring,ctypes.byref(tail),head,packet,n),0)
                 self.assertEqual(tail.value,old); self.assertEqual(list(ring),before)
+
+
+class RemapTests(unittest.TestCase):
+    def test_break_before_make_and_timeout(self):
+        patch=(ROOT/'xnu/patches/0098-spes-glink-rpm-transport.patch').read_text()
+        src='\n'.join(x[1:] for x in patch.splitlines() if x.startswith('+') and not x.startswith('+++'))
+        helper=src[src.index('static bool\nspes_gpu_tlb_sync'):src.index('static void\nspes_glink_rpm_probe')]
+        prefix='''#include <stdint.h>
+#include <stdbool.h>
+typedef uintptr_t vm_offset_t;
+static uint64_t entry, seen[2];
+static unsigned commits, syncs, waits, mode, bad;
+static void to_memory(vm_offset_t a, unsigned n) {
+ if (a!=(uintptr_t)&entry || n!=8 || commits>=2) bad=1;
+ else seen[commits++]=entry;
+}
+static void touch_wr(vm_offset_t base, uint32_t off, uint32_t value) {
+ if (base!=1) bad=1;
+ if (off==0x8610) {if(value!=0)bad=1;}
+ else if(off==0x87f0) {if(value!=1)bad=1; ++syncs;}
+ else bad=1;
+}
+static uint32_t touch_rd(vm_offset_t b,uint32_t o) {
+ if(b!=1 || o!=0x87f4)bad=1;
+ return mode==syncs ? 1:0;
+}
+static void touch_wait(unsigned n) {waits+=n;}
+'''
+        suffix='''int run(unsigned m, uint64_t replacement) {
+ mode=m; entry=0x5ca0e003; commits=syncs=waits=bad=0; seen[0]=seen[1]=0;
+ bool ok=spes_gpu_replace_pte(1,0x8000,&entry,replacement);
+ if(bad || seen[0]!=0)return -1;
+ if(m==1)return !ok && entry==0 && commits==1 && syncs==1 && waits==1000;
+ if(m==2)return !ok && entry==replacement && commits==2 && syncs==2 && waits==1000;
+ return ok && entry==replacement && commits==(replacement?2:1) &&
+   syncs==commits && waits==0 && seen[1]==replacement;
+}'''
+        with tempfile.TemporaryDirectory() as d:
+            c=Path(d)/'map.c';lib=Path(d)/'map.dylib';c.write_text(prefix+helper+suffix)
+            subprocess.run(['clang','-shared','-fPIC','-Wall','-Wextra','-Werror',str(c),'-o',str(lib)],check=True,capture_output=True)
+            dll=ctypes.CDLL(str(lib));dll.run.argtypes=[ctypes.c_uint,ctypes.c_uint64]
+            for m,pte in [(0,0x5ca0f003),(1,0x5ca0f003),(2,0x5ca0f003),(0,0)]:
+                self.assertEqual(dll.run(m,pte),1,(m,hex(pte)))
+        self.assertIn('l3_target[16] == 0',src)
+        self.assertIn('page_a[0] == expected_a && page_b[0] == expected_b',src)

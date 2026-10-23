@@ -1,3 +1,20 @@
+# Active handoff — GPU remap diagnostic prepared, 2026-10-23
+
+- Added gpu-remap profile (IB/display enabled, repeat disabled). After proven
+  IB/fence gate, uses previously invalid L3 target slot16 / VA0x10010000.
+  Maps to owned DMA pages 0x5ca0e000 then 0x5ca0f000 then back to e000.
+- Each stage drains prior work, clears PTE, cleans it, invalidates ASID0 and
+  waits bounded for TLB sync; installs/cleans replacement and syncs again.
+  Reuses IB to write a unique marker, checks fence1024..1026, both backing
+  words (including unchanged old page), and clean GPU retirement.
+- Successful completion removes mapping via the same bounded invalidation.
+  Failure stops submissions and retains memory; never frees/recycles pages.
+  No deliberate faulting GPU access, storage writes or userspace exposure.
+- Nine host tests pass, including compiled actual PTE helper order and timeout
+  paths for both invalidation phases; patch parses, shell/diff checks pass.
+- Next: CI build, temporary gpu-remap boot, capture each REMAP step plus final
+  REMAP_STATUS and REMAP PASS stages=3/3 unmapped=1 pte=0. Hardware unverified.
+
 # User-confirmed milestone — repeated GPU submission, 2026-10-23
 
 - User reports "success" for gpu-repeat kernel 7546dd5, CI 39953944022,
