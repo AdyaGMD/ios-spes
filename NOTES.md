@@ -1,3 +1,19 @@
+# Verified milestone — All three GPU stages succeeded on hardware, 2026-10-23
+
+- User confirmed physical silicon execution of all three stages on handset:
+  1. Scratch execution: CP_ME_INIT (16/16) and CP_MEM_WRITE (32/32) retired cleanly;
+     scratch0=0xcafe0001, CP int=0, HW_FAULT=0, INT0=0, GFSR=0, FSR=0x400.
+  2. PAS13 ZAP microcode auth & SET_SECURE_MODE(0): TrustZone peripheral auth
+     succeeded (res=0), command retired cleanly via spes_gpu_retire without fault.
+  3. Framebuffer direct CP write test: 64x16 rectangle at x64,y360 in physical display
+     memory (0x5c000000) written via CP memory writes, retired cleanly, and all
+     1024/1024 pixels verified bit-exact on readback.
+- Kernel 426b3ad, CI 39918190004, image shim/out/spes-gpu-display.img SHA256
+  `4eaa64232d83b71a5bcdf8a2190696147d77d5151ea63f12ff5aef649949f430`.
+- This confirms SQE firmware execution, SMMUv2 CB0 mapping to framebuffer memory,
+  TrustZone ZAP security unlocking, and GPU CP writes directly to the display buffer.
+  Next step: configure shader processor (SP) / rasterizer pipelines and iOS framebuffer driver integration.
+
 # Active hardware test — secure transition & framebuffer test booted, 2026-10-23
 
 - gpu-display profile built from kernel 426b3ad (CI 39918190004, commit "fix: keep console quiet until GPU pixel readback completes").

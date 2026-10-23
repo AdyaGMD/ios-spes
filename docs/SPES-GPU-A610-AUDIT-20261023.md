@@ -165,9 +165,21 @@ kernel and CI39915037717, then showed ME_INIT retirement at 16/16 and MEM_WRITE
 retirement at 32/32, scratch0=0xcafe0001, and no CP or SMMU fault bits. These
 are the first verified command-execution results in this investigation.
 
-The diagnostic halts after scratch verification. ZAP, secure-mode transition,
-shader execution and rendering were not tested. Before extending it, fix the
-later success gates to require CP_INTERRUPT_STATUS=0 and the complete FSR fault
-mask; this observed run passes those stricter criteria already. The unreachable
-old render block must not be enabled unchanged: the engine has been halted and
-its local write index does not account for the second test's submitted tail.
+## Three-stage execution verified on hardware
+
+The `gpu-display` profile (kernel `426b3ad`, CI 39918190004) proved all three stages of the bring-up pipeline on silicon:
+
+1. **Stage 1 (Scratch test)**:
+   `CP_ME_INIT` and `CP_MEM_WRITE` retired at RPTR/WPTR `16/16` and `32/32`, writing `0xcafe0001` to scratch memory with `int=0`, `fault=0`, `int0=0`, `GFSR=0`, `FSR=0x400`.
+2. **Stage 2 (ZAP Microcode & Secure Mode Transition)**:
+   PAS13 image initialization, memory setup, and reset authentication succeeded through TrustZone/TZBSP (`res=0`), followed by clean retirement of `CP_SET_SECURE_MODE(0)` (`0x70e60001u`, `0u`).
+3. **Stage 3 (Direct Framebuffer CP Writes)**:
+   16 `CP_MEM_WRITE` packets (`0x703d8042u`) targeting physical framebuffer RAM at `0x5c000000` (x=64, y=360) retired cleanly with silent console gating, and all 1024/1024 pixels were bit-exact verified on readback.
+
+This proves that:
+- Microcode executes deterministically without SQE faults or CP illegal instruction traps.
+- SMMUv2 CB0 translates both scratch RAM and display memory correctly.
+- TrustZone permits GPU non-secure operation via PAS13.
+- The GPU Command Processor can directly modify display memory.
+
+The next development phase focuses on shader core (SP) state setup, rasterizer/primitive pipeline initialization, and integrating with iOS Compositor/IOMobileFramebuffer.

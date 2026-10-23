@@ -18,21 +18,14 @@ Apple filesystem images and device-specific dumps are not distributed here.
 
 ## GPU bring-up milestone (2026-10-23)
 
-The Adreno 610 command processor executes commands on the test handset:
-`CP_ME_INIT` retires at RPTR/WPTR `16/16`, followed by `CP_MEM_WRITE` at `32/32`.
-The GPU writes the expected `0xcafe0001` to its reserved scratch buffer, with
-zero CP errors and zero SMMU fault bits. This is a RAM-only diagnostic using
-kernel `d37e2d2` from [CI 39915037717](https://github.com/AdyaGMD/ios-spes/actions/runs/39915037717).
+All three stages of GPU initialization and execution are verified on the test handset:
+1. **Command Processor execution**: `CP_ME_INIT` retires at RPTR/WPTR `16/16`, followed by `CP_MEM_WRITE` at `32/32`. The GPU writes `0xcafe0001` to its reserved scratch buffer with zero CP errors and zero SMMU fault bits.
+2. **TrustZone ZAP authentication & secure transition**: PAS13 microcode authentication succeeds via TZBSP, and `CP_SET_SECURE_MODE(0)` retires cleanly, placing the Adreno 610 in non-secure rendering mode.
+3. **Physical framebuffer memory write**: The GPU CP executes 16 `CP_MEM_WRITE` packets writing a 64×16 pixel rectangle into physical display RAM (`0x5c000000`) and retires cleanly, with all 1024/1024 pixels bit-exact verified on readback.
 
-Paired tests isolated the early `CP_SQE_CNTL=3` write as the trigger for the
-previous pre-setup `int=0x80` error in this boot state. Removing that write and
-correcting register addresses allowed the command test to pass. See the
-[A610 audit](docs/SPES-GPU-A610-AUDIT-20261023.md) for evidence and limitations.
+This was verified via temporary RAM-boot using kernel `426b3ad` ([CI 39918190004](https://github.com/AdyaGMD/ios-spes/actions/runs/39918190004)) with the `gpu-display` profile in `tools/build-spes-diagnostic.sh`.
 
-Shaders, rendering and iOS graphics acceleration remain unverified. The test
-halts after the scratch write; it does not draw or accelerate the interface.
-The `gpu-control`, `gpu-halt`, `gpu-setup` and `gpu-run` profiles in
-`tools/build-spes-diagnostic.sh` retain the staged diagnostics.
+Shaders and full iOS Metal/QuartzCore graphics acceleration remain the next milestone. See the [A610 audit](docs/SPES-GPU-A610-AUDIT-20261023.md) for architectural evidence and register details.
 
 ## Changes
 
