@@ -1,3 +1,16 @@
+# Active hardware test — repeated submission image accepted, 2026-10-23
+
+- Kernel 7546dd5, CI 39953944022 SUCCESS; downloaded kernel SHA verified.
+- Image shim/out/spes-gpu-repeat.img SHA256
+  `188f30e0740bbb30c5d7e9196fe461a778e784026db96b8a0ffeb8bd0d52d2de`.
+  Checked RAM-root/no-storage-write flags, spesgpurepeat=1 and prior IB gates.
+- User confirmed Fastboot; product spes verified. Temporary boot accepted:
+  sending 0.405 s, booting 0.288 s, total 0.699 s. No partitions flashed.
+- Awaiting photo of REPEAT and REPEAT_STATUS. Require completed=512/512,
+  wraps>=2, fence=513 and clean faults. No hardware success inferred yet.
+- Next after result: bounded dynamic mapping/remapping test, then service
+  adaptation. Mapping failure/lifetime contracts recorded in graphics document.
+
 # Active handoff — repeated submission prepared, 2026-10-23
 
 - Added opt-in gpu-repeat profile: retains the proven IB/fence boot, then issues
@@ -10,7 +23,8 @@
   diagnostic reuse, not a concurrent userspace submission service.
 - Eight host tests pass, including actual C ring boundary/rejection behavior
   and 512-submission wrap simulation; existing packet/retirement tests pass.
-  Patch parses and shell syntax/diff checks pass. Full kernel CI pending.
+  Patch parses and shell syntax/diff checks pass. Commit 7546dd5; CI
+  39953944022 building. User confirmed Fastboot ready; do not ask again.
 - Next: build CI kernel, create gpu-repeat RAM image, temporary boot when user
   confirms Fastboot. Capture REPEAT completed=512/512, wraps>=2, fence=513 and
   REPEAT_STATUS. No dynamic memory mapping or UI service enabled yet.

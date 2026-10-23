@@ -60,3 +60,24 @@ Seven host tests validate encoding, mappings, ring bounds and failure handling.
 Hardware photo on 2026-10-23 confirms INDIRECT_BUFFER and FENCE_STATUS PASS,
 RPTR/WPTR=1116/1116, data=0x1b610001, fence=1, CP/HW/INT0/GFSR=0, FSR=0x400.
 Kernel 89f2b42, CI 39951466519. This is a prerequisite, not completion of the UI port.
+
+## Mapping and submission contracts for the next implementation
+
+The repeat diagnostic intentionally supports one producer and one outstanding
+submission. It requires RPTR=tail before overwriting any ring words or IB memory,
+pads boundary gaps with CP_NOP, and retains the hardware read pointer across
+wrap. Passing this test will not validate concurrent submissions or fence wrap.
+
+The service adaptation must serialize allocation, mapping and submission under
+one lock initially. Buffer references and VA reservations must survive until the
+last completion fence. Do not expose physical addresses or accept arbitrary
+physical mappings from userspace. Split retained memory-descriptor segments into
+4 KiB GPU pages despite the kernel's 16 KiB pages; check every size/address sum
+for overflow and roll back partially installed mappings on failure.
+
+Unlike reference redwood_gpu_unmap (which has no success return), the spes
+invalidation API must report bounded TLB-sync failure. On failure keep the buffer
+and VA reserved, mark the backend unavailable, and do not recycle physical pages.
+Map replacement must invalidate the old translation before installing the new
+one. Test this first using reserved scratch pages and verified command/fence
+submission, before mapping a real IOSurface or changing the iOS root filesystem.
