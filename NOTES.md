@@ -1,3 +1,20 @@
+# Active handoff — setup verified on hardware, 2026-10-23
+
+- User photo confirms `setup verified; STOP before SQE release (no packets)`.
+  All shown checkpoints remain int=0/HW_FAULT=0/GFSR=0, RBBM=1, SQE=0;
+  FSR=0x400 has no fault bits. S2CR0–3=0x300, valid exact SMR0/1 accepted.
+  CB0 SCTLR=0x1127, TTBR0 matches allocated pt_pa=0x103258000;
+  SQE copy 32260 bytes err=0, SQE base=0:0x01100000 match=1.
+- No GPU command execution is demonstrated yet. Next reuses kernel d37e2d2,
+  CI39915037717, with profile gpu-run (spesgpuhalt=0, spesgpurun=1).
+  Reviewed reachable path: bounded ME_INIT then scratch MEM_WRITE; halts/returns
+  before the old ZAP/render block (unreachable). No framebuffer commands or UFS
+  writes in this test. User asked to return to Fastboot; readiness pending.
+- Limitation in this existing kernel: later ME_INIT/MEM_WRITE success labels
+  do not themselves require CP_INTERRUPT_STATUS=0 (they do print it). Interpret
+  raw status, exact RPTR/WPTR and scratch value, not the label alone. The
+  post-release guard DOES reject CP_INTERRUPT_STATUS before packets.
+
 # Active hardware test — setup-only image accepted, 2026-10-23
 
 - Kernel commit d37e2d2; CI 39915037717 SUCCESS. Downloaded kernel checksum
