@@ -18,6 +18,8 @@
   display address/size checks, halt control modes, independent register constants,
   and compiled retirement helper rejects timeouts/CP/HW/RBBM/SMMU faults while
   accepting FSR format bit0x400. Packet test caught/fixed count-parity error.
+- Framebuffer retirement runs silently so console output cannot overwrite the
+  rectangle between GPU completion and pixel verification.
 - Full kernel CI and device results pending. Next: gpu-display temporary boot,
   capture PAS results, SECURE_MODE retirement, FRAMEBUFFER retirement/pixel count.
   Only then decide on shader/raster work; don't claim rendering from CP writes.

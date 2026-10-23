@@ -1227,7 +1227,7 @@ index 7dd8949..2c09d18 100644
 +		if (rp == tail) { ok = true; break; }
 +		touch_wait(1);
 +	}
-+	printf("SPES GPU: %s %s rptr=%u wptr=%u int=%#x fault=%#x int0=%#x GFSR=%#x FSR=%#x poll=%u\n",
++	if (stage) printf("SPES GPU: %s %s rptr=%u wptr=%u int=%#x fault=%#x int0=%#x GFSR=%#x FSR=%#x poll=%u\n",
 +	    stage, ok ? "PASS" : "FAIL", rp, tail, irq, hw, irq0, gf, fs, n);
 +	return ok;
 +}
@@ -2272,7 +2272,7 @@ index 7dd8949..2c09d18 100644
 +	/* END DISPLAY PACKETS */
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +	touch_wr(gpu, 0x201cu, w);
-+	bool display_retired = spes_gpu_retire(gpu, smmu, context, w, "FRAMEBUFFER");
++	bool display_retired = spes_gpu_retire(gpu, smmu, context, w, NULL);
 +	__asm__ volatile ("dsb sy" ::: "memory");
 +	unsigned matched = 0;
 +	for (unsigned row = 0; row < 16; ++row)
