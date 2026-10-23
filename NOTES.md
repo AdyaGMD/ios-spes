@@ -1,3 +1,21 @@
+# Active hardware test — control image boot accepted, 2026-10-23
+
+- Kernel commit `3843ef3`; CI `39880731839` SUCCESS. Artifact checksum verified
+  at `xnu/out-39880731839/kernel.development.sweet`.
+- Packaging correction commit `65d4ff0` enables the touch worker that hosts GPU
+  probes (same already-built kernel). Both profiles built successfully; payload
+  flags verified: RAM root, storage/root writes and saved storage logs disabled.
+- `shim/out/spes-gpu-control.img` SHA256
+  `85aa480a9ad0e4c9dfeb5a30f8abdf0f823c4e3a3658369f563b73cc73eef752`.
+- `shim/out/spes-gpu-halt.img` SHA256
+  `9080c12bbf3a7bb8c1d6c930aa20d5160e6355c242599ff8084b3f883e913468`.
+- User confirmed Fastboot; product rechecked `spes`. Temporary boot of CONTROL
+  accepted (send 0.414 s, boot 0.287 s); no partition flashing. Acceptance is not
+  a hardware result. Awaiting user report of p=0/p=1 samples and heartbeat.
+- Next: capture control result, then ask user to return to Fastboot for the HALT
+  image. Do not boot a second image until control result is captured. Both modes
+  stop before SMMU setup/packets; no GPU execution success is yet demonstrated.
+
 # Active handoff — A610 corrections and controlled halt diagnostic, 2026-10-23
 
 - Implemented the verified byte-offset corrections from the source audit; removed
