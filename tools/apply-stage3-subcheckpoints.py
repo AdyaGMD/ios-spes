@@ -30,7 +30,7 @@ def main():
     hunk2_lines = lines[hunk2_idx:hunk3_idx]
     suffix = lines[hunk3_idx:]
 
-    target_start_marker = '\t/* Step 13: Map GPU SMMU MMIO aperture (0x059a0000, 64 KiB) */\n'
+    target_start_marker = '\t/* Khaje GPU memory path: do not access SMMU before its clocks are on. */\n'
     target_end_marker = '\t/* Step 20: Submit CP_ME_INIT (Linux upstream A6xx sequence) */\n'
 
     start_idx = None
@@ -59,6 +59,73 @@ def main():
 \t\t    touch_rd(gpu, 0x804u), touch_rd(gpu, 0x840u), \\
 \t\t    touch_rd(gpu, 0x2020u), _gfsr, _fsr); \\
 \t} while (0)
+
+\t/* Khaje GPU memory path: do not access SMMU before its clocks are on. */
+\ttouch_wr(st.gcc, 0x3600cu, touch_rd(st.gcc, 0x3600cu) | 1u);
+\t__asm__ volatile ("dsb sy" ::: "memory");
+\t/* Checkpoint 22c: After MEMNOC clock enable */
+\tprintf("SPES GPU: 22c. CP-22c (MEMNOC): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x memnoc=%#x\\n",
+\t    touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x2084u),
+\t    touch_rd(gpu, 0x804u), touch_rd(gpu, 0x840u),
+\t    touch_rd(gpu, 0x2020u), touch_rd(st.gcc, 0x3600cu));
+
+\ttouch_wr(st.gcc, 0x36018u, touch_rd(st.gcc, 0x36018u) | 1u);
+\t__asm__ volatile ("dsb sy" ::: "memory");
+\t/* Checkpoint 22d: After SNOC clock enable */
+\tprintf("SPES GPU: 22d. CP-22d (SNOC): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x snoc=%#x\\n",
+\t    touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x2084u),
+\t    touch_rd(gpu, 0x804u), touch_rd(gpu, 0x840u),
+\t    touch_rd(gpu, 0x2020u), touch_rd(st.gcc, 0x36018u));
+
+\ttouch_wr(cc, 0x5000u, touch_rd(cc, 0x5000u) | 1u);
+\t__asm__ volatile ("dsb sy" ::: "memory");
+\t/* Checkpoint 22e: After SMMU clock enable */
+\tprintf("SPES GPU: 22e. CP-22e (SMMU_CLK): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x smmu_clk=%#x\\n",
+\t    touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x2084u),
+\t    touch_rd(gpu, 0x804u), touch_rd(gpu, 0x840u),
+\t    touch_rd(gpu, 0x2020u), touch_rd(cc, 0x5000u));
+
+\tunsigned clock_poll;
+\tfor (clock_poll = 0; clock_poll < 100; ++clock_poll) {
+\t\tif (!((touch_rd(st.gcc, 0x3600cu) | touch_rd(st.gcc, 0x36018u) |
+\t\t    touch_rd(cc, 0x5000u)) & (1u << 31))) break;
+\t\ttouch_wait(1);
+\t}
+\t__asm__ volatile ("dsb sy" ::: "memory");
+\tprintf("SPES GPU: memory clocks memnoc=%#x snoc=%#x smmu=%#x (poll=%u)\\n",
+\t    touch_rd(st.gcc, 0x3600cu), touch_rd(st.gcc, 0x36018u), touch_rd(cc, 0x5000u), clock_poll);
+
+\t/* Checkpoint 22f: After clock polling completes */
+\tprintf("SPES GPU: 22f. CP-22f (CLKPOLL): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x (poll=%u)\\n",
+\t    touch_rd(gpu, 0x208cu), touch_rd(gpu, 0x2084u),
+\t    touch_rd(gpu, 0x804u), touch_rd(gpu, 0x840u),
+\t    touch_rd(gpu, 0x2020u), clock_poll);
+
+\tif (clock_poll == 100) { printf("SPES GPU: memory clock timeout; stopping\\n"); return; }
+
+\t/* Checkpoint 22g: Immediately before repeated CP_SQE_CNTL = 3 */
+\tuint32_t cp2a_hw_fault = touch_rd(gpu, 0x2084u);
+\tuint32_t cp2a_int_stat = touch_rd(gpu, 0x208cu);
+\tuint32_t cp2a_rbbm_int = touch_rd(gpu, 0x804u);
+\tprintf("SPES GPU: 22g. CP-22g (Pre-Halt): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x\\n",
+\t    cp2a_int_stat, cp2a_hw_fault, cp2a_rbbm_int,
+\t    touch_rd(gpu, 0x840u), touch_rd(gpu, 0x2020u));
+
+\ttouch_wr(gpu, 0x2020u, 3u); /* Hold SQE halted while programming memory. */
+\t__asm__ volatile ("dsb sy" ::: "memory");
+
+\t/* Checkpoint 22h: Immediately after CP_SQE_CNTL = 3 */
+\tuint32_t cp2b_hw_fault = touch_rd(gpu, 0x2084u);
+\tuint32_t cp2b_int_stat = touch_rd(gpu, 0x208cu);
+\tuint32_t cp2b_rbbm_int = touch_rd(gpu, 0x804u);
+\tprintf("SPES GPU: 22h. CP-22h (Post-Halt): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x\\n",
+\t    cp2b_int_stat, cp2b_hw_fault, cp2b_rbbm_int,
+\t    touch_rd(gpu, 0x840u), touch_rd(gpu, 0x2020u));
+
+\t/* Checkpoint 22b: preserved for continuity */
+\tprintf("SPES GPU: 22b. Checkpoint 2 (SQE halt 3): pre=[fault=%#x int=%#x int0=%#x] post=[fault=%#x int=%#x int0=%#x]\\n",
+\t    cp2a_hw_fault, cp2a_int_stat, cp2a_rbbm_int,
+\t    cp2b_hw_fault, cp2b_int_stat, cp2b_rbbm_int);
 
 \t/* Checkpoint 1 (23-0): Before SMMU initialization begins */
 \tLOG_CP("23-0 (Pre-SMMU)");
