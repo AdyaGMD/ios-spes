@@ -1,3 +1,17 @@
+# Active hardware test — control clean, halt image accepted, 2026-10-23
+
+- User photo of CONTROL (`halt-test mode=1`) shows both p=0 and p=1 samples
+  0–10 with int=0, fault=0, rbbm=0x1, sqe=0; firmware base=0:0, gbif=0.
+  Diagnostic reaches STOP before SMMU setup/packets. Heartbeat continuity was
+  not separately confirmed by this still photo. This establishes only that no
+  CP error appeared during the control observation window, not GPU execution.
+- User returned phone to Fastboot. Product rechecked spes; HALT image checksum
+  verified against the recorded SHA256. Temporary boot accepted: send 0.411 s,
+  boot 0.288 s, total 0.704 s. No partitions flashed.
+- Awaiting halt-test mode=2 photo/result. Compare p=0 versus p=1, especially
+  first int=0x80 sample and sqe transition 0→3. Do not call the early halt causal
+  until the paired result arrives; power/handoff and timing remain possible factors.
+
 # Active hardware test — control image boot accepted, 2026-10-23
 
 - Kernel commit `3843ef3`; CI `39880731839` SUCCESS. Artifact checksum verified
