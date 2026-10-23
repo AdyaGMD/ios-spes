@@ -2,7 +2,7 @@
 # Build an entirely RAM-backed XNU/PID-1 diagnostic image. Never flashes a phone.
 set -euo pipefail
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-    echo "usage: $0 KERNEL LIVE_FDT [baseline|storage|touch|gpu|gpu-control|gpu-halt|gpu-setup|gpu-run|gpu-display|gpu-bridge|gpu-repeat|gpu-remap|wifi]" >&2
+    echo "usage: $0 KERNEL LIVE_FDT [baseline|storage|touch|gpu|gpu-control|gpu-halt|gpu-setup|gpu-run|gpu-display|gpu-bridge|gpu-repeat|gpu-remap|gpu-buffers|wifi]" >&2
     exit 2
 fi
 profile=${3:-baseline}
@@ -14,15 +14,16 @@ case "$profile" in
     storage) extra=' spesufsprobe=1'; name=spes-storage-probe ;;
     touch) extra=' spestouchprobe=1 sweettouchdelay=5 sweettouchdiag=3'; touch=1; name=spes-touch-probe ;;
     gpu) extra=' spestouchprobe=1 spesgpuprobe=1 spesrpmprobe=1 sweettouchdelay=5 sweettouchdiag=3'; touch=1; name=spes-gpu-probe ;;
-    gpu-control|gpu-halt|gpu-setup|gpu-run|gpu-display|gpu-bridge|gpu-repeat|gpu-remap)
+    gpu-control|gpu-halt|gpu-setup|gpu-run|gpu-display|gpu-bridge|gpu-repeat|gpu-remap|gpu-buffers)
         mode=1; [ "$profile" != gpu-halt ] || mode=2
-        case "$profile" in gpu-setup|gpu-run|gpu-display|gpu-bridge|gpu-repeat|gpu-remap) mode=0 ;; esac
+        case "$profile" in gpu-setup|gpu-run|gpu-display|gpu-bridge|gpu-repeat|gpu-remap|gpu-buffers) mode=0 ;; esac
         extra=" spestouchprobe=1 spesgpuprobe=1 spesrpmprobe=1 spesgpuhalt=$mode sweettouchdelay=5"
-        case "$profile" in gpu-run|gpu-display|gpu-bridge|gpu-repeat|gpu-remap) extra="$extra spesgpurun=1" ;; esac
-        case "$profile" in gpu-display|gpu-bridge|gpu-repeat|gpu-remap) extra="$extra spesgpudisplay=1" ;; esac
-        case "$profile" in gpu-bridge|gpu-repeat|gpu-remap) extra="$extra spesgpuib=1" ;; esac
+        case "$profile" in gpu-run|gpu-display|gpu-bridge|gpu-repeat|gpu-remap|gpu-buffers) extra="$extra spesgpurun=1" ;; esac
+        case "$profile" in gpu-display|gpu-bridge|gpu-repeat|gpu-remap|gpu-buffers) extra="$extra spesgpudisplay=1" ;; esac
+        case "$profile" in gpu-bridge|gpu-repeat|gpu-remap|gpu-buffers) extra="$extra spesgpuib=1" ;; esac
         [ "$profile" != gpu-repeat ] || extra="$extra spesgpurepeat=1"
         [ "$profile" != gpu-remap ] || extra="$extra spesgpuremap=1"
+        [ "$profile" != gpu-buffers ] || extra="$extra spesgpubuffers=1"
         touch=1 # GPU diagnostics run inside the existing touch worker.
         name="spes-$profile" ;;
     wifi) extra=' spestouchprobe=1 modem=1 wifi=1 modem_watch=30 sweettouchdelay=5'; touch=1; name=spes-wifi-probe ;;

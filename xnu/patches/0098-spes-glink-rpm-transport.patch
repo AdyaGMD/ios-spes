@@ -1037,7 +1037,7 @@ index 7dd8949..2c09d18 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +684,1420 @@ spes_gpu_power_probe(void)
+@@ -677,6 +684,1556 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -1275,6 +1275,83 @@ index 7dd8949..2c09d18 100644
 +	*entry = replacement;
 +	to_memory((vm_offset_t)entry, sizeof(*entry));
 +	return spes_gpu_tlb_sync(smmu, context);
++}
++
++/* Bounded VA ownership for the unused portion of the target L3 table.
++ * Caller serializes access and retains physical memory through successful free.
++ * This first pool is deliberately limited to 496 pages; no user service yet. */
++struct spes_gpu_buffer {
++	uint32_t token, first, pages, fence;
++};
++struct spes_gpu_pool {
++	uint32_t next_token;
++	bool poisoned;
++	uint8_t used[496];
++	struct spes_gpu_buffer buffers[32];
++};
++
++static struct spes_gpu_buffer *
++spes_gpu_buffer_find(struct spes_gpu_pool *pool, uint32_t token)
++{
++	if (!token) return NULL;
++	for (unsigned n = 0; n < 32; ++n)
++		if (pool->buffers[n].token == token) return &pool->buffers[n];
++	return NULL;
++}
++
++static uint32_t
++spes_gpu_buffer_reserve(struct spes_gpu_pool *pool, uint64_t bytes)
++{
++	if (pool->poisoned || !bytes || bytes > 496u * 4096u || pool->next_token == 0xffffffffu) return 0;
++	uint32_t pages = (uint32_t)((bytes + 4095u) / 4096u);
++	struct spes_gpu_buffer *b = NULL;
++	for (unsigned n = 0; n < 32; ++n)
++		if (!pool->buffers[n].token) { b = &pool->buffers[n]; break; }
++	if (!b) return 0;
++	unsigned run = 0;
++	for (unsigned n = 0; n < 496; ++n) {
++		run = pool->used[n] ? 0 : run + 1;
++		if (run != pages) continue;
++		b->first = n + 1 - pages; b->pages = pages; b->fence = 0;
++		b->token = ++pool->next_token;
++		for (unsigned i = b->first; i <= n; ++i) pool->used[i] = 1;
++		return b->token;
++	}
++	return 0;
++}
++
++static bool
++spes_gpu_buffer_map(struct spes_gpu_pool *pool, uint32_t token,
++    uint64_t *table, const uint64_t *physical, uint32_t count,
++    vm_offset_t smmu, uint32_t context)
++{
++	struct spes_gpu_buffer *b = spes_gpu_buffer_find(pool, token);
++	if (pool->poisoned || !b || count != b->pages || b->fence) return false;
++	/* Validate all pages before modifying any entry. 36-bit PA, 4K granule. */
++	for (unsigned i = 0; i < count; ++i)
++		if (!physical[i] || (physical[i] & 4095u) || physical[i] >= (1ull << 36) ||
++		    table[16 + b->first + i]) return false;
++	for (unsigned i = 0; i < count; ++i)
++		table[16 + b->first + i] = physical[i] | 0xe43ull;
++	to_memory((vm_offset_t)&table[16 + b->first], count * 8u);
++	if (spes_gpu_tlb_sync(smmu, context)) return true;
++	pool->poisoned = true; /* retain mappings/ownership on uncertain invalidation */
++	return false;
++}
++
++static bool
++spes_gpu_buffer_free(struct spes_gpu_pool *pool, uint32_t token,
++    uint32_t completed, uint64_t *table, vm_offset_t smmu, uint32_t context)
++{
++	struct spes_gpu_buffer *b = spes_gpu_buffer_find(pool, token);
++	/* Fence timeline must not wrap; caller stops before UINT32_MAX. */
++	if (pool->poisoned || !b || completed < b->fence) return false;
++	for (unsigned i = 0; i < b->pages; ++i) table[16 + b->first + i] = 0;
++	to_memory((vm_offset_t)&table[16 + b->first], b->pages * 8u);
++	if (!spes_gpu_tlb_sync(smmu, context)) { pool->poisoned = true; return false; }
++	for (unsigned i = 0; i < b->pages; ++i) pool->used[b->first + i] = 0;
++	b->token = 0;
++	return true;
 +}
 +
 +static void
@@ -2451,6 +2528,65 @@ index 7dd8949..2c09d18 100644
 +		printf("SPES GPU: REMAP %s stages=%u/3 unmapped=%u pte=%#llx\n",
 +		    remap_ok && stages == 3 && unmapped && clean ? "PASS" : "FAIL",
 +		    stages, (unsigned)unmapped, l3_target[16]);
++	}
++	int buffer_test = 0;
++	(void)PE_parse_boot_argn("spesgpubuffers", &buffer_test, sizeof(buffer_test));
++	if (passed && buffer_test == 1) {
++		struct spes_gpu_pool pool = {0};
++		vm_offset_t memory_a = 0, memory_b = 0;
++		/* Permanent diagnostic allocations stay retained even on GPU failure. */
++		bool allocated = kmem_alloc_contig(kernel_map, &memory_a, PAGE_SIZE, PAGE_MASK, 0, 0,
++		    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) == KERN_SUCCESS;
++		if (allocated) allocated = kmem_alloc_contig(kernel_map, &memory_b, PAGE_SIZE, PAGE_MASK, 0, 0,
++		    KMA_DATA | KMA_ZERO | KMA_PERMANENT, VM_KERN_MEMORY_IOKIT) == KERN_SUCCESS;
++		if (!allocated) { printf("SPES GPU: BUFFERS FAIL allocation\n"); touch_wr(gpu, 0x2020u, 3u); return; }
++		uint64_t physical[2] = {
++		    ptoa_64(pmap_find_phys(kernel_pmap, (addr64_t)memory_a)),
++		    ptoa_64(pmap_find_phys(kernel_pmap, (addr64_t)memory_b))};
++		volatile uint32_t *a = (volatile uint32_t *)memory_a, *b = (volatile uint32_t *)memory_b;
++		a[0] = 0xaaaaaaaa; b[0] = 0xbbbbbbbb;
++		to_memory(memory_a, PAGE_SIZE); to_memory(memory_b, PAGE_SIZE);
++		uint32_t token = spes_gpu_buffer_reserve(&pool, 8192);
++		bool ok = token && spes_gpu_buffer_map(&pool, token, l3_target, physical, 2, smmu, context);
++		struct spes_gpu_buffer *buf = spes_gpu_buffer_find(&pool, token);
++		uint32_t address = buf ? 0x10010000u + buf->first * 4096u : 0;
++		printf("SPES GPU: BUFFERS map=%u token=%u va=%#x pa=%#llx,%#llx\n",
++		    (unsigned)ok, token, address, physical[0], physical[1]);
++		if (ok) {
++			/* One virtual 8K buffer backed by two independently allocated CPU pages. */
++			ib[0] = 0x703d8003u; ib[1] = address; ib[2] = 0; ib[3] = 0xb0610001u;
++			ib[4] = 0x703d8003u; ib[5] = address + 4096u; ib[6] = 0; ib[7] = 0xb0610002u;
++			uint32_t commands[10] = {0x70bf8003u, 0x10001000u, 0, 8,
++			    0x70268000u, 0x70460004u, 4, 0x011f0024u, 0, 2048};
++			buf->fence = 2048;
++			/* A premature release must fail without removing the mappings. */
++			ok = !spes_gpu_buffer_free(&pool, token, 2047, l3_target, smmu, context) &&
++			    spes_gpu_ring_append(rb, &w, touch_rd(gpu, 0x2018u), commands, 10);
++			if (ok) {
++				__asm__ volatile ("dsb sy" ::: "memory");
++				touch_wr(gpu, 0x201cu, w);
++				ok = spes_gpu_retire(gpu, smmu, context, w, "BUFFERS_EXEC");
++				unsigned poll;
++				for (poll = 0; ok && poll < 1000; ++poll) {
++					__asm__ volatile ("dsb sy" ::: "memory");
++					if (scratch[9] == 2048) break;
++					touch_wait(1);
++				}
++				/* CPU has not touched these cache lines since the pre-submit clean. */
++				to_memory(memory_a, PAGE_SIZE); to_memory(memory_b, PAGE_SIZE);
++				ok = ok && poll < 1000 && a[0] == 0xb0610001u && b[0] == 0xb0610002u &&
++				    spes_gpu_retire(gpu, smmu, context, w, NULL);
++			}
++		}
++		bool released = ok && spes_gpu_buffer_free(&pool, token, scratch[9], l3_target, smmu, context);
++		uint32_t reuse = released ? spes_gpu_buffer_reserve(&pool, 8192) : 0;
++		struct spes_gpu_buffer *again = spes_gpu_buffer_find(&pool, reuse);
++		bool reused = again && reuse != token && 0x10010000u + again->first * 4096u == address &&
++		    !spes_gpu_buffer_find(&pool, token);
++		bool cleaned = reused && spes_gpu_buffer_free(&pool, reuse, 0, l3_target, smmu, context);
++		printf("SPES GPU: BUFFERS %s A=%#x B=%#x fence=%u released=%u reused=%u clean=%u poisoned=%u\n",
++		    ok && released && reused && cleaned ? "PASS" : "FAIL", a[0], b[0], scratch[9],
++		    (unsigned)released, (unsigned)reused, (unsigned)cleaned, (unsigned)pool.poisoned);
 +	}
 +	touch_wr(gpu, 0x2020u, 3u);
 +}

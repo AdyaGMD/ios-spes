@@ -162,7 +162,7 @@ class RemapTests(unittest.TestCase):
     def test_break_before_make_and_timeout(self):
         patch=(ROOT/'xnu/patches/0098-spes-glink-rpm-transport.patch').read_text()
         src='\n'.join(x[1:] for x in patch.splitlines() if x.startswith('+') and not x.startswith('+++'))
-        helper=src[src.index('static bool\nspes_gpu_tlb_sync'):src.index('static void\nspes_glink_rpm_probe')]
+        helper=src[src.index('static bool\nspes_gpu_tlb_sync'):src.index('/* Bounded VA ownership')]
         prefix='''#include <stdint.h>
 #include <stdbool.h>
 typedef uintptr_t vm_offset_t;
@@ -201,3 +201,78 @@ static void touch_wait(unsigned n) {waits+=n;}
                 self.assertEqual(dll.run(m,pte),1,(m,hex(pte)))
         self.assertIn('l3_target[16] == 0',src)
         self.assertIn('page_a[0] == expected_a && page_b[0] == expected_b',src)
+
+
+class BufferPoolTests(unittest.TestCase):
+    def test_allocator_ownership_mapping_and_failure(self):
+        patch=(ROOT/'xnu/patches/0098-spes-glink-rpm-transport.patch').read_text()
+        src='\n'.join(x[1:] for x in patch.splitlines() if x.startswith('+') and not x.startswith('+++'))
+        helper=src[src.index('/* Bounded VA ownership'):src.index('static void\nspes_glink_rpm_probe')]
+        prefix='''#include <stdint.h>
+#include <stdbool.h>
+#include <stddef.h>
+#include <assert.h>
+#include <string.h>
+typedef uintptr_t vm_offset_t;
+static bool sync_ok=true;
+static unsigned syncs;
+static void to_memory(vm_offset_t p, unsigned n) {(void)p;(void)n;}
+static bool spes_gpu_tlb_sync(vm_offset_t s,uint32_t c) {(void)s;(void)c;++syncs;return sync_ok;}
+'''
+        suffix=r'''
+int main(void) {
+ struct spes_gpu_pool p={0}; uint64_t table[512]={0};
+ uint64_t phys[2]={0x103000000ULL,0x104004000ULL};
+ assert(!spes_gpu_buffer_reserve(&p,0));
+ assert(!spes_gpu_buffer_reserve(&p,UINT64_MAX));
+ assert(!spes_gpu_buffer_reserve(&p,496*4096+1));
+ uint32_t a=spes_gpu_buffer_reserve(&p,8191), b=spes_gpu_buffer_reserve(&p,4096);
+ struct spes_gpu_buffer *ba=spes_gpu_buffer_find(&p,a), *bb=spes_gpu_buffer_find(&p,b);
+ assert(ba && bb && ba->pages==2 && ba->first==0 && bb->first==2);
+ assert(!spes_gpu_buffer_map(&p,a,table,phys,1,1,0));
+ uint64_t invalid[2]={phys[0],phys[1]+1};
+ assert(!spes_gpu_buffer_map(&p,a,table,invalid,2,1,0));
+ invalid[1]=1ULL<<36;
+ assert(!spes_gpu_buffer_map(&p,a,table,invalid,2,1,0));
+ assert(!table[16] && !table[17] && syncs==0);
+ assert(spes_gpu_buffer_map(&p,a,table,phys,2,1,0));
+ assert((table[16]&~4095ULL)==phys[0] && (table[17]&~4095ULL)==phys[1]);
+ assert((table[16]&4095)==0xe43);
+ assert(!spes_gpu_buffer_map(&p,a,table,phys,2,1,0));
+ ba->fence=10;
+ assert(!spes_gpu_buffer_free(&p,a,9,table,1,0));
+ assert(table[16] && p.used[0] && spes_gpu_buffer_find(&p,a));
+ assert(spes_gpu_buffer_free(&p,a,10,table,1,0));
+ assert(!table[16] && !table[17] && !p.used[0] && p.used[2]);
+ assert(!spes_gpu_buffer_free(&p,a,10,table,1,0));
+ uint32_t c=spes_gpu_buffer_reserve(&p,8192);
+ assert(c!=a && spes_gpu_buffer_find(&p,c)->first==0);
+ assert(!spes_gpu_buffer_find(&p,a));
+ assert(spes_gpu_buffer_free(&p,c,0,table,1,0));
+ assert(spes_gpu_buffer_free(&p,b,0,table,1,0));
+ uint32_t whole=spes_gpu_buffer_reserve(&p,496*4096);
+ assert(whole && !spes_gpu_buffer_reserve(&p,1));
+ assert(spes_gpu_buffer_free(&p,whole,0,table,1,0));
+ for(unsigned i=0;i<32;++i)assert(spes_gpu_buffer_reserve(&p,1));
+ assert(!spes_gpu_buffer_reserve(&p,1));
+ memset(&p,0,sizeof(p)); p.next_token=UINT32_MAX;
+ assert(!spes_gpu_buffer_reserve(&p,4096));
+ memset(&p,0,sizeof(p));
+ a=spes_gpu_buffer_reserve(&p,8192);sync_ok=false;
+ assert(!spes_gpu_buffer_map(&p,a,table,phys,2,1,0));
+ assert(p.poisoned && p.used[0] && spes_gpu_buffer_find(&p,a));
+ assert(!spes_gpu_buffer_free(&p,a,100,table,1,0));
+ assert(!spes_gpu_buffer_reserve(&p,1));
+ memset(&p,0,sizeof(p));memset(table,0,sizeof(table));sync_ok=true;
+ a=spes_gpu_buffer_reserve(&p,8192);
+ assert(spes_gpu_buffer_map(&p,a,table,phys,2,1,0));sync_ok=false;
+ assert(!spes_gpu_buffer_free(&p,a,0,table,1,0));
+ assert(p.poisoned && p.used[0] && spes_gpu_buffer_find(&p,a));
+ assert(!table[16] && !table[17]);
+ return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as d:
+            c=Path(d)/'pool.c';exe=Path(d)/'pool';c.write_text(prefix+helper+suffix)
+            subprocess.run(['clang','-Wall','-Wextra','-Werror','-fsanitize=address,undefined',str(c),'-o',str(exe)],check=True,capture_output=True)
+            subprocess.run([str(exe)],check=True,capture_output=True)

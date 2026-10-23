@@ -1,3 +1,25 @@
+# Active handoff — owned GPU buffer pool prepared, 2026-10-23
+
+- User reports remap test success (ec87cb3, CI39992181175); no photo/raw values
+  supplied. Record as user-confirmed, not independently observed counters.
+- Added bounded first-fit VA pool: 496 unused target-table pages, 32 handles,
+  monotonic tokens (no wrap), exact ownership and size/physical-address checks.
+  Maps trusted physical page arrays, 4K granule/36-bit PA; rejects occupied PTEs.
+  Free requires completed fence >= last use, then PTE clear and bounded TLB sync.
+  Any sync failure poisons pool and retains reservations/backing memory.
+- New gpu-buffers RAM profile: two independent permanent kernel-page allocations,
+  each contributes its first 4K to one 8K GPU buffer. Validates GPU writes to both,
+  completion fence2048, premature-free rejection, unmap, VA reuse with new token,
+  stale-handle rejection and cleanup. No userspace service/storage writes.
+- The pool is only ~1.94 MiB: not enough for real full-screen IOSurfaces. Requires
+  page-table growth/larger VA space before the eventual Mesa service. Current
+  helper assumes serialized caller, trusted completed fence and retained memory.
+- Ten host tests pass including actual C allocator/map/free under ASan/UBSan,
+  exhaustion, fragmentation/reuse, stale handles, bounds, malformed physical
+  pages, premature release and map/unmap timeout retention. Patch/shell checks pass.
+- Next: full CI, temporary gpu-buffers boot. Capture BUFFERS map/EXEC/final line.
+  Expected A=b0610001 B=b0610002 fence2048 released/reused/clean=1 poisoned=0.
+
 # Active hardware test — remap image accepted, 2026-10-23
 
 - Kernel ec87cb3; CI 39992181175 SUCCESS; downloaded checksum verified.

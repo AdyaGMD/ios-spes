@@ -100,3 +100,18 @@ The future service must also validate `getPhysicalSegment` length and alignment
 for every 4 KiB page; the reference `newBuffer` retrieves length but does not
 check that it covers the requested page. Partial mapping rollback must propagate
 invalidation failure instead of unconditionally freeing the VA and descriptor.
+
+## Owned-buffer prototype
+
+User reported the remap test passing on 2026-10-23; raw counters were not supplied.
+The next `gpu-buffers` diagnostic adds a bounded first-fit allocator over the
+496 unused leaves of the existing target table. It supports 32 live handles,
+rejects token wrap and invalid physical pages, and retains ownership if TLB sync
+fails. It requires a serialized caller and verified completion fences.
+
+The diagnostic maps two separately allocated kernel pages into one 8 KiB GPU
+buffer (one 4 KiB slice each), submits writes to both, and checks unmapping and
+address reuse with a new handle. Permanent backing allocations remain retained
+for the whole diagnostic boot, including failure. Hardware validation pending.
+This small pool is a prototype; full-screen surfaces need a larger VA window and
+page-table growth before exposing the HackiOS service.
