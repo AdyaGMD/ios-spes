@@ -156,3 +156,18 @@ profile checks memory/routing/firmware state and stops before SQE release.
 It does not issue commands or exercise the later rendering path. Setup testing
 is pending; the first normal startup write to SQE control will be 1 only after
 checks pass and a later test explicitly enables spesgpurun=1.
+
+## Command execution verified
+
+The subsequent gpu-setup photo confirmed clean setup with S2CR0–3=0x300,
+matching TTBR0 and firmware readback. The gpu-run photo, using the same d37e2d2
+kernel and CI39915037717, then showed ME_INIT retirement at 16/16 and MEM_WRITE
+retirement at 32/32, scratch0=0xcafe0001, and no CP or SMMU fault bits. These
+are the first verified command-execution results in this investigation.
+
+The diagnostic halts after scratch verification. ZAP, secure-mode transition,
+shader execution and rendering were not tested. Before extending it, fix the
+later success gates to require CP_INTERRUPT_STATUS=0 and the complete FSR fault
+mask; this observed run passes those stricter criteria already. The unreachable
+old render block must not be enabled unchanged: the engine has been halted and
+its local write index does not account for the second test's submitted tail.

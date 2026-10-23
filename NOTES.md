@@ -1,3 +1,26 @@
+# Verified milestone — GPU ME_INIT and scratch write, 2026-10-23
+
+- User photo of gpu-run image (kernel d37e2d2, CI39915037717; image hash below)
+  confirms real CP execution, not just setup or heartbeat:
+  - Post-unhalt1: int=0, HW_FAULT=0, INT0=0, RBBM=1, SQE=1;
+    GFSR=0, FSR=0x400. SQE debug0–3=0x50,0,0x812,0x4.
+  - ME_INIT: RPTR=16/WPTR=16, adv=1, ok=1, poll=0, RBBM=1;
+    CP int/HW_FAULT/INT0/GFSR all0, FSR=0x400 (no fault bits).
+  - MEM_WRITE: RPTR=32/WPTR=32, adv=1, ok=1, poll=0, RBBM=1;
+    CP int/HW_FAULT/INT0/GFSR all0; scratch0=0xcafe0001, match=1.
+  - Diagnostic reports verified and then halts; no ZAP/render code executed.
+- This validates SQE firmware execution, ring consumption and the tested GPU
+  memory translation/write path. It does NOT validate shaders, GPU rendering,
+  Metal/IOSurface integration, or accelerated SpringBoard. UI speed unchanged.
+- Next concrete work: preserve this working image; tighten later success gates
+  to include CP interrupt status and complete FSR mask; introduce a separate
+  opt-in ZAP/secure-mode test using the known-working ring, without reinitializing
+  or halting it between stages. Require authentication results and command
+  retirement before any framebuffer/shader test. Do not simply remove the old
+  return: stale unreachable render code reuses old WPTR and follows a halted SQE.
+- README updated with the hardware-backed milestone. No device action or new CI
+  run was performed in response to this success photo.
+
 # Active hardware test — execution image accepted, 2026-10-23
 
 - gpu-run profile committed as 56a0ecd, using unchanged d37e2d2 kernel from

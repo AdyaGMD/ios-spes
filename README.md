@@ -5,16 +5,34 @@ to **Redmi Note 11 (`spes`, SM6225 / Snapdragon 680)**. Target handset: 6 GB
 physical RAM, unlocked bootloader. The Android “+2 GB” expansion is not RAM
 available to this kernel.
 
-**Status (2026-10-21): iOS 16.7.16 boots to its interface on spes.**
+**Status (2026-10-23): iOS 16.7.16 boots to its interface on spes.**
 The user confirmed the UI, touchscreen and volume buttons on the test handset.
-Startup and interaction are very slow. The current build uses one Gold CPU;
-GPU acceleration and Wi-Fi are not working. Additional CPUs and the power
-button remain unverified. This is an experimental port, not a daily-use ROM.
+Startup and interaction are very slow. The verified GPU diagnostic uses one Gold
+CPU. GPU acceleration of the iOS interface and Wi-Fi are not working; additional
+CPUs and the power button remain unverified here. This is an experimental port, not a daily-use ROM.
 
 The iOS HFS+ root is installed in the existing `userdata` partition after
 explicit approval to erase Android data. Boot images are still loaded with
 `fastboot boot`; bootloaders, recovery, modem and persist are preserved.
 Apple filesystem images and device-specific dumps are not distributed here.
+
+## GPU bring-up milestone (2026-10-23)
+
+The Adreno 610 command processor executes commands on the test handset:
+`CP_ME_INIT` retires at RPTR/WPTR `16/16`, followed by `CP_MEM_WRITE` at `32/32`.
+The GPU writes the expected `0xcafe0001` to its reserved scratch buffer, with
+zero CP errors and zero SMMU fault bits. This is a RAM-only diagnostic using
+kernel `d37e2d2` from [CI 39915037717](https://github.com/AdyaGMD/ios-spes/actions/runs/39915037717).
+
+Paired tests isolated the early `CP_SQE_CNTL=3` write as the trigger for the
+previous pre-setup `int=0x80` error in this boot state. Removing that write and
+correcting register addresses allowed the command test to pass. See the
+[A610 audit](docs/SPES-GPU-A610-AUDIT-20261023.md) for evidence and limitations.
+
+Shaders, rendering and iOS graphics acceleration remain unverified. The test
+halts after the scratch write; it does not draw or accelerate the interface.
+The `gpu-control`, `gpu-halt`, `gpu-setup` and `gpu-run` profiles in
+`tools/build-spes-diagnostic.sh` retain the staged diagnostics.
 
 ## Changes
 
@@ -83,7 +101,7 @@ The tool intentionally refuses it. No recovery image is supplied in this reposit
 ## Build preparation
 
 Build XNU with `.github/workflows/xnu.yml` in your own fork (manual dispatch).
-It retains the SWEET machine name and applies patches 0001–0096. Download the
+It retains the SWEET machine name and applies the numbered patches in `xnu/patches`. Download the
 `xnu-kernel` artifact into `xnu/out`. The [first corrected kernel build passed](https://github.com/AdyaGMD/ios-spes/actions/runs/39273597179) at source commit `7f915db`.
 
 The shim needs an AArch64 GNU toolchain and an executable AOSP `mkbootimg`.
