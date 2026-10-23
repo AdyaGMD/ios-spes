@@ -1,3 +1,15 @@
+# Active hardware test — execution image accepted, 2026-10-23
+
+- gpu-run profile committed as 56a0ecd, using unchanged d37e2d2 kernel from
+  successful CI39915037717. Image shim/out/spes-gpu-run.img SHA256
+  `a81a195305b448dc6b12f740e6c82259e8756b90c678d26d57040aef618a5a1a`. Image hash and RAM-only/run-mode flags verified.
+- User confirmed Fastboot; product spes checked. Temporary boot accepted:
+  send 0.414 s, boot 0.288 s, total 0.706 s. No partition flashing.
+- Awaiting photo of Post-unhalt / Checkpoint4A and4B. Require clean CP status,
+  exact ring retirement and scratch0=0xcafe0001 before claiming execution works.
+  Bootloader acceptance alone proves none of these. No rendering/UI acceleration
+  is attempted by the reachable diagnostic path.
+
 # Active handoff — setup verified on hardware, 2026-10-23
 
 - User photo confirms `setup verified; STOP before SQE release (no packets)`.
