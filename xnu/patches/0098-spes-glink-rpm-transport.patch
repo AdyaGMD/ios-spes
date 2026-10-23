@@ -1037,7 +1037,7 @@ index 7dd8949..2c09d18 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +684,1248 @@ spes_gpu_power_probe(void)
+@@ -677,6 +684,1292 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -2278,15 +2278,59 @@ index 7dd8949..2c09d18 100644
 +	for (unsigned row = 0; row < 16; ++row)
 +		for (unsigned px = 0; px < 64; ++px)
 +			if (fb_test[(360u + row) * 1080u + 64u + px] == color) ++matched;
-+	touch_wr(gpu, 0x2020u, 3u);
 +	printf("SPES GPU: framebuffer %s pixels=%u/1024 color=%#x (CP writes, no shaders)\n",
 +	    display_retired && matched == 1024 ? "PASS" : "FAIL", matched, color);
++	int bridge_test = 0;
++	(void)PE_parse_boot_argn("spesgpuib", &bridge_test, sizeof(bridge_test));
++	if (!display_retired || matched != 1024 || bridge_test != 1) {
++		touch_wr(gpu, 0x2020u, 3u);
++		return;
++	}
++	/* HackiOS redwood_gpu_submit: indirect buffer then CACHE_FLUSH_TS fence.
++	 * Keep the proven A610 setup. IB VA 0x10001000 maps reserved DMA +0xd000.
++	 * No user mappings or arbitrary addresses are accepted by this test. */
++	volatile uint32_t *ib = (volatile uint32_t *)(gpu_dma_va + 0xd000u);
++	scratch[8] = 0;
++	scratch[9] = 0;
++	/* BEGIN IB PACKETS */
++	ib[0] = 0x703d8003u;
++	ib[1] = 0x011f0020u;
++	ib[2] = 0u;
++	ib[3] = 0x1b610001u;
++	rb[w++] = 0x70bf8003u; /* CP_INDIRECT_BUFFER, 3 payload words */
++	rb[w++] = 0x10001000u;
++	rb[w++] = 0u;
++	rb[w++] = 4u;
++	rb[w++] = 0x70268000u; /* CP_WAIT_FOR_IDLE, no payload */
++	rb[w++] = 0x70460004u; /* CP_EVENT_WRITE, 4 payload words */
++	rb[w++] = 0x04u;       /* A6xx CACHE_FLUSH_TS, as in HackiOS */
++	rb[w++] = 0x011f0024u;
++	rb[w++] = 0u;
++	rb[w++] = 1u;
++	/* END IB PACKETS */
++	__asm__ volatile ("dsb sy" ::: "memory");
++	touch_wr(gpu, 0x201cu, w);
++	bool ib_retired = spes_gpu_retire(gpu, smmu, context, w, "INDIRECT_BUFFER");
++	unsigned fence_poll;
++	for (fence_poll = 0; ib_retired && fence_poll < 1000; ++fence_poll) {
++		__asm__ volatile ("dsb sy" ::: "memory");
++		if (scratch[9] == 1u) break;
++		if (touch_rd(gpu, 0x208cu) || touch_rd(gpu, 0x2084u) ||
++		    touch_rd(smmu, 0x48u) || (touch_rd(smmu, context + 0x58u) & 0xc00001feu)) break;
++		touch_wait(1);
++	}
++	uint32_t ib_value = scratch[8], fence_value = scratch[9];
++	bool fence_clean = spes_gpu_retire(gpu, smmu, context, w, "FENCE_STATUS");
++	touch_wr(gpu, 0x2020u, 3u);
++	printf("SPES GPU: IB/FENCE %s data=%#x fence=%u poll=%u (no userspace service yet)\n",
++	    ib_retired && fence_clean && ib_value == 0x1b610001u && fence_value == 1u ? "PASS" : "FAIL",
++	    ib_value, fence_value, fence_poll);
 +}
 +
  static void
  touch_thread(void *arg, wait_result_t result)
  {
-@@ -704,6 +1953,7 @@ touch_thread(void *arg, wait_result_t result)
+@@ -704,6 +1997,7 @@ touch_thread(void *arg, wait_result_t result)
  		goto out;
  	}
  	spes_gpu_power_probe();

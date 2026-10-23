@@ -22,7 +22,8 @@ class GPUProbeTests(unittest.TestCase):
         code = '#include <stdint.h>\n#include <stddef.h>\n#define LOG_CP(tag) ((void)0)\n'
         code += 'void tables(uint64_t *buf) { uintptr_t pt_va=(uintptr_t)buf; uint64_t pt_pa=0x100000000ULL, rb_pa=0x5ca08000, sqe_pa=0x5ca00000, fence_pa=0x5ca0c000;\n' + tables + '\n}\n'
         display = src[src.index('/* BEGIN DISPLAY PACKETS */'):src.index('/* END DISPLAY PACKETS */')]
-        code += 'unsigned packets(uint32_t *rb) { uint32_t color=0xff00ff00;\n' + init + '\nwhile(w<32) rb[w++]=0x70108000u;\n' + render + '\n' + display + '\nreturn w; }\n'
+        indirect = src[src.index('/* BEGIN IB PACKETS */'):src.index('/* END IB PACKETS */')]
+        code += 'unsigned packets(uint32_t *rb) { uint32_t color=0xff00ff00, ib[4];\n' + init + '\nwhile(w<32) rb[w++]=0x70108000u;\n' + render + '\n' + display + '\n' + indirect + '\n(void)ib; return w; }\n'
         cls.tmp = tempfile.TemporaryDirectory()
         c = Path(cls.tmp.name)/'probe.c'; lib=Path(cls.tmp.name)/'probe.dylib'
         c.write_text(code)
@@ -67,14 +68,14 @@ class GPUProbeTests(unittest.TestCase):
                 self.assertLess(pa,0x100008000)
                 table=(pa-0x100000000)//8
         for va,pa in [(0x1000000,0x5ca08000),(0x1100000,0x5ca00000),
-                      (0x11f0010,0x5ca0c010),(0x5c069000,0x5c069000),
+                      (0x11f0010,0x5ca0c010),(0x10001000,0x5ca0d000),(0x11f0024,0x5ca0c024),(0x5c069000,0x5c069000),
                       (0x5ca0ffff,0x5ca0ffff)]:
             self.assertEqual(walk(va),pa,hex(va))
         self.assertIsNone(walk(0x5ca10000),'must not expose DMA memory beyond allocation')
 
     def test_display_packets_stay_in_ring_and_mapped_framebuffer(self):
         buf=(ctypes.c_uint32*2048)(); count=self.lib.packets(buf)
-        self.assertEqual(count, 32+2+16*67)
+        self.assertEqual(count, 32+2+16*67+10)
         pos=34
         for row in range(16):
             self.assertEqual((buf[pos]>>16)&0x7f,0x3d)
@@ -117,3 +118,9 @@ static uint32_t touch_rd(vm_offset_t base, uint32_t off) {
             dll=ctypes.CDLL(str(lib));dll.run.argtypes=[ctypes.c_int]
             self.assertEqual(dll.run(0),1) # FSR format bit alone is not a fault
             for fault in range(1,7):self.assertEqual(dll.run(fault),0,fault)
+
+    def test_indirect_submission_and_fence_layout(self):
+        buf=(ctypes.c_uint32*2048)(); count=self.lib.packets(buf)
+        start=32+2+16*67
+        self.assertEqual(list(buf[start:count]), [0x70bf8003,0x10001000,0,4,
+            0x70268000,0x70460004,4,0x11f0024,0,1])

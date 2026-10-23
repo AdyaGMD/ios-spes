@@ -1,3 +1,23 @@
+# Active handoff — HackiOS submission primitive, 2026-10-23
+
+- Continuing explicit request to reuse oosexgang/hackios-xnu-kernel for iOS GPU
+  acceleration. Kernel reference main is still8e611870; see
+  docs/SPES-HACKIOS-GRAPHICS.md for source pins and concrete integration gaps.
+- Confirmed kernel service + redwood-drm + Mesa/EAGL route. SweetSurface layout
+  differs materially (separate state vs one-page prefix). Full driver also needs
+  dynamic 4K GPU mappings, buffer lifetime, persistent ring/fences and A610 params.
+  None of those are enabled in iOS yet; framebuffer CP writes are not rendering.
+- Added opt-in gpu-bridge test borrowing the known HackiOS IB/fence submission
+  sequence while retaining verified A610 setup. Executes 4-word indirect buffer
+  in reserved DMA+0xd000, writes marker0x1b610001 then CACHE_FLUSH_TS fence1.
+  Continues tail1106→1116, requires clean retirement and marker/fence readback,
+  halts afterward. Uses no arbitrary userspace pointers or storage writes.
+- Seven GPU host tests pass; shell syntax/patch formatting checks pass. CI and
+  hardware result pending. Preserve all previously verified images.
+- Next: temporary gpu-bridge boot and capture INDIRECT_BUFFER/FENCE_STATUS and
+  IB/FENCE lines. Then implement dynamic allocation/service adaptation; test
+  standalone Mesa before installing anything into the iOS window server.
+
 # Verified milestone — All three GPU stages succeeded on hardware, 2026-10-23
 
 - User confirmed physical silicon execution of all three stages on handset:
