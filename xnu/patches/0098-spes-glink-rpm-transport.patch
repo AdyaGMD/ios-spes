@@ -1037,7 +1037,7 @@ index 7dd8949..2c09d18 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +684,1269 @@ spes_gpu_power_probe(void)
+@@ -677,6 +684,1248 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -1207,6 +1207,29 @@ index 7dd8949..2c09d18 100644
 +		__asm__ volatile ("dc civac, %0" : : "r" (line));
 +	}
 +	__asm__ volatile ("dsb sy" ::: "memory");
++}
++
++static bool
++spes_gpu_retire(vm_offset_t gpu, vm_offset_t smmu, uint32_t context,
++    uint32_t tail, const char *stage)
++{
++	uint32_t rp = 0, irq = 0, hw = 0, irq0 = 0, gf = 0, fs = 0;
++	bool ok = false;
++	unsigned n;
++	for (n = 0; n < 1000; ++n) {
++		rp = touch_rd(gpu, 0x2018u);
++		irq = touch_rd(gpu, 0x208cu);
++		hw = touch_rd(gpu, 0x2084u);
++		irq0 = touch_rd(gpu, 0x804u);
++		gf = touch_rd(smmu, 0x48u);
++		fs = touch_rd(smmu, context + 0x58u);
++		if (irq || hw || (irq0 & 0x31c002c2u) || gf || (fs & 0xc00001feu)) break;
++		if (rp == tail) { ok = true; break; }
++		touch_wait(1);
++	}
++	printf("SPES GPU: %s %s rptr=%u wptr=%u int=%#x fault=%#x int0=%#x GFSR=%#x FSR=%#x poll=%u\n",
++	    stage, ok ? "PASS" : "FAIL", rp, tail, irq, hw, irq0, gf, fs, n);
++	return ok;
 +}
 +
 +static void
@@ -2051,8 +2074,8 @@ index 7dd8949..2c09d18 100644
 +		uint32_t pfs = touch_rd(smmu, context + 0x58u);
 +
 +		/* Break early on newly asserted hardware fault, error IRQ, or translation fault */
-+		if (pf != 0 || ((pi0 & ~cp1_rbbm_int) & 0x31c002c2u) != 0 ||
-+		    pgf != 0 || (pfs & 0xc00000feu) != 0) {
++		if (pf != 0 || touch_rd(gpu, 0x208cu) != 0 || ((pi0 & ~cp1_rbbm_int) & 0x31c002c2u) != 0 ||
++		    pgf != 0 || (pfs & 0xc00001feu) != 0) {
 +			break;
 +		}
 +		if (rptr_init > 0) {
@@ -2069,7 +2092,7 @@ index 7dd8949..2c09d18 100644
 +	rbbm_status         = touch_rd(gpu, 0x840u);
 +	uint32_t smmu_gfsr_4a = touch_rd(smmu, 0x48u);
 +	uint32_t smmu_fsr_4a  = touch_rd(smmu, context + 0x58u);
-+	bool smmu_fault_4a    = (smmu_gfsr_4a != 0) || ((smmu_fsr_4a & 0xc00000feu) != 0);
++	bool smmu_fault_4a    = (smmu_gfsr_4a != 0) || ((smmu_fsr_4a & 0xc00001feu) != 0);
 +	bool int0_new_err_4a  = ((cp4a_int0 & ~cp1_rbbm_int) & 0x31c002c2u) != 0;
 +
 +	printf("SPES GPU: 27b. Checkpoint 4A (CP_ME_INIT): rptr=%u / wptr=%u (adv=%d ok=%d poll=%d rbbm=%#x)\n",
@@ -2078,7 +2101,7 @@ index 7dd8949..2c09d18 100644
 +	    cp4a_fault, cp4a_int, cp4a_int0, smmu_gfsr_4a, smmu_fsr_4a, smmu_fault_4a, int0_new_err_4a);
 +
 +	/* Verify Stage A success before attempting Stage B (CP_MEM_WRITE) */
-+	if (!init_adv || rptr_init < w || cp4a_fault != 0 || int0_new_err_4a || smmu_fault_4a) {
++	if (!init_adv || rptr_init < w || cp4a_fault != 0 || cp4a_int != 0 || int0_new_err_4a || smmu_fault_4a) {
 +		touch_wr(gpu, 0x2020u, 3u); /* CP_SQE_CNTL = 3 (halt SQE) */
 +		printf("SPES GPU: 27d. Test 1 (CP_ME_INIT) FAILED; halted safely, skipping MEM_WRITE\n");
 +		return;
@@ -2114,8 +2137,8 @@ index 7dd8949..2c09d18 100644
 +		uint32_t pgf = touch_rd(smmu, 0x48u);
 +		uint32_t pfs = touch_rd(smmu, context + 0x58u);
 +
-+		if (pf != 0 || ((pi0 & ~cp1_rbbm_int) & 0x31c002c2u) != 0 ||
-+		    pgf != 0 || (pfs & 0xc00000feu) != 0) {
++		if (pf != 0 || touch_rd(gpu, 0x208cu) != 0 || ((pi0 & ~cp1_rbbm_int) & 0x31c002c2u) != 0 ||
++		    pgf != 0 || (pfs & 0xc00001feu) != 0) {
 +			break;
 +		}
 +		if (rptr_mem > w) {
@@ -2135,7 +2158,7 @@ index 7dd8949..2c09d18 100644
 +	uint32_t smmu_fsynr_4b= touch_rd(smmu, context + 0x68u);
 +	uint32_t smmu_far_hi_4b= touch_rd(smmu, context + 0x64u);
 +	uint32_t smmu_far_lo_4b= touch_rd(smmu, context + 0x60u);
-+	bool smmu_fault_4b    = (smmu_gfsr_4b != 0) || ((smmu_fsr_4b & 0xc00000feu) != 0);
++	bool smmu_fault_4b    = (smmu_gfsr_4b != 0) || ((smmu_fsr_4b & 0xc00001feu) != 0);
 +	bool int0_new_err_4b  = ((cp4b_int0 & ~cp1_rbbm_int) & 0x31c002c2u) != 0;
 +
 +	__asm__ volatile ("dsb sy" ::: "memory");
@@ -2149,19 +2172,17 @@ index 7dd8949..2c09d18 100644
 +	printf("SPES GPU: 28d. Checkpoint 4B SMMU: GFSR=%#x FSR=%#x (fault=%d) FSYNR=%#x FAR=%#x:%#x\n",
 +	    smmu_gfsr_4b, smmu_fsr_4b, smmu_fault_4b, smmu_fsynr_4b, smmu_far_hi_4b, smmu_far_lo_4b);
 +
-+	/* Halt safely; do not proceed to ZAP or rendering */
-+	touch_wr(gpu, 0x2020u, 3u); /* CP_SQE_CNTL = 3 */
-+	bool test2_ok = mem_adv && (rptr_mem >= w2) && (cp4b_fault == 0) &&
-+	                !int0_new_err_4b && !smmu_fault_4b && scratch_match;
-+
-+	if (test2_ok) {
-+		printf("SPES GPU: 29. SILICON VERIFIED: CP_ME_INIT + CP_MEM_WRITE verified (scratch0=%#x match=1, halted safely)\n",
-+		    scratch0);
-+	} else {
-+		printf("SPES GPU: 29. STOPPED: rptr=%u wptr=%u match=%d fault=%#x int0_err=%d smmu_err=%d (halted safely)\n",
-+		    rptr_mem, w2, scratch_match, cp4b_fault, int0_new_err_4b, smmu_fault_4b);
++	bool test2_ok = mem_adv && rptr_mem == w2 && cp4b_fault == 0 && cp4b_int == 0 &&
++	    !int0_new_err_4b && !smmu_fault_4b && scratch_match;
++	int display_test = 0;
++	(void)PE_parse_boot_argn("spesgpudisplay", &display_test, sizeof(display_test));
++	if (!test2_ok || display_test != 1) {
++		touch_wr(gpu, 0x2020u, 3u);
++		printf("SPES GPU: scratch test %s; STOP\n", test2_ok ? "PASS" : "FAIL");
++		return;
 +	}
-+	return;
++	/* Continue the live ring from the last submitted tail; never rewind it. */
++	w = w2;
 +	/* Allocate contiguous buffer for ZAP MDT metadata (8 KiB) */
 +	vm_offset_t mdt_va = 0;
 +	if (kmem_alloc_contig(kernel_map, &mdt_va, 8192, PAGE_MASK, 0, 0,
@@ -2199,115 +2220,73 @@ index 7dd8949..2c09d18 100644
 +	uint64_t pil_res = 0;
 +	uint64_t pil_init_st = spes_scm(0x42000000u | (0x02u << 8) | 0x01u, 2 | (2 << 6), 13, mdt_pa, 0, &pil_res);
 +	printf("SPES GPU: 25c. ZAP PIL_INIT_IMAGE: st=%#llx res=%#llx\n", pil_init_st, pil_res);
++	if (pil_init_st != 0 || pil_res != 0) {
++		touch_wr(gpu, 0x2020u, 3u);
++		printf("SPES GPU: PIL_INIT_IMAGE failed; STOP before secure-mode command\n");
++		return;
++	}
 +
 +	/* SCM PIL_MEM_SETUP (cmd 0x02, arginfo = 3) */
 +	uint64_t pil_mem_st = spes_scm(0x42000000u | (0x02u << 8) | 0x02u, 3, 13, zap_pa, zap_size, &pil_res);
 +	printf("SPES GPU: 25d. ZAP PIL_MEM_SETUP: st=%#llx res=%#llx (pa=%#llx)\n", pil_mem_st, pil_res, zap_pa);
++	if (pil_mem_st != 0 || pil_res != 0) {
++		touch_wr(gpu, 0x2020u, 3u);
++		printf("SPES GPU: PIL_MEM_SETUP failed; STOP before secure-mode command\n");
++		return;
++	}
 +
 +	/* SCM PIL_AUTH_RESET (cmd 0x05, arginfo = 1) */
 +	uint64_t pil_auth_st = spes_scm(0x42000000u | (0x02u << 8) | 0x05u, 1, 13, 0, 0, &pil_res);
 +	printf("SPES GPU: 25e. ZAP PIL_AUTH_RESET: st=%#llx res=%#llx\n", pil_auth_st, pil_res);
++	if (pil_auth_st != 0 || pil_res != 0) {
++		touch_wr(gpu, 0x2020u, 3u);
++		printf("SPES GPU: PIL_AUTH_RESET failed; STOP before secure-mode command\n");
++		return;
++	}
 +
-+	/* ================================================================
-+	 * STAGE 5: Exit Protected Mode & Execute GPU Render/DMA Commands
-+	 * ================================================================ */
-+	printf("SPES GPU: starting Stage 5 (draw commands & framebuffer render)...\n");
-+
-+	/* 1. CP_SET_SECURE_MODE (drop protected mode) */
++	/* 1. CP_SET_SECURE_MODE: authenticate ZAP first, then retire separately. */
 +	rb[w++] = 0x70e60001u;
-+	rb[w++] = 0x00000000u;
-+
-+	/* 2. CP_MEM_WRITE to Scratch VA 0x011f0000 (mapped to fence_pa!) */
-+	rb[w++] = 0x703d8006u;
-+	rb[w++] = 0x011f0000u;
-+	rb[w++] = 0x00000000u;
-+	rb[w++] = 0x11223344u;
-+	rb[w++] = 0x55667788u;
-+	rb[w++] = 0x99aabbccu;
-+	rb[w++] = 0xddeeff00u;
-+
-+	/* 3. CP_MEM_WRITE to Screen Framebuffer (0x5c069000: row 100, 32 green pixels) */
-+	rb[w++] = 0x703d8022u;
-+	rb[w++] = 0x5c069000u;
-+	rb[w++] = 0x00000000u;
-+	for (int px = 0; px < 32; px++) {
-+		rb[w++] = 0x00ff00ffu; /* Bright green test pixels (ARGB) */
-+	}
-+
-+	/* 4. CP_SCRATCH(2) sequence write (Type 4, reg 0x0885, count 1, parity bit 27) */
-+	rb[w++] = 0x48088501u;
-+	rb[w++] = 0xcafe0001u;
-+
-+	/* 5. CP_EVENT_WRITE Fence to 0x011f0010 (fence_pa + 16!) */
-+	rb[w++] = 0x70460004u;
-+	rb[w++] = 0x08000031u; /* CACHE_FLUSH_TS with write timestamp */
-+	rb[w++] = 0x011f0010u;
-+	rb[w++] = 0x00000000u;
-+	rb[w++] = 0xcafe0001u; /* Fence seqno marker */
-+
-+	/* 6. CP_NOP (Type 7, opcode 0x10, count 1) */
-+	rb[w++] = 0x70100001u;
-+	rb[w++] = 0xca11ab1eu;
-+
++	rb[w++] = 0u;
 +	__asm__ volatile ("dsb sy" ::: "memory");
-+
-+	/* Advance WPTR to kick execution */
 +	touch_wr(gpu, 0x201cu, w);
-+	__asm__ volatile ("dsb sy" ::: "memory");
-+	printf("SPES GPU: 28. RING SUBMITTED: wptr=%u\n", w);
-+
-+	/* Step 21: Poll RPTR for retirement */
-+	uint32_t curr_rptr = 0;
-+	uint32_t cp_hw_fault = 0;
-+	uint32_t cp_int_stat = 0;
-+	bool consumed = false;
-+	int poll_i = 0;
-+	uint32_t last_rptr = 0;
-+	for (poll_i = 0; poll_i < 1000; ++poll_i) {
-+		curr_rptr = touch_rd(gpu, 0x2018u);
-+		if (curr_rptr != last_rptr) {
-+			printf("SPES GPU: 28b. Ring progress: rptr=%u / wptr=%u (poll=%d)\n",
-+			    curr_rptr, w, poll_i);
-+			last_rptr = curr_rptr;
-+		}
-+		if (curr_rptr >= w) {
-+			consumed = true;
-+			break;
-+		}
-+		touch_wait(2);
++	if (!spes_gpu_retire(gpu, smmu, context, w, "SECURE_MODE")) {
++		touch_wr(gpu, 0x2020u, 3u);
++		return;
 +	}
-+	rbbm_status = touch_rd(gpu, 0x840u);
-+	cp_hw_fault = touch_rd(gpu, 0x2084u);
-+	cp_int_stat = touch_rd(gpu, 0x208cu);
-+	uint32_t cp_scratch2 = touch_rd(gpu, 0x2214u);
-+	printf("SPES GPU: 29. RING RETIREMENT: rptr=%u / wptr=%u (consumed=%d poll=%d rbbm=%#x fault=%#x int=%#x scratch2=%#x)\n",
-+	    curr_rptr, w, consumed, poll_i, rbbm_status, cp_hw_fault, cp_int_stat, cp_scratch2);
++	printf("SPES GPU: secure-mode command retired cleanly\n");
 +
-+	/* Step 22: Verify GPU writes */
++	/* First display test is CP memory writes, NOT shader/raster rendering.
++	 * 64x16 pixels at x=64,y=360 fits the already-mapped first 2 MiB.
++	 * 16 packets of 67 dwords + existing tail fit the 2048-dword ring. */
++	vm_offset_t fb_test_va = ml_io_map(0x5c000000u, 0x200000u);
++	if (!fb_test_va) { touch_wr(gpu, 0x2020u, 3u); return; }
++	volatile uint32_t *fb_test = (volatile uint32_t *)fb_test_va;
++	uint32_t color = fb_test[360u * 1080u + 64u] == 0xff00ff00u ? 0xffff00ffu : 0xff00ff00u;
++	/* BEGIN DISPLAY PACKETS */
++	for (unsigned row = 0; row < 16; ++row) {
++		rb[w++] = 0x703d8042u; /* MEM_WRITE: 2 address + 64 color words */
++		rb[w++] = 0x5c000000u + (360u + row) * 4320u + 64u * 4u;
++		rb[w++] = 0u;
++		for (unsigned px = 0; px < 64; ++px) rb[w++] = color;
++	}
++	/* END DISPLAY PACKETS */
 +	__asm__ volatile ("dsb sy" ::: "memory");
-+	uint32_t val0 = scratch[0];
-+	uint32_t val1 = scratch[1];
-+	uint32_t val2 = scratch[2];
-+	uint32_t val3 = scratch[3];
-+	uint32_t fence_val = scratch[4];
-+
-+	int match = (val0 == 0x11223344u && val1 == 0x55667788u &&
-+	             val2 == 0x99aabbccu && val3 == 0xddeeff00u);
-+	int fence_match = (fence_val == 0xcafe0001u);
-+
-+	printf("SPES GPU: 30. DRAM WRITE: [%#x, %#x, %#x, %#x] (match=%d)\n",
-+	    val0, val1, val2, val3, match);
-+	printf("SPES GPU: 30b. FENCE TS: %#x (match=%d)\n", fence_val, fence_match);
-+	printf("SPES GPU: result=%s (retired=%d data=%d fence=%d int=%#x fault=%#x)\n",
-+	    consumed && match && fence_match && !cp_int_stat && !cp_hw_fault ? "PASS" : "FAIL",
-+	    consumed, match, fence_match, cp_int_stat, cp_hw_fault);
-+	/* Haptics/audio/DSI are separate bring-up tasks, not GPU success evidence. */
++	touch_wr(gpu, 0x201cu, w);
++	bool display_retired = spes_gpu_retire(gpu, smmu, context, w, "FRAMEBUFFER");
++	__asm__ volatile ("dsb sy" ::: "memory");
++	unsigned matched = 0;
++	for (unsigned row = 0; row < 16; ++row)
++		for (unsigned px = 0; px < 64; ++px)
++			if (fb_test[(360u + row) * 1080u + 64u + px] == color) ++matched;
++	touch_wr(gpu, 0x2020u, 3u);
++	printf("SPES GPU: framebuffer %s pixels=%u/1024 color=%#x (CP writes, no shaders)\n",
++	    display_retired && matched == 1024 ? "PASS" : "FAIL", matched, color);
 +}
 +
  static void
  touch_thread(void *arg, wait_result_t result)
  {
-@@ -704,6 +1974,7 @@ touch_thread(void *arg, wait_result_t result)
+@@ -704,6 +1953,7 @@ touch_thread(void *arg, wait_result_t result)
  		goto out;
  	}
  	spes_gpu_power_probe();

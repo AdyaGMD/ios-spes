@@ -1,3 +1,27 @@
+# Active handoff — secure transition and framebuffer test prepared, 2026-10-23
+
+- User explicitly requested both next steps. Added opt-in gpu-display profile
+  (spesgpuhalt=0 spesgpurun=1 spesgpudisplay=1); gpu-run remains scratch-only.
+- Keeps verified ring alive and continues from w2=32. Requires scratch success
+  including CP_INTERRUPT_STATUS=0; all earlier polling uses full FSR fault mask.
+- Checks each PAS13 INIT_IMAGE/MEM_SETUP/AUTH_RESET transport and service result;
+  on any failure halts/returns, with no direct security-register fallback.
+- Submits SET_SECURE_MODE(0) separately; bounded helper requires exact retirement
+  and clean CP/HW/RBBM/SMMU status before framebuffer work.
+- Display test: CP_MEM_WRITE 64x16 rectangle at x64,y360 in existing mapped first
+  2 MiB of framebuffer. Chooses green/magenta different from first pixel, checks
+  all1024 pixels, halts. This is a GPU framebuffer-write test, NOT shader rendering
+  or UI acceleration. Ring ends at1106 dwords (<2048); no wrap/reinitialization.
+- Replaced old unreachable render block (bad tail/previously halted engine).
+  No new firmware artifacts added. Known-working gpu-run.img remains intact.
+- Six GPU host tests pass: actual packet/table constructors, parity/bounds,
+  display address/size checks, halt control modes, independent register constants,
+  and compiled retirement helper rejects timeouts/CP/HW/RBBM/SMMU faults while
+  accepting FSR format bit0x400. Packet test caught/fixed count-parity error.
+- Full kernel CI and device results pending. Next: gpu-display temporary boot,
+  capture PAS results, SECURE_MODE retirement, FRAMEBUFFER retirement/pixel count.
+  Only then decide on shader/raster work; don't claim rendering from CP writes.
+
 # Verified milestone — GPU ME_INIT and scratch write, 2026-10-23
 
 - User photo of gpu-run image (kernel d37e2d2, CI39915037717; image hash below)
