@@ -1,3 +1,17 @@
+# User-confirmed milestone — repeated GPU submission, 2026-10-23
+
+- User reports "success" for gpu-repeat kernel 7546dd5, CI 39953944022,
+  image SHA256 188f30e0740bbb30c5d7e9196fe461a778e784026db96b8a0ffeb8bd0d52d2de.
+- Record as user-confirmed pass; no new photo/raw counters supplied. Do not
+  present expected counts or fault registers as independently observed values.
+- The test's PASS gate requires 512 completions, at least two ring wraps,
+  matching per-submission markers/fences and clean retirement checks.
+  This covers serialized queue reuse; not concurrency, shaders or UI acceleration.
+- Next concrete action: implement opt-in map/remap diagnostic using reserved
+  scratch pages, break-before-make and bounded SMMU TLB sync. Check writes land
+  in the new backing page and old backing remains unchanged; retain proven
+  gpu-bridge/gpu-repeat images. No need to re-run these passed stages alone.
+
 # Active hardware test — repeated submission image accepted, 2026-10-23
 
 - Kernel 7546dd5, CI 39953944022 SUCCESS; downloaded kernel SHA verified.

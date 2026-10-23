@@ -66,7 +66,9 @@ Kernel 89f2b42, CI 39951466519. This is a prerequisite, not completion of the UI
 The repeat diagnostic intentionally supports one producer and one outstanding
 submission. It requires RPTR=tail before overwriting any ring words or IB memory,
 pads boundary gaps with CP_NOP, and retains the hardware read pointer across
-wrap. Passing this test will not validate concurrent submissions or fence wrap.
+wrap. User reported success on 2026-10-23 for kernel 7546dd5 / CI 39953944022;
+raw counters were not supplied. Its PASS gate requires 512 completions and at
+least two ring wraps. This does not validate concurrent submissions or fence wrap.
 
 The service adaptation must serialize allocation, mapping and submission under
 one lock initially. Buffer references and VA reservations must survive until the

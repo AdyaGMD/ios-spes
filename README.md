@@ -27,6 +27,8 @@ This was verified via temporary RAM-boot using kernel `426b3ad` ([CI 39918190004
 
 The subsequent `gpu-bridge` test (kernel `89f2b42`, [CI 39951466519](https://github.com/AdyaGMD/ios-spes/actions/runs/39951466519)) also passes on hardware: a HackiOS-style indirect command buffer writes `0x1b610001`, signals completion fence `1`, and retires at `1116/1116` with no reported GPU faults.
 
+The user also reports a successful `gpu-repeat` test (kernel `7546dd5`): its pass criteria require 512 serialized submissions, at least two ring wraps, and matching data and completion fences. Raw counters were not captured.
+
 Shader rendering and iOS UI acceleration are still unimplemented. The next integration work covers persistent submission, dynamic GPU mappings and the HackiOS Mesa/IOSurface interface. See the [A610 audit](docs/SPES-GPU-A610-AUDIT-20261023.md) for architectural evidence and register details.
 
 ## Changes
