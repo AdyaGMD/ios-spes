@@ -1,3 +1,11 @@
+# Active hardware test — secure transition & framebuffer test booted, 2026-10-23
+
+- gpu-display profile built from kernel 426b3ad (CI 39918190004, commit "fix: keep console quiet until GPU pixel readback completes").
+- Image shim/out/spes-gpu-display.img SHA256 `4eaa64232d83b71a5bcdf8a2190696147d77d5151ea63f12ff5aef649949f430`.
+- Fastboot device confirmed (product spes). Temporary RAM boot executed:
+  send 0.399 s, boot 0.287 s, total 0.691 s. No physical partitions flashed.
+- Awaiting screen output to capture PAS13 authentication results, SET_SECURE_MODE(0) retirement, and FRAMEBUFFER rectangle retirement/pixel match count.
+
 # Active handoff — secure transition and framebuffer test prepared, 2026-10-23
 
 - User explicitly requested both next steps. Added opt-in gpu-display profile
