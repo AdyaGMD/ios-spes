@@ -6,6 +6,9 @@ def main():
     repo = Path("/Users/adya/Documents/iospes")
     patch_path = repo / "xnu/patches/0098-spes-glink-rpm-transport.patch"
 
+    if "halt-test mode=" in patch_path.read_text():
+        raise SystemExit("Historical generator would discard the A610 audit fixes; edit 0098 directly.")
+
     # Get c095a44 version of patch as baseline
     patch_c095a44 = subprocess.check_output(
         ["git", "show", "c095a44:xnu/patches/0098-spes-glink-rpm-transport.patch"],
@@ -114,116 +117,123 @@ def main():
 \ttouch_wr(gpu, 0x2020u, 3u); /* Hold SQE halted while programming memory. */
 \t__asm__ volatile ("dsb sy" ::: "memory");
 
-\t/* Checkpoint 22h: Immediately after CP_SQE_CNTL = 3 */
-\tuint32_t cp2b_hw_fault = touch_rd(gpu, 0x2084u);
-\tuint32_t cp2b_int_stat = touch_rd(gpu, 0x208cu);
-\tuint32_t cp2b_rbbm_int = touch_rd(gpu, 0x804u);
-\tprintf("SPES GPU: 22h. CP-22h (Post-Halt): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x\\n",
-\t    cp2b_int_stat, cp2b_hw_fault, cp2b_rbbm_int,
-\t    touch_rd(gpu, 0x840u), touch_rd(gpu, 0x2020u));
+	/* Granular Bounded Read-Only In-Memory Polling Experiment:
+	 * Placed IMMEDIATELY after touch_wr(gpu, 0x2020u, 3u) and its memory barrier,
+	 * BEFORE any subsequent console output.
+	 */
+	struct cp_poll_entry {
+		uint32_t idx;
+		uint32_t int_stat;
+		uint32_t rbbm_stat;
+		uint32_t sqe_cntl;
+		uint32_t hw_fault;
+	};
+	struct cp_poll_entry poll_history[16];
+	unsigned poll_hist_cnt = 0;
+	uint32_t flip_poll = 0;
+	uint32_t flip_val = 0;
 
-\t/* Checkpoint 22b: preserved for continuity */
-\tprintf("SPES GPU: 22b. Checkpoint 2 (SQE halt 3): pre=[fault=%#x int=%#x int0=%#x] post=[fault=%#x int=%#x int0=%#x]\\n",
-\t    cp2a_hw_fault, cp2a_int_stat, cp2a_rbbm_int,
-\t    cp2b_hw_fault, cp2b_int_stat, cp2b_rbbm_int);
+	/* Sample 0: First instruction immediately after halt */
+	uint32_t cur_int   = touch_rd(gpu, 0x208cu);
+	uint32_t cur_rbbm  = touch_rd(gpu, 0x840u);
+	uint32_t cur_sqe   = touch_rd(gpu, 0x2020u);
+	uint32_t cur_fault = touch_rd(gpu, 0x2084u);
+	poll_history[poll_hist_cnt].idx = 0u;
+	poll_history[poll_hist_cnt].int_stat = cur_int;
+	poll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
+	poll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
+	poll_history[poll_hist_cnt].hw_fault = cur_fault;
+	poll_hist_cnt++;
+	uint32_t prev_int = cur_int;
 
-\t/* Granular Bounded Read-Only In-Memory Polling Experiment */
-\tstruct cp_poll_entry {
-\t\tuint32_t idx;
-\t\tuint32_t int_stat;
-\t\tuint32_t rbbm_stat;
-\t\tuint32_t sqe_cntl;
-\t\tuint32_t hw_fault;
-\t};
-\tstruct cp_poll_entry poll_history[16];
-\tunsigned poll_hist_cnt = 0;
-\tuint32_t flip_poll = 0;
-\tuint32_t flip_val = 0;
+	/* Phase 1: 5,000 tight polls without delay (~2-5 ms) */
+	for (unsigned p1 = 1; p1 <= 5000; ++p1) {
+		cur_int   = touch_rd(gpu, 0x208cu);
+		cur_rbbm  = touch_rd(gpu, 0x840u);
+		cur_sqe   = touch_rd(gpu, 0x2020u);
+		cur_fault = touch_rd(gpu, 0x2084u);
+		if (cur_int != prev_int) {
+			if (!flip_poll) {
+				flip_poll = p1;
+				flip_val  = cur_int;
+			}
+			prev_int = cur_int;
+			if (poll_hist_cnt < 16) {
+				poll_history[poll_hist_cnt].idx = p1;
+				poll_history[poll_hist_cnt].int_stat = cur_int;
+				poll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
+				poll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
+				poll_history[poll_hist_cnt].hw_fault = cur_fault;
+				poll_hist_cnt++;
+			}
+		} else if ((p1 == 1 || p1 == 10 || p1 == 100 || p1 == 1000 || p1 == 5000) && poll_hist_cnt < 16) {
+			poll_history[poll_hist_cnt].idx = p1;
+			poll_history[poll_hist_cnt].int_stat = cur_int;
+			poll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
+			poll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
+			poll_history[poll_hist_cnt].hw_fault = cur_fault;
+			poll_hist_cnt++;
+		}
+	}
 
-\t/* Sample 0: Immediately after 22b status read */
-\t__asm__ volatile ("dsb sy" ::: "memory");
-\tuint32_t cur_int   = touch_rd(gpu, 0x208cu);
-\tuint32_t cur_rbbm  = touch_rd(gpu, 0x840u);
-\tuint32_t cur_sqe   = touch_rd(gpu, 0x2020u);
-\tuint32_t cur_fault = touch_rd(gpu, 0x2084u);
-\tpoll_history[poll_hist_cnt].idx = 0u;
-\tpoll_history[poll_hist_cnt].int_stat = cur_int;
-\tpoll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
-\tpoll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
-\tpoll_history[poll_hist_cnt].hw_fault = cur_fault;
-\tpoll_hist_cnt++;
-\tuint32_t prev_int = cur_int;
+	/* Phase 2: 10 bounded 1ms polls (10 ms total) */
+	for (unsigned p2 = 1; p2 <= 10; ++p2) {
+		touch_wait(1);
+		cur_int   = touch_rd(gpu, 0x208cu);
+		cur_rbbm  = touch_rd(gpu, 0x840u);
+		cur_sqe   = touch_rd(gpu, 0x2020u);
+		cur_fault = touch_rd(gpu, 0x2084u);
+		if (cur_int != prev_int) {
+			if (!flip_poll) {
+				flip_poll = 5000 + p2;
+				flip_val  = cur_int;
+			}
+			prev_int = cur_int;
+			if (poll_hist_cnt < 16) {
+				poll_history[poll_hist_cnt].idx = 5000 + p2;
+				poll_history[poll_hist_cnt].int_stat = cur_int;
+				poll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
+				poll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
+				poll_history[poll_hist_cnt].hw_fault = cur_fault;
+				poll_hist_cnt++;
+			}
+		} else if ((p2 == 1 || p2 == 5 || p2 == 10) && poll_hist_cnt < 16) {
+			poll_history[poll_hist_cnt].idx = 5000 + p2;
+			poll_history[poll_hist_cnt].int_stat = cur_int;
+			poll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
+			poll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
+			poll_history[poll_hist_cnt].hw_fault = cur_fault;
+			poll_hist_cnt++;
+		}
+	}
 
-\t/* Phase 1: 5,000 tight polls without delay (~2-5 ms) */
-\tfor (unsigned p1 = 1; p1 <= 5000; ++p1) {
-\t\tcur_int   = touch_rd(gpu, 0x208cu);
-\t\tcur_rbbm  = touch_rd(gpu, 0x840u);
-\t\tcur_sqe   = touch_rd(gpu, 0x2020u);
-\t\tcur_fault = touch_rd(gpu, 0x2084u);
-\t\tif (cur_int != prev_int) {
-\t\t\tif (!flip_poll) {
-\t\t\t\tflip_poll = p1;
-\t\t\t\tflip_val  = cur_int;
-\t\t\t}
-\t\t\tprev_int = cur_int;
-\t\t\tif (poll_hist_cnt < 16) {
-\t\t\t\tpoll_history[poll_hist_cnt].idx = p1;
-\t\t\t\tpoll_history[poll_hist_cnt].int_stat = cur_int;
-\t\t\t\tpoll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
-\t\t\t\tpoll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
-\t\t\t\tpoll_history[poll_hist_cnt].hw_fault = cur_fault;
-\t\t\tpoll_hist_cnt++;
-\t\t\t}
-\t\t} else if ((p1 == 1 || p1 == 10 || p1 == 100 || p1 == 1000 || p1 == 5000) && poll_hist_cnt < 16) {
-\t\t\tpoll_history[poll_hist_cnt].idx = p1;
-\t\t\tpoll_history[poll_hist_cnt].int_stat = cur_int;
-\t\t\tpoll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
-\t\t\tpoll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
-\t\t\tpoll_history[poll_hist_cnt].hw_fault = cur_fault;
-\t\t\tpoll_hist_cnt++;
-\t\t}
-\t}
+	/* Checkpoint 22h & 22b status from sample 0 for continuity */
+	uint32_t cp2b_hw_fault = poll_history[0].hw_fault;
+	uint32_t cp2b_int_stat = poll_history[0].int_stat;
+	uint32_t cp2b_rbbm_int = touch_rd(gpu, 0x804u);
 
-\t/* Phase 2: 10 bounded 1ms polls (10 ms total) */
-\tfor (unsigned p2 = 1; p2 <= 10; ++p2) {
-\t\ttouch_wait(1);
-\t\tcur_int   = touch_rd(gpu, 0x208cu);
-\t\tcur_rbbm  = touch_rd(gpu, 0x840u);
-\t\tcur_sqe   = touch_rd(gpu, 0x2020u);
-\t\tcur_fault = touch_rd(gpu, 0x2084u);
-\t\tif (cur_int != prev_int) {
-\t\t\tif (!flip_poll) {
-\t\t\t\tflip_poll = 5000 + p2;
-\t\t\t\tflip_val  = cur_int;
-\t\t\t}
-\t\t\tprev_int = cur_int;
-\t\t\tif (poll_hist_cnt < 16) {
-\t\t\t\tpoll_history[poll_hist_cnt].idx = 5000 + p2;
-\t\t\t\tpoll_history[poll_hist_cnt].int_stat = cur_int;
-\t\t\t\tpoll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
-\t\t\t\tpoll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
-\t\t\t\tpoll_history[poll_hist_cnt].hw_fault = cur_fault;
-\t\t\t\tpoll_hist_cnt++;
-\t\t\t}
-\t\t} else if ((p2 == 1 || p2 == 5 || p2 == 10) && poll_hist_cnt < 16) {
-\t\t\tpoll_history[poll_hist_cnt].idx = 5000 + p2;
-\t\t\tpoll_history[poll_hist_cnt].int_stat = cur_int;
-\t\t\tpoll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
-\t\t\tpoll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
-\t\t\tpoll_history[poll_hist_cnt].hw_fault = cur_fault;
-\t\t\tpoll_hist_cnt++;
-\t\t}
-\t}
+	/* Print Checkpoint 22h */
+	printf("SPES GPU: 22h. CP-22h (Post-Halt): int=%#x fault=%#x int0=%#x rbbm=%#x sqe=%#x\\n",
+	    cp2b_int_stat, cp2b_hw_fault, cp2b_rbbm_int,
+	    poll_history[0].rbbm_stat, poll_history[0].sqe_cntl);
 
-\t/* Print the recorded trace afterward */
-\tprintf("SPES GPU: 22b-poll. Summary: flip_at=%u (val=%#x) samples=%u\\n",
-\t    flip_poll, flip_val, poll_hist_cnt);
-\tfor (unsigned pi = 0; pi < poll_hist_cnt; pi++) {
-\t\tprintf("SPES GPU: 22b-p[%u]: poll=%u int=%#x rbbm=%#x sqe=%#x fault=%#x\\n",
-\t\t    pi, poll_history[pi].idx, poll_history[pi].int_stat,
-\t\t    poll_history[pi].rbbm_stat, poll_history[pi].sqe_cntl,
-\t\t    poll_history[pi].hw_fault);
-\t}
+	/* Print Checkpoint 22b (preserved for continuity) */
+	printf("SPES GPU: 22b. Checkpoint 2 (SQE halt 3): pre=[fault=%#x int=%#x int0=%#x] post=[fault=%#x int=%#x int0=%#x]\\n",
+	    cp2a_hw_fault, cp2a_int_stat, cp2a_rbbm_int,
+	    cp2b_hw_fault, cp2b_int_stat, cp2b_rbbm_int);
+
+	/* Print the recorded trace afterward */
+	printf("SPES GPU: 22b-poll. Summary: flip_at=%u (val=%#x) samples=%u\\n",
+	    flip_poll, flip_val, poll_hist_cnt);
+	for (unsigned pi = 0; pi < poll_hist_cnt; pi++) {
+		printf("SPES GPU: 22b-p[%u]: poll=%u int=%#x rbbm=%#x sqe=%#x fault=%#x\\n",
+		    pi, poll_history[pi].idx, poll_history[pi].int_stat,
+		    poll_history[pi].rbbm_stat, poll_history[pi].sqe_cntl,
+		    poll_history[pi].hw_fault);
+	}
+
+	/* Pause 2 seconds so the results can be clearly photographed before additional logs scroll */
+	touch_wait(2000);
 
 \t/* Checkpoint 1 (23-0): Before SMMU initialization begins */
 \tLOG_CP("23-0 (Pre-SMMU)");

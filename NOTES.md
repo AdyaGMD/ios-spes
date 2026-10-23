@@ -1,3 +1,24 @@
+# Active handoff — A610 corrections and controlled halt diagnostic, 2026-10-23
+
+- Implemented the verified byte-offset corrections from the source audit; removed
+  unsupported APRIV write and corrected NO_UPDATE terminology. Full startup now
+  rejects CP interrupt errors as well as HW_FAULT after unhalt.
+- Replaced the pending malformed printf/poll block with equal 10 ms pre/post
+  sampling, buffered until after acquisition. `spesgpuhalt=1` (default) observes
+  without SQE writes; `=2` writes SQE_CNTL=3 between windows. Both return BEFORE
+  SMMU setup and command submission. `=0` retains opt-in legacy startup; untested.
+- New build profiles `gpu-control` and `gpu-halt` produce distinct RAM-only
+  images with no storage writes, touch or keys. Both use the same kernel.
+- Preserved historical generator edits, fixed string escaping, and added a guard
+  against regenerating 0098 from c095a44 over the reviewed changes. Edit 0098 directly.
+- Local validation: 4 tests pass (table/packet execution, independent register
+  constants, compiled mocked diagnostic exercising control/halt/invalid modes).
+  Diagnostic confirms 20 ms requested waits, zero/one expected SQE write, and no
+  fallthrough. Shell/Python syntax, patch parsing and diff whitespace checks pass.
+- CI and hardware results pending; no GPU success claimed. First hardware action:
+  temporary boot `spes-gpu-control.img`, capture both phases, then a fresh boot of
+  `spes-gpu-halt.img` for comparison. Do not change reset or SMMU to chase 0x80 yet.
+
 # Active handoff — A610 source audit, 2026-10-23
 
 - User supplied another GPT recommendation; audited HEAD `e80d78a` plus existing

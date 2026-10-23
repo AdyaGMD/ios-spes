@@ -2,7 +2,7 @@
 # Build an entirely RAM-backed XNU/PID-1 diagnostic image. Never flashes a phone.
 set -euo pipefail
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
-    echo "usage: $0 KERNEL LIVE_FDT [baseline|storage|touch|gpu|wifi]" >&2
+    echo "usage: $0 KERNEL LIVE_FDT [baseline|storage|touch|gpu|gpu-control|gpu-halt|wifi]" >&2
     exit 2
 fi
 profile=${3:-baseline}
@@ -14,6 +14,10 @@ case "$profile" in
     storage) extra=' spesufsprobe=1'; name=spes-storage-probe ;;
     touch) extra=' spestouchprobe=1 sweettouchdelay=5 sweettouchdiag=3'; touch=1; name=spes-touch-probe ;;
     gpu) extra=' spestouchprobe=1 spesgpuprobe=1 spesrpmprobe=1 sweettouchdelay=5 sweettouchdiag=3'; touch=1; name=spes-gpu-probe ;;
+    gpu-control|gpu-halt)
+        mode=1; [ "$profile" != gpu-halt ] || mode=2
+        extra=" spesgpuprobe=1 spesrpmprobe=1 spesgpuhalt=$mode"
+        name="spes-$profile" ;;
     wifi) extra=' spestouchprobe=1 modem=1 wifi=1 modem_watch=30 sweettouchdelay=5'; touch=1; name=spes-wifi-probe ;;
     *) echo "Unknown diagnostic profile: $profile" >&2; exit 2 ;;
 esac
