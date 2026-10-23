@@ -1,3 +1,22 @@
+# Active handoff — A610 source audit, 2026-10-23
+
+- User supplied another GPT recommendation; audited HEAD `e80d78a` plus existing
+  dirty 0098 and generator against pinned upstream Linux and phone driver headers.
+- See `docs/SPES-GPU-A610-AUDIT-20261023.md` for offsets, sequence, and next test.
+- Confirmed wrong byte addresses: GBIF_HALT, PC_DBG_ECO_CNTL, performance control/
+  mask, UCHE_FILTER_CNTL (currently writes GMEM range), interrupt mask. TRAP and
+  WRITE_THRU labels are swapped but currently use equal values. APRIV is ungated
+  despite A610 lacking that capability in the phone driver.
+- Early halt causing int=0x80 remains a hypothesis. Linux normal startup has no
+  early halt; reset quirk is real. Current ME_INIT payload already matches Linux.
+- Existing uncommitted immediate-polling change has four malformed C printf
+  strings. Preserved both dirty files without edits; do not build them as-is.
+- No handset operation or CI run during this audit. GPU execution still unproven.
+  Next: source-backed address corrections and controlled early-halt/no-write
+  diagnostic, stopping before memory setup/submission in both cases.
+- Older entries below include superseded/unsupported root-cause claims; do not
+  treat them as proven hardware behavior. Build download directories remain untracked.
+
 # Stage 5 S2CR0 0x300 write attempt & 5-context bank diagnostic — 2026-10-22
 
 - **Revised Controlled Diagnostic (per GPT Review)**:
