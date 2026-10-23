@@ -3,8 +3,8 @@
 Kernel source inspected at `oosexgang/hackios-xnu-kernel` commit
 `8e61187098f2c26c5daee8f9f72b6416aa64b9ab` (remote main checked 2026-10-23).
 Local userland reference is `906425b75e02b4f99eb5d7bb1ef7c9583472d772`;
-remote main was `a79ff0772a3454fd1ef127e181e5b3bce6c9ce18`. Reconcile that
-userland update before importing/building its graphics libraries.
+remote main was `a79ff0772a3454fd1ef127e181e5b3bce6c9ce18`. Fetched and compared
+on 2026-10-23: only thermal, var-store and build changes; no graphics changes.
 
 ## Reusable path
 

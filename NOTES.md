@@ -1,3 +1,18 @@
+# Active hardware test — HackiOS IB/fence image accepted, 2026-10-23
+
+- Kernel commit 89f2b42; CI 39951466519 SUCCESS. Downloaded kernel checksum
+  verified at xnu/out-39951466519/kernel.development.sweet.
+- Built shim/out/spes-gpu-bridge.img; SHA256
+  `a93aaa78b59955a7cc21857ee5ec7fb96623a38f1bc37a1d5395747390864ee8`.
+  Verified RAM-root, storage writes/logging disabled and halt=0/run/display/ib=1.
+- User confirmed Fastboot; product spes rechecked. Temporary boot accepted:
+  send 0.402 s, boot 0.288 s, total 0.694 s. No partitions flashed.
+- Awaiting hardware photo: INDIRECT_BUFFER, FENCE_STATUS, IB/FENCE result.
+  Expected data=0x1b610001, fence=1, RPTR/WPTR=1116 and clean fault status.
+  Boot acceptance alone does not prove execution. UI acceleration not enabled.
+- Compared fetched HackiOS userland main a79ff077 against local 906425b7:
+  only thermal/var-store/build changes; no graphics library changes.
+
 # Active handoff — HackiOS submission primitive, 2026-10-23
 
 - Continuing explicit request to reuse oosexgang/hackios-xnu-kernel for iOS GPU
