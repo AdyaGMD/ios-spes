@@ -137,3 +137,22 @@ Recommended staged implementation, not performed in this audit:
    ME_INIT → secure transition → MEM_WRITE before rendering.
 
 No CI run, boot, or hardware success is claimed by this document.
+
+## Follow-up hardware evidence
+
+Kernel 3843ef3, CI 39880731839, paired RAM-only images:
+
+| Test | Before window | Immediate post-write sample | Delayed window |
+| --- | --- | --- | --- |
+| Control (no SQE write) | CP int=0, SQE=0 | CP int=0, SQE=0 | All samples int=0 |
+| Halt (SQE=3) | CP int=0, SQE=0 | int=0, RBBM=0xc00005, SQE=3 | Samples 1–10 int=0x80, RBBM=1, SQE=3 |
+
+HW_FAULT remains zero throughout. Both tests begin with SQE firmware base zero.
+This isolates the early halt as the trigger under the tested startup conditions;
+it does not explain its microarchitectural mechanism or prove full GPU startup.
+
+Commit d37e2d2 removes the early write from the mode0 path. The `gpu-setup`
+profile checks memory/routing/firmware state and stops before SQE release.
+It does not issue commands or exercise the later rendering path. Setup testing
+is pending; the first normal startup write to SQE control will be 1 only after
+checks pass and a later test explicitly enables spesgpurun=1.

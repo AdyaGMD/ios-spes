@@ -1,3 +1,15 @@
+# Active hardware test — setup-only image accepted, 2026-10-23
+
+- Kernel commit d37e2d2; CI 39915037717 SUCCESS. Downloaded kernel checksum
+  verified at xnu/out-39915037717/kernel.development.sweet.
+- Built shim/out/spes-gpu-setup.img, SHA256 `1580c0d8782fd0c0be29dfe4015743943bb3c567df9889b60abf61cc4abc38af`.
+  Payload verified: spesgpuhalt=0, no spesgpurun=1, RAM root, storage writes/logs
+  disabled, shared touch worker enabled. Setup-only stops before SQE release.
+- User confirmed Fastboot; product spes rechecked. Temporary boot accepted:
+  send 0.451 s, boot 0.287 s, total 0.742 s. No partition flashing.
+- Awaiting photo of final SPES GPU setup/route checks. Next decision depends on
+  routing/readback and CP status. Do not infer setup success from boot acceptance.
+
 # Active handoff — paired test isolates early-halt error, 2026-10-23
 
 - HALT photo: mode=2, base=0:0, gbif=0; p=0 samples 0–10 all int=0,
