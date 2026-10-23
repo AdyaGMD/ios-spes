@@ -127,6 +127,104 @@ def main():
 \t    cp2a_hw_fault, cp2a_int_stat, cp2a_rbbm_int,
 \t    cp2b_hw_fault, cp2b_int_stat, cp2b_rbbm_int);
 
+\t/* Granular Bounded Read-Only In-Memory Polling Experiment */
+\tstruct cp_poll_entry {
+\t\tuint32_t idx;
+\t\tuint32_t int_stat;
+\t\tuint32_t rbbm_stat;
+\t\tuint32_t sqe_cntl;
+\t\tuint32_t hw_fault;
+\t};
+\tstruct cp_poll_entry poll_history[16];
+\tunsigned poll_hist_cnt = 0;
+\tuint32_t flip_poll = 0;
+\tuint32_t flip_val = 0;
+
+\t/* Sample 0: Immediately after 22b status read */
+\t__asm__ volatile ("dsb sy" ::: "memory");
+\tuint32_t cur_int   = touch_rd(gpu, 0x208cu);
+\tuint32_t cur_rbbm  = touch_rd(gpu, 0x840u);
+\tuint32_t cur_sqe   = touch_rd(gpu, 0x2020u);
+\tuint32_t cur_fault = touch_rd(gpu, 0x2084u);
+\tpoll_history[poll_hist_cnt].idx = 0u;
+\tpoll_history[poll_hist_cnt].int_stat = cur_int;
+\tpoll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
+\tpoll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
+\tpoll_history[poll_hist_cnt].hw_fault = cur_fault;
+\tpoll_hist_cnt++;
+\tuint32_t prev_int = cur_int;
+
+\t/* Phase 1: 5,000 tight polls without delay (~2-5 ms) */
+\tfor (unsigned p1 = 1; p1 <= 5000; ++p1) {
+\t\tcur_int   = touch_rd(gpu, 0x208cu);
+\t\tcur_rbbm  = touch_rd(gpu, 0x840u);
+\t\tcur_sqe   = touch_rd(gpu, 0x2020u);
+\t\tcur_fault = touch_rd(gpu, 0x2084u);
+\t\tif (cur_int != prev_int) {
+\t\t\tif (!flip_poll) {
+\t\t\t\tflip_poll = p1;
+\t\t\t\tflip_val  = cur_int;
+\t\t\t}
+\t\t\tprev_int = cur_int;
+\t\t\tif (poll_hist_cnt < 16) {
+\t\t\t\tpoll_history[poll_hist_cnt].idx = p1;
+\t\t\t\tpoll_history[poll_hist_cnt].int_stat = cur_int;
+\t\t\t\tpoll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
+\t\t\t\tpoll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
+\t\t\t\tpoll_history[poll_hist_cnt].hw_fault = cur_fault;
+\t\t\tpoll_hist_cnt++;
+\t\t\t}
+\t\t} else if ((p1 == 1 || p1 == 10 || p1 == 100 || p1 == 1000 || p1 == 5000) && poll_hist_cnt < 16) {
+\t\t\tpoll_history[poll_hist_cnt].idx = p1;
+\t\t\tpoll_history[poll_hist_cnt].int_stat = cur_int;
+\t\t\tpoll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
+\t\t\tpoll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
+\t\t\tpoll_history[poll_hist_cnt].hw_fault = cur_fault;
+\t\t\tpoll_hist_cnt++;
+\t\t}
+\t}
+
+\t/* Phase 2: 10 bounded 1ms polls (10 ms total) */
+\tfor (unsigned p2 = 1; p2 <= 10; ++p2) {
+\t\ttouch_wait(1);
+\t\tcur_int   = touch_rd(gpu, 0x208cu);
+\t\tcur_rbbm  = touch_rd(gpu, 0x840u);
+\t\tcur_sqe   = touch_rd(gpu, 0x2020u);
+\t\tcur_fault = touch_rd(gpu, 0x2084u);
+\t\tif (cur_int != prev_int) {
+\t\t\tif (!flip_poll) {
+\t\t\t\tflip_poll = 5000 + p2;
+\t\t\t\tflip_val  = cur_int;
+\t\t\t}
+\t\t\tprev_int = cur_int;
+\t\t\tif (poll_hist_cnt < 16) {
+\t\t\t\tpoll_history[poll_hist_cnt].idx = 5000 + p2;
+\t\t\t\tpoll_history[poll_hist_cnt].int_stat = cur_int;
+\t\t\t\tpoll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
+\t\t\t\tpoll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
+\t\t\t\tpoll_history[poll_hist_cnt].hw_fault = cur_fault;
+\t\t\t\tpoll_hist_cnt++;
+\t\t\t}
+\t\t} else if ((p2 == 1 || p2 == 5 || p2 == 10) && poll_hist_cnt < 16) {
+\t\t\tpoll_history[poll_hist_cnt].idx = 5000 + p2;
+\t\t\tpoll_history[poll_hist_cnt].int_stat = cur_int;
+\t\t\tpoll_history[poll_hist_cnt].rbbm_stat = cur_rbbm;
+\t\t\tpoll_history[poll_hist_cnt].sqe_cntl = cur_sqe;
+\t\t\tpoll_history[poll_hist_cnt].hw_fault = cur_fault;
+\t\t\tpoll_hist_cnt++;
+\t\t}
+\t}
+
+\t/* Print the recorded trace afterward */
+\tprintf("SPES GPU: 22b-poll. Summary: flip_at=%u (val=%#x) samples=%u\\n",
+\t    flip_poll, flip_val, poll_hist_cnt);
+\tfor (unsigned pi = 0; pi < poll_hist_cnt; pi++) {
+\t\tprintf("SPES GPU: 22b-p[%u]: poll=%u int=%#x rbbm=%#x sqe=%#x fault=%#x\\n",
+\t\t    pi, poll_history[pi].idx, poll_history[pi].int_stat,
+\t\t    poll_history[pi].rbbm_stat, poll_history[pi].sqe_cntl,
+\t\t    poll_history[pi].hw_fault);
+\t}
+
 \t/* Checkpoint 1 (23-0): Before SMMU initialization begins */
 \tLOG_CP("23-0 (Pre-SMMU)");
 
