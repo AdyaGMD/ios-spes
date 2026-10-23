@@ -1037,7 +1037,7 @@ index 7dd8949..2c09d18 100644
  
  extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
  /* Mach MIG declaration is not included by BSD's exported thread.h. */
-@@ -677,6 +684,1292 @@ spes_gpu_power_probe(void)
+@@ -677,6 +684,1343 @@ spes_gpu_power_probe(void)
  	printf("SPES GPU: stage=clock-inventory complete; engine not started\n");
  }
  
@@ -1230,6 +1230,24 @@ index 7dd8949..2c09d18 100644
 +	if (stage) printf("SPES GPU: %s %s rptr=%u wptr=%u int=%#x fault=%#x int0=%#x GFSR=%#x FSR=%#x poll=%u\n",
 +	    stage, ok ? "PASS" : "FAIL", rp, tail, irq, hw, irq0, gf, fs, n);
 +	return ok;
++}
++
++static bool
++spes_gpu_ring_append(volatile uint32_t *ring, uint32_t *tail,
++    uint32_t head, const uint32_t *words, uint32_t count)
++{
++	/* Single producer, one completed submission at a time. Never reset HW RPTR.
++	 * Pad at the boundary so no packet straddles the end of the 8 KiB ring. */
++	if (*tail >= 2048u || head != *tail || !count || count >= 2048u) return false;
++	uint32_t pad = *tail + count > 2048u ? 2048u - *tail : 0u;
++	if (pad + count >= 2048u) return false; /* keep one slot empty */
++	for (uint32_t i = 0; i < pad; ++i) ring[(*tail)++] = 0x70108000u;
++	*tail &= 2047u;
++	for (uint32_t i = 0; i < count; ++i) {
++		ring[*tail] = words[i];
++		*tail = (*tail + 1u) & 2047u;
++	}
++	return true;
 +}
 +
 +static void
@@ -2321,10 +2339,43 @@ index 7dd8949..2c09d18 100644
 +	}
 +	uint32_t ib_value = scratch[8], fence_value = scratch[9];
 +	bool fence_clean = spes_gpu_retire(gpu, smmu, context, w, "FENCE_STATUS");
-+	touch_wr(gpu, 0x2020u, 3u);
 +	printf("SPES GPU: IB/FENCE %s data=%#x fence=%u poll=%u (no userspace service yet)\n",
 +	    ib_retired && fence_clean && ib_value == 0x1b610001u && fence_value == 1u ? "PASS" : "FAIL",
 +	    ib_value, fence_value, fence_poll);
++	int repeat_test = 0;
++	(void)PE_parse_boot_argn("spesgpurepeat", &repeat_test, sizeof(repeat_test));
++	bool passed = ib_retired && fence_clean && ib_value == 0x1b610001u && fence_value == 1u;
++	unsigned completed = 0, wraps = 0;
++	if (passed && repeat_test == 1) {
++		for (uint32_t seq = 2; seq <= 513; ++seq) {
++			/* Prior fence and retirement must finish before reusing the IB. */
++			ib[3] = 0x1b610000u | seq;
++			uint32_t commands[10] = {0x70bf8003u, 0x10001000u, 0u, 4u,
++			    0x70268000u, 0x70460004u, 4u, 0x011f0024u, 0u, seq};
++			uint32_t old_tail = w;
++			if (!spes_gpu_ring_append(rb, &w, touch_rd(gpu, 0x2018u), commands, 10)) {
++				passed = false; break;
++			}
++			if (w < old_tail) ++wraps;
++			__asm__ volatile ("dsb sy" ::: "memory");
++			touch_wr(gpu, 0x201cu, w);
++			if (!spes_gpu_retire(gpu, smmu, context, w, NULL)) { passed = false; break; }
++			unsigned poll;
++			for (poll = 0; poll < 1000; ++poll) {
++				__asm__ volatile ("dsb sy" ::: "memory");
++				if (scratch[9] == seq) break;
++				touch_wait(1);
++			}
++			if (poll == 1000 || scratch[8] != (0x1b610000u | seq) ||
++			    !spes_gpu_retire(gpu, smmu, context, w, NULL)) { passed = false; break; }
++			++completed;
++		}
++		printf("SPES GPU: REPEAT %s completed=%u/512 wraps=%u fence=%u rptr=%u wptr=%u\n",
++		    passed && completed == 512 && wraps >= 2 ? "PASS" : "FAIL",
++		    completed, wraps, scratch[9], touch_rd(gpu, 0x2018u), w);
++		(void)spes_gpu_retire(gpu, smmu, context, w, "REPEAT_STATUS");
++	}
++	touch_wr(gpu, 0x2020u, 3u);
 +}
 +
  static void

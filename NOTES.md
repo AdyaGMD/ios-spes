@@ -1,3 +1,20 @@
+# Active handoff — repeated submission prepared, 2026-10-23
+
+- Added opt-in gpu-repeat profile: retains the proven IB/fence boot, then issues
+  512 serial submissions with unique markers and fences 2..513 without halting
+  between them. Each submission requires exact retirement, fence and data plus
+  clean fault status before reusing IB memory. Halts at the end or on failure.
+- New ring append helper accepts only an empty ring (head=tail); bounds counts,
+  leaves a slot empty, pads the boundary with verified zero-payload NOPs, and
+  wraps software tail without resetting hardware RPTR. This is single-producer
+  diagnostic reuse, not a concurrent userspace submission service.
+- Eight host tests pass, including actual C ring boundary/rejection behavior
+  and 512-submission wrap simulation; existing packet/retirement tests pass.
+  Patch parses and shell syntax/diff checks pass. Full kernel CI pending.
+- Next: build CI kernel, create gpu-repeat RAM image, temporary boot when user
+  confirms Fastboot. Capture REPEAT completed=512/512, wraps>=2, fence=513 and
+  REPEAT_STATUS. No dynamic memory mapping or UI service enabled yet.
+
 # Verified milestone — indirect buffer and completion fence, 2026-10-23
 
 - User photo confirms gpu-bridge kernel 89f2b42 / CI 39951466519 succeeds:

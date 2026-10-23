@@ -90,7 +90,7 @@ class GPUProbeTests(unittest.TestCase):
     def test_retirement_rejects_faults_and_timeouts(self):
         patch=(ROOT/'xnu/patches/0098-spes-glink-rpm-transport.patch').read_text()
         src='\n'.join(l[1:] for l in patch.splitlines() if l.startswith('+'))
-        helper=src[src.index('static bool\nspes_gpu_retire'):src.index('static void\nspes_glink_rpm_probe')]
+        helper=src[src.index('static bool\nspes_gpu_retire'):src.index('static bool\nspes_gpu_ring_append')]
         prefix=r'''
 #include <stdint.h>
 #include <stdbool.h>
@@ -124,3 +124,35 @@ static uint32_t touch_rd(vm_offset_t base, uint32_t off) {
         start=32+2+16*67
         self.assertEqual(list(buf[start:count]), [0x70bf8003,0x10001000,0,4,
             0x70268000,0x70460004,4,0x11f0024,0,1])
+
+
+class RingAppendTests(unittest.TestCase):
+    def test_empty_ring_wrap_and_busy_rejection(self):
+        patch = (ROOT / 'xnu/patches/0098-spes-glink-rpm-transport.patch').read_text()
+        src = '\n'.join(x[1:] for x in patch.splitlines() if x.startswith('+') and not x.startswith('+++'))
+        helper = src[src.index('static bool\nspes_gpu_ring_append'):src.index('static void\nspes_glink_rpm_probe')]
+        code = '#include <stdint.h>\n#include <stdbool.h>\n' + helper
+        code += '\nint append(uint32_t *r,uint32_t *t,uint32_t h,uint32_t *p,uint32_t n) { return spes_gpu_ring_append(r,t,h,p,n); }'
+        with tempfile.TemporaryDirectory() as d:
+            c=Path(d)/'ring.c'; lib=Path(d)/'ring.dylib'; c.write_text(code)
+            subprocess.run(['clang','-shared','-fPIC','-Wall','-Wextra','-Werror',str(c),'-o',str(lib)],check=True,capture_output=True)
+            dll=ctypes.CDLL(str(lib)); dll.append.argtypes=[ctypes.POINTER(ctypes.c_uint32),ctypes.POINTER(ctypes.c_uint32),ctypes.c_uint32,ctypes.POINTER(ctypes.c_uint32),ctypes.c_uint32]
+            packet=(ctypes.c_uint32*10)(*range(10))
+            for initial in (0,1116,2038,2040,2047):
+                ring=(ctypes.c_uint32*2048)(*([0xdeadbeef]*2048)); tail=ctypes.c_uint32(initial)
+                self.assertEqual(dll.append(ring,ctypes.byref(tail),initial,packet,10),1)
+                start=0 if initial+10>2048 else initial
+                self.assertEqual(tail.value,(start+10)%2048)
+                self.assertEqual(list(ring)[start:start+10],list(range(10)))
+                if start==0 and initial:
+                    self.assertEqual(list(ring)[initial:],[0x70108000]*(2048-initial))
+            tail=ctypes.c_uint32(1116); ring=(ctypes.c_uint32*2048)(); wraps=0
+            for _ in range(512):
+                old=tail.value
+                self.assertEqual(dll.append(ring,ctypes.byref(tail),old,packet,10),1)
+                wraps+=tail.value<old
+            self.assertGreaterEqual(wraps,2)
+            before=list(ring); old=tail.value
+            for head,n in ((old-1,10),(old,0),(old,2048)):
+                self.assertEqual(dll.append(ring,ctypes.byref(tail),head,packet,n),0)
+                self.assertEqual(tail.value,old); self.assertEqual(list(ring),before)
