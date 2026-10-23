@@ -83,3 +83,20 @@ and VA reserved, mark the backend unavailable, and do not recycle physical pages
 Map replacement must invalidate the old translation before installing the new
 one. Test this first using reserved scratch pages and verified command/fence
 submission, before mapping a real IOSurface or changing the iOS root filesystem.
+
+## Reserved-page remap diagnostic
+
+`gpu-remap` uses an initially invalid leaf at GPU VA `0x10010000` and two
+reserved physical pages, `0x5ca0e000` and `0x5ca0f000`. It runs after the proven
+IB/fence check, without the separate 512-submission stress loop. Three writes
+map A → B → A, with markers `0x6d610001..3` and fences `1024..1026`.
+Each step checks both physical words so a stale translation cannot pass merely
+because the fence completed. The final mapping is removed; there is no deliberate
+GPU access after unmapping. Failure retains memory and stops submissions.
+
+This tests live leaf replacement and invalidation, not a dynamic VA allocator,
+page-table growth, noncontiguous user buffers or IOSurface lifetime handling.
+The future service must also validate `getPhysicalSegment` length and alignment
+for every 4 KiB page; the reference `newBuffer` retrieves length but does not
+check that it covers the requested page. Partial mapping rollback must propagate
+invalidation failure instead of unconditionally freeing the VA and descriptor.

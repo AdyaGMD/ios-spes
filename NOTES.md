@@ -1,3 +1,16 @@
+# Active hardware test — remap image accepted, 2026-10-23
+
+- Kernel ec87cb3; CI 39992181175 SUCCESS; downloaded checksum verified.
+- Image shim/out/spes-gpu-remap.img SHA256
+  `23ccf0378c96af7627a48db4db65eac60b6fcc7229fb1c1536ba06141d9f670e`.
+- RAM root / no storage writes verified, spesgpuremap=1 with IB/display gates;
+  repeat stress flag absent. User confirmed Fastboot; product spes rechecked.
+- Temporary boot accepted: send0.404 s, boot0.289 s, total0.699 s. No flashing.
+- Awaiting photo of REMAP steps0..2, REMAP_STATUS and final result. Expected
+  stages=3/3 unmapped=1 pte=0 with clean faults. No hardware pass claimed yet.
+- Nine host tests and full CI passed. Next depends on live remapping result;
+  then implement bounded dynamic allocation/service integration (still absent).
+
 # Active handoff — GPU remap diagnostic prepared, 2026-10-23
 
 - Added gpu-remap profile (IB/display enabled, repeat disabled). After proven
@@ -12,7 +25,8 @@
   No deliberate faulting GPU access, storage writes or userspace exposure.
 - Nine host tests pass, including compiled actual PTE helper order and timeout
   paths for both invalidation phases; patch parses, shell/diff checks pass.
-- Next: CI build, temporary gpu-remap boot, capture each REMAP step plus final
+- Commit ec87cb3, CI 39992181175 building. User confirmed Fastboot ready.
+- Next: download successful CI kernel, temporary gpu-remap boot, capture each REMAP step plus final
   REMAP_STATUS and REMAP PASS stages=3/3 unmapped=1 pte=0. Hardware unverified.
 
 # User-confirmed milestone — repeated GPU submission, 2026-10-23
