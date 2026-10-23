@@ -8,7 +8,8 @@
   without SQE writes; `=2` writes SQE_CNTL=3 between windows. Both return BEFORE
   SMMU setup and command submission. `=0` retains opt-in legacy startup; untested.
 - New build profiles `gpu-control` and `gpu-halt` produce distinct RAM-only
-  images with no storage writes, touch or keys. Both use the same kernel.
+  images with no storage writes or keys. Both use the same kernel; touch must
+  remain enabled because its worker hosts the GPU probes.
 - Preserved historical generator edits, fixed string escaping, and added a guard
   against regenerating 0098 from c095a44 over the reviewed changes. Edit 0098 directly.
 - Local validation: 4 tests pass (table/packet execution, independent register

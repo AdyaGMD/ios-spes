@@ -16,7 +16,8 @@ case "$profile" in
     gpu) extra=' spestouchprobe=1 spesgpuprobe=1 spesrpmprobe=1 sweettouchdelay=5 sweettouchdiag=3'; touch=1; name=spes-gpu-probe ;;
     gpu-control|gpu-halt)
         mode=1; [ "$profile" != gpu-halt ] || mode=2
-        extra=" spesgpuprobe=1 spesrpmprobe=1 spesgpuhalt=$mode"
+        extra=" spestouchprobe=1 spesgpuprobe=1 spesrpmprobe=1 spesgpuhalt=$mode sweettouchdelay=5"
+        touch=1 # GPU diagnostics run inside the existing touch worker.
         name="spes-$profile" ;;
     wifi) extra=' spestouchprobe=1 modem=1 wifi=1 modem_watch=30 sweettouchdelay=5'; touch=1; name=spes-wifi-probe ;;
     *) echo "Unknown diagnostic profile: $profile" >&2; exit 2 ;;
