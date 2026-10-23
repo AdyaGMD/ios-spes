@@ -1,3 +1,18 @@
+# Verified milestone — indirect buffer and completion fence, 2026-10-23
+
+- User photo confirms gpu-bridge kernel 89f2b42 / CI 39951466519 succeeds:
+  INDIRECT_BUFFER PASS RPTR/WPTR=1116/1116, int=0, fault=0, INT0=0,
+  GFSR=0, FSR=0x400, poll=1. FENCE_STATUS PASS same clean status, poll=0.
+  IB/FENCE PASS data=0x1b610001, fence=1, poll=0.
+- Photo also shows secure-mode and 1024/1024 framebuffer checks passing.
+  This proves tested indirect command execution and GPU fence writeback, not
+  shader execution, dynamic mappings, persistent submission or accelerated UI.
+- Preserve shim/out/spes-gpu-bridge.img (SHA256 recorded immediately below).
+- Next concrete implementation: adapt persistent submission and bounded dynamic
+  GPU mappings before exposing the HackiOS service; retain SweetSurface objects
+  and use their actual pixel offsets. Then standalone Mesa rendering validation.
+  Integration gaps and pinned reference sources: docs/SPES-HACKIOS-GRAPHICS.md.
+
 # Active hardware test — HackiOS IB/fence image accepted, 2026-10-23
 
 - Kernel commit 89f2b42; CI 39951466519 SUCCESS. Downloaded kernel checksum

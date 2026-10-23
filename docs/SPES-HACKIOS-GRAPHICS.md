@@ -57,4 +57,6 @@ Expected data is 0x1b610001 and fence is 1. The ring reaches 1116 dwords, inside
 its 2048-dword capacity. Every stage has bounded waits and fault checks; after
 the test the engine halts. No userspace GPU service or UI acceleration is enabled.
 Seven host tests validate encoding, mappings, ring bounds and failure handling.
-Hardware result pending. This is a prerequisite, not completion of the UI port.
+Hardware photo on 2026-10-23 confirms INDIRECT_BUFFER and FENCE_STATUS PASS,
+RPTR/WPTR=1116/1116, data=0x1b610001, fence=1, CP/HW/INT0/GFSR=0, FSR=0x400.
+Kernel 89f2b42, CI 39951466519. This is a prerequisite, not completion of the UI port.

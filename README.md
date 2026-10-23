@@ -25,7 +25,9 @@ All three stages of GPU initialization and execution are verified on the test ha
 
 This was verified via temporary RAM-boot using kernel `426b3ad` ([CI 39918190004](https://github.com/AdyaGMD/ios-spes/actions/runs/39918190004)) with the `gpu-display` profile in `tools/build-spes-diagnostic.sh`.
 
-Shaders and full iOS Metal/QuartzCore graphics acceleration remain the next milestone. See the [A610 audit](docs/SPES-GPU-A610-AUDIT-20261023.md) for architectural evidence and register details.
+The subsequent `gpu-bridge` test (kernel `89f2b42`, [CI 39951466519](https://github.com/AdyaGMD/ios-spes/actions/runs/39951466519)) also passes on hardware: a HackiOS-style indirect command buffer writes `0x1b610001`, signals completion fence `1`, and retires at `1116/1116` with no reported GPU faults.
+
+Shader rendering and iOS UI acceleration are still unimplemented. The next integration work covers persistent submission, dynamic GPU mappings and the HackiOS Mesa/IOSurface interface. See the [A610 audit](docs/SPES-GPU-A610-AUDIT-20261023.md) for architectural evidence and register details.
 
 ## Changes
 
