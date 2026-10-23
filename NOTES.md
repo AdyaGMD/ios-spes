@@ -1,3 +1,19 @@
+# Active hardware test — allocated-buffer image accepted, 2026-10-23
+
+- Kernel acdbf93, CI39994157865 SUCCESS; downloaded kernel checksum verified.
+- Image shim/out/spes-gpu-buffers.img SHA256
+  `8546c49d40e0138cc70971fbfad872baf4e7720695977dbd80893bd180104b17`.
+- Verified RAM root/no storage-write flags and spesgpubuffers=1, with IB/display
+  gates, repeat/remap flags absent. Ten host tests and full CI passed.
+- User confirmed Fastboot; product spes checked. Temporary boot accepted:
+  send0.396 s, boot0.287 s, total0.687 s. No partition flashing.
+- Awaiting photo of BUFFERS map/BUFFERS_EXEC/final BUFFERS result. Expected
+  A=b0610001 B=b0610002 fence2048 released/reused/clean=1 poisoned=0.
+  Physical allocation addresses and GPU success not yet observed.
+- Next after hardware result: expand address space/page tables for full surfaces,
+  then adapt persistent backend and HackiOS service. No userspace GPU service
+  or shader/iOS UI acceleration enabled by this diagnostic.
+
 # Active handoff — owned GPU buffer pool prepared, 2026-10-23
 
 - User reports remap test success (ec87cb3, CI39992181175); no photo/raw values
@@ -17,7 +33,8 @@
 - Ten host tests pass including actual C allocator/map/free under ASan/UBSan,
   exhaustion, fragmentation/reuse, stale handles, bounds, malformed physical
   pages, premature release and map/unmap timeout retention. Patch/shell checks pass.
-- Next: full CI, temporary gpu-buffers boot. Capture BUFFERS map/EXEC/final line.
+- Commit acdbf93; CI39994157865 building. User confirmed Fastboot ready.
+- Next: download successful kernel, temporary gpu-buffers boot. Capture BUFFERS map/EXEC/final line.
   Expected A=b0610001 B=b0610002 fence2048 released/reused/clean=1 poisoned=0.
 
 # Active hardware test — remap image accepted, 2026-10-23
