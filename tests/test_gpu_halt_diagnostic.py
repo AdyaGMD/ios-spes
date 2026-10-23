@@ -28,7 +28,7 @@ class HaltDiagnosticTests(unittest.TestCase):
     def test_control_and_halt_stop_before_setup(self):
         src='\n'.join(l[1:] for l in PATCH.read_text().splitlines() if l.startswith('+'))
         start=src.index('\t/* Controlled early-halt experiment.')
-        end=src.index('\t/* Legacy full startup remains opt-in',start)
+        end=src.index('\t/* Paired hardware test:',start)
         fragment=src[start:end]
         fragment=fragment.replace('__asm__ volatile ("dsb sy" ::: "memory");','((void)0);')
         prefix=r'''

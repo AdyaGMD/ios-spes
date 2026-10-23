@@ -1,3 +1,24 @@
+# Active handoff — paired test isolates early-halt error, 2026-10-23
+
+- HALT photo: mode=2, base=0:0, gbif=0; p=0 samples 0–10 all int=0,
+  fault=0, rbbm=1, sqe=0. After SQE_CNTL=3, p=1 sample0 still int=0,
+  fault=0, rbbm=0xc00005, sqe=3; samples1–10 show int=0x80, fault=0,
+  rbbm=1, sqe=3. Reaches diagnostic STOP. Paired control remained clean.
+- Strong evidence the early halt write triggers the observed pre-setup error in
+  this boot state; not proof that all halt operations are invalid or GPU startup
+  otherwise works. No command execution or memory translation yet demonstrated.
+- Removed early SQE=3 from mode0; require clean status and inherited SQE control0.
+  Added `gpu-setup` RAM profile (spesgpuhalt=0, spesgpurun defaults0): setup then
+  STOP before SQE release. Full execution requires explicit spesgpurun=1 and is
+  not requested for the next test.
+- Strengthened routing/readback guards: both user routes must translate via CB0,
+  exact intended SMRs, matching TTBR0; firmware/base, CP and SMMU status checked
+  before release. Corrected missing S2CR printf arguments (previous output was
+  undefined), and removed unsupported claim of SMR invalidation unlocking S2CR.
+- Four existing GPU host tests pass; patch parses and shell/diff checks pass.
+  CI and next device test pending. Next capture terminal setup/route STOP and
+  pre-SMMU CP status; do not clear/mask errors just to progress.
+
 # Active hardware test — control clean, halt image accepted, 2026-10-23
 
 - User photo of CONTROL (`halt-test mode=1`) shows both p=0 and p=1 samples
