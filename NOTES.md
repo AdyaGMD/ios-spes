@@ -20,7 +20,8 @@
   83da8582bbabb2e3474405815b70e6d4652cdb732d3d0849c10851a629def3dd; image
   shim/out/spes-ios-graphics-values.img SHA256
   74a69673c044c7a9aa9418ddcf9beca7bf5457846825aadf9c7c2418146be5c3, flags
-  checked. Not booted yet.
+  checked. Temporary boot accepted send0.400s/boot0.289s/total0.694s (from
+  OrangeFox via adb reboot bootloader; product spes). No flashing.
 
 # Porting hackios-xnu-kernel — step 1 done (IOSurface), 2026-10-24
 
