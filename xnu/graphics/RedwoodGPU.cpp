@@ -1006,7 +1006,7 @@ RedwoodGPUUserClient::submit(struct msm_gem_submit * request)
 	 * room for it. (A wait of a second or more notices a stopped core first, as a rule; this is
 	 * for a program that submits without waiting.)
 	 */
-	if (request->fence == 0 && !gGPUReported) {
+	if (request->fence == 0 && redwood_gpu_ready() && !gGPUReported) {
 		redwood_gpu_report("the ring is full");
 		gGPUReported = !redwood_gpu_recover();
 		if (!gGPUReported) {

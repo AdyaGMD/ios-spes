@@ -25,6 +25,14 @@ void redwood_gpu_stop(void) {
 bool redwood_gpu_recover(void) { return false; }
 void redwood_gpu_report(const char *why) {
  printf("SPES GPU: backend stopped: %s fence=%u tail=%u\n", why, sg.fence, sg.tail);
+ if (sg.gpu) {
+  printf("SPES GPU: SUBMIT_STATUS rptr=%u wptr=%u int=%#x fault=%#x int0=%#x GFSR=%#x FSR=%#x\n",
+      touch_rd(sg.gpu, 0x2018u), sg.tail, touch_rd(sg.gpu, 0x208cu),
+      touch_rd(sg.gpu, 0x2084u), touch_rd(sg.gpu, 0x804u),
+      touch_rd(sg.smmu, 0x48u), touch_rd(sg.smmu, sg.context + 0x58u));
+  printf("SPES GPU: SUBMIT_IB1 base=%#x:%#x remaining=%u\n",
+      touch_rd(sg.gpu, 0x24a4u), touch_rd(sg.gpu, 0x24a0u), touch_rd(sg.gpu, 0x24a8u));
+ }
  sg.faulted = true;
  redwood_gpu_stop();
 }

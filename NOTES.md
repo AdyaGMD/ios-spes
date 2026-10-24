@@ -1,3 +1,28 @@
+# Active investigation — first Mesa submission stops GPU, 2026-10-24
+
+- User confirms0101 image opens iOS, but "slow as hell". This boot gets past the
+  previous panic. Saved log research/spes-graphics-cachefix-boot.txt was pulled
+  read-only through temporary OrangeFox; no new root writes.
+- Hardware preflight opens RedwoodGPU and selects renderer FD610. Its first real
+  submission (one 205-word indirect buffer) fails at fence2049/tail164 before
+  the SHADER result can print. Mesa reports submit failed -60, wait-fence -5,
+  then backboardd crashes. On restart open returns 0xe00002c7 and renderer is
+  softpipe. Therefore the slow UI is the software fallback; GPU acceleration
+  did not remain active. No SHADER PASS is claimed.
+- The first backend failure is explicitly "submission fault or timeout", but
+  the old report omits raw status and RedwoodGPU then mislabels it "ring is full".
+  Added raw CP/RBBM/SMMU/IB1 diagnostics on backend failure and suppress that
+  duplicate ring-full report once the backend is no longer ready. This is a
+  diagnostic/reporting change, not yet a hardware rendering fix.
+- Regenerated0100 from a reversed temporary baseline. All29 host tests and
+  git diff --check pass; local cross-compile of sweet_touch.c and RedwoodGPU.cpp
+  passes (research/graphics-submit-diagnostics-compile.log). Changes are not
+  yet committed or sent to CI.
+- Next: commit/dispatch a new kernel and temporary full-graphics boot. Capture
+  SUBMIT_STATUS/SUBMIT_IB1 to distinguish a hardware fault from a timeout before
+  changing shader setup. Installed root libraries need no update for this
+  kernel-only diagnostic.
+
 # Active hardware test — cache-address fix boot accepted, 2026-10-24
 
 - Fix commit a26f77a; CI40095679058 SUCCESS; 29 host tests and local pmap compile pass.
