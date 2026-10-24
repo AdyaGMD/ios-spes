@@ -9,7 +9,11 @@
   gradient wallpaper. Date suggests the clock/RTC is not set (guess). Red
   wallpaper unverified: could be the real wallpaper or an R/B channel swap
   in the surface->panel path (BGRA collapse); check which wallpaper the root
-  uses. Touch and frame rate not yet recorded; log not yet pulled.
+  uses. User: "extremely slow", app icons do not load, only some text is
+  rendered. Suspects (unverified): per-frame waits (glwait=1 glsync=1;
+  previous log frame4 1508408 us of 1509427 waiting, GPU 0 us, ~10 MB
+  IOSurface refill per frame) and unsupported texture formats for wrapped
+  surfaces (A008 glyph masks, others for icons). Log not yet pulled.
 
 # Active hardware test — wired WrapClientImage image booted, 2026-10-24
 
