@@ -115,3 +115,30 @@ address reuse with a new handle. Permanent backing allocations remain retained
 for the whole diagnostic boot, including failure. Hardware validation pending.
 This small pool is a prototype; full-screen surfaces need a larger VA window and
 page-table growth before exposing the HackiOS service.
+
+## Combined integration (2026-10-24, not hardware verified)
+
+Patch0100 adapts the pinned RedwoodGPU service to SweetSurface and a serialized,
+synchronous backend with 256 MiB GPU VA. No MiniIOSurface shared-state prefix is
+applied to pixel mappings. Failed submissions or TLB synchronization stop the GPU
+and retain backing allocations; reset/recovery and cross-client isolation are
+not implemented. This is an experimental trusted-userland bring-up interface.
+
+`spesgpu=1` runs the previous initialization, framebuffer-write, indirect-buffer,
+repeat, remap and allocated-buffer gates in sequence, then publishes the service
+only after success. The opt-in `tools/build-spes-ios-graphics.sh` builds that full
+iOS image, preserving the existing software boot image. It does not install files
+or boot a device. `gpu_keep=0` disables caching for initial integration.
+
+The host build scripts use pinned HackiOS userland and Mesa25.0.7. The A610
+bank-layout setting matches the live spes device tree (chip06010001, bank14).
+The EAGL bridge first waits for the service and demands an A610 renderer, shader
+compilation, triangle drawing and matching center/background pixel readback.
+Only a passing check permits method replacement. A passing build is not a
+passing render. This guard cannot recover from a GPU/driver kernel failure.
+
+Local checks: 26 host tests, two kernel translation-unit syntax checks, Mesa/EAGL
+cross-build and ad-hoc signature verification pass. No new kernel boot, shader
+render, IOSurface rendering or accelerated UI result has been observed yet.
+Root installation/injection still needs preparation against the fresh snapshot.
+Do not copy upstream inject.c's version-specific private function addresses.

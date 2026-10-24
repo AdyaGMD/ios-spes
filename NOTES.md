@@ -1,3 +1,30 @@
+# Active handoff — combined graphics integration, 2026-10-24
+
+- User reports allocated-buffer test success (kernel acdbf93, CI39994157865).
+  No new photo/raw counters; treat as user-confirmed only. User requests batched
+  remaining tests in one build rather than further individual diagnostic boots.
+- Prepared 0100 integration: persistent synchronous 256 MiB GPU VA backend,
+  adapted HackiOS RedwoodGPU service, combined previous test gates (spesgpu=1).
+  Local kernel C/C++ syntax checks pass after the fault-retention fix;
+  regenerated 0100. Added opt-in full-iOS graphics image builder.
+- Mesa25.0.7/HackiOS userland906425b builds locally with iPhoneOS16.5 SDK.
+  tools/build-spes-mesa-macos.sh applies spes bank-bit14 for chip06010001.
+  tools/build-spes-eagl-macos.sh builds/signs guarded bridge: requires A610
+  shader triangle/readback before replacing EAGL methods. Artifacts ignored in
+  research/mesa-build/out. No hardware shader/UI acceleration proved yet.
+- All 26 host tests passed (research/graphics-host-tests.log). EAGL/Mesa build
+  and ad-hoc signature verification passed. Ready for combined CI dispatch; run ID will be recorded below.
+- User authorized temporary recovery; product spes verified; OrangeFox boot
+  accepted send3.109s/boot0.287s. Recovery userdata symlink is sda16 (NOT sda34
+  from old sweet notes). Unmounted HFSX header verified: block4096 x4194304=16GiB.
+- Read-only snapshot running to research/spes-phone-root-20261024.img.partial
+  via adb exec-out dd if=/dev/block/by-name/userdata bs=1048576 count=16384.
+  Exec session40675. Check exit/size before renaming/mounting; don't use partial.
+  No root/device partition writes performed during this integration.
+- Next: finish snapshot, inspect launchd/EAGL integration and build a reversible
+  install package from fresh root. Review/test service, regenerate patch, commit,
+  dispatch single combined kernel build. Do not deploy unguarded old EAGL dylib.
+
 # Active hardware test — allocated-buffer image accepted, 2026-10-23
 
 - Kernel acdbf93, CI39994157865 SUCCESS; downloaded kernel checksum verified.
