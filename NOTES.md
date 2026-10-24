@@ -1,3 +1,47 @@
+# Porting hackios-xnu-kernel — GPU submission model (smoothness), 2026-10-24
+
+- User priority (2026-10-24): port HackiOS's GPU implementation first, then
+  smoothness; icons later. Another agent (GPT) is working on audio and
+  Wi-Fi in this repo: fetch/rebase before every push and check patch
+  numbers for collisions.
+- Findings vs research/hackios-xnu-kernel (8e61187): our RedwoodGPU.cpp was
+  already HackiOS's (only ~120 lines differ); the hardware layer differs.
+  Our spes_gpu_backend.h was SYNCHRONOUS: redwood_gpu_submit refused while
+  the previous fence was pending, then spes_gpu_retire waited for rptr==tail
+  and the fence was polled with touch_wait(1) (thread sleeps >=1 ms each),
+  so every submission blocked backboardd. HackiOS redwood_adreno.c
+  (redwood_gpu_submit ~line 3596) only waits for ring room and returns the
+  fence. redwood_gpu_worked() is a stub on spes (returns 0): the "GPU
+  worked 0 us" stats were never real.
+- Commit 62d6435: xnu/graphics/spes_gpu_backend.h queued submissions
+  (spes_gpu_ring_queue: room = (rptr+2048-tail-1)&2047, NOP padding at the
+  ring end; up to 2 s for room, 100 us steps; A610 packet order kept: IBs,
+  CP_WAIT_FOR_IDLE, CACHE_FLUSH_TS). Fault registers that spes_gpu_retire
+  checked are checked in redwood_gpu_done while a fence is pending (prompt
+  report instead of a 1 s timeout). redwood_gpu_unmap no longer requires
+  the whole GPU idle (RedwoodGPU waits on the buffer's own fence first).
+  xnu/graphics/RedwoodGPU.cpp: SweetSurfaceDrawn (= MiniIOSurfaceDrawn),
+  b->surface->drawn = fence on submit, wrapped surfaces (externalBase)
+  refused for GPU buffers as HackiOS refuses s->client. 0100's two new-file
+  sections regenerated from xnu/graphics with difflib (the generator needs
+  an unpatched 0099 tree). New patch 0102: SweetSurface.h drawn field +
+  SweetSurfaceDrawn decl, SweetFramebuffer waits SweetSurfaceDrawn(s,500)
+  before copying a layer. tests/test_gpu_backend.py updated (queued
+  submissions overlap; fault while waiting stops backend); 29/29 pass.
+  Local compile of sweet_touch.c, RedwoodGPU, SweetFramebuffer,
+  SweetSurface 0/4 failed (research/gpu-async-compile.log). Pre-edit copies
+  research/pre-async/.
+- Commit 459b73b: SweetFramebuffer sets RedwoodWaitsForGPU (HackiOS
+  MiniIOMobileFramebuffer.cpp:480) so eagl.c display_waits() skips the
+  per-frame glFinish; tools/build-spes-ios-graphics.sh drops glwait=1
+  (forced the wait), keeps glsync=1.
+- CI40121920599 (62d6435 only) cancelled as superseded; CI40122058569 for
+  459b73b running -> xnu/out-0110, image shim/out/spes-ios-graphics-gpuport.img.
+- Not yet ported: GPU timing via CP_REG_TO_MEM of the always-on counter
+  (A610 register unverified); MiniIOMobileFramebuffer's separate show
+  thread / vsync timer ("on a thread of its own"): our swap still copies in
+  the caller's thread; framebuffer selectors 79/74/57/29.
+
 # Hardware result — wrapro image: labels back, most app icons still missing, 2026-10-24
 
 - User on spes-ios-graphics-wrapro.img (out-0108, 5360497): labels and the
