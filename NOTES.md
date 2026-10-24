@@ -7,8 +7,8 @@
 - Verified WCD937x/Bolero + AW87xxx speaker route (CDC DMA, EAR/AUX analog), not
   HackiOS TDM. Stock ACF names AW87559; all 12 entry CRCs pass, but live chip ID
   remains unmeasured. Recovery has no ALSA cards and mismatched module vermagic.
-- Added offline inventory and bounded ACF metadata validator; 7 synthetic ACF
-  tests pass. Live artifacts remain ignored in research/spes-audio-wifi/.
+- Commit 9a58f70 adds offline inventory and bounded ACF metadata validator;
+  7 synthetic ACF tests and 3 inventory tests pass. Live artifacts remain ignored in research/spes-audio-wifi/.
 - Official Xiaomi audio source cloned at 054e4f359514ddd1509095b15ad9f8e1607086a4.
   HackiOS origin/main inspected at d82c64a3a31cd27a0a0afbf6e213e467e44b1b4c.
 - Details, verified transport addresses and next implementation steps:
