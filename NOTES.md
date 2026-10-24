@@ -1,7 +1,12 @@
-# Built — EAGL GPU attach fill and storage reuse, 2026-10-24
+# Deployed and booting — EAGL GPU attach fill and storage reuse, 2026-10-24
 
-- User on spes-ios-graphics-keep.img: "still slow asf". Buffer reuse alone is
-  therefore not enough; no OrangeFox log from that boot has been pulled yet.
+- User on spes-ios-graphics-keep.img: "still slow asf". The OrangeFox log pull
+  (research/spes-graphics-keep-boot.txt, flush #37) confirms reuse did engage:
+  the last two buffer reports show 1 then 2 buffers given again and 24 MB kept.
+  No backend stop, panic or SIGSEGV; one surface 29 fence wait timed out and was
+  shown as-is. Only frames 10-15 were captured; they still show the 10809 KB
+  attach refill, with 80-320 ms attach time on ordinary frames. Buffer reuse
+  alone is therefore not enough.
 - Uncommitted EAGL change (no CI needed): tools/eagl-attach-gpu.patch, applied
   by tools/build-spes-eagl-macos.sh. my_attachImage now initializes a mirrored
   target with the inverse of the proven frame-end GPU blit (image->mirror ->
@@ -23,12 +28,31 @@
   fallback. Build log research/mesa-build/eagl-attach-gpu-build.log.
   Full host suite: 41/41 pass (research/eagl-attach-tests.log); git diff --check
   passes. The pinned HackiOS source clone remains unmodified.
-- Not deployed and not committed. Deployment requires a fresh recovery root
-  snapshot and a verified reversible userdata block delta; ask before writing.
-  Device is currently in the keep-image iOS boot. Expected next log: "filled
+- Committed 05cfaf4; user pushed it. CI run 40137886197 SUCCESS. Downloaded
+  xnu-kernel artifact; kernel SHA256 3d545e6cc8a3ed62b67139dd7300d2ad17ded74467a0d9c8be78d1af25570ace
+  copied to research/kernel-05cfaf4.sweet. Full image built from it and
+  dtb/spes-live.dtb: shim/out/spes-ios-graphics-eagl.img, SHA256
+  f782fd87b15dfe25df0de5f210679a34e1e5d081663f537d166a2f6f32de5605. Cmdline
+  verified spesgpu=1 spesgpuprobe=1 glsync=1, UFS userdata root, gpu_keep left
+  at the HackiOS default. Build log research/spes-eagl-build.log.
+- Fresh pre-install snapshot validated at exactly 16 GiB, SHA256
+  9c9dadf82e9e67e1fd2a6b78eee6d6b16bcb80ee3771225badeca7f43de5ad21, renamed
+  to research/spes-phone-root-pre-eagl-20261024.img. APFS clone mounted with
+  owners off; libredwood-gl.dylib content replaced in place (inode/metadata
+  retained), then detached. libOSMesa unchanged.
+- research/spes-eagl-delta: 93 changed MiB, forward and rollback payloads. The
+  count includes HFS journal replay in the clone, not only the 547 KB dylib
+  change. All 93 before hashes matched the live phone; all 93 written and
+  readback verified (research/spes-eagl-delta-verify.log and
+  research/spes-eagl-delta-install.log). Only userdata was written.
+- Temporary boot accepted: send 0.400 s, boot 0.287 s, total 0.696 s (product
+  spes). Device is now booting the new image. Awaiting screen/UI result; no
+  speed claim until logs or visual behavior confirm it. Expected log: "filled
   from and copied into its memory by the GPU", no recurring 10809 KB refill,
-  and much lower "before it for the IOSurfaces" time. Visual correctness still
-  needs hardware validation.
+  and much lower attach/IOSurface-prep time. Rollback remains available with
+  `tools/apply-ios-root-delta.py research/spes-eagl-delta --rollback --apply`
+  after a fresh recovery boot; do not apply it after unrelated iOS writes
+  without rechecking every block.
 
 # Analysis — traced TLB-spin boot: attach-time CPU fill and disabled buffer reuse, 2026-10-24
 
