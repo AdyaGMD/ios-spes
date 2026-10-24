@@ -1,3 +1,10 @@
+# Hardware result — wrapro image: labels back, most app icons still missing, 2026-10-24
+
+- User on spes-ios-graphics-wrapro.img (out-0108, 5360497): labels and the
+  Settings icon now draw; other app icons still missing. No panic reported.
+  Partial fix confirmed for read-only/page-exact wrapping. Log (with
+  prepare() error codes) not yet pulled.
+
 # Porting hackios-xnu-kernel — step 1 done (IOSurface), 2026-10-24
 
 - Commit 33a1656 (patch0046, SweetSurface.{h,cpp}): ported MiniIOSurface
