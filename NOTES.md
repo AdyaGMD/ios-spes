@@ -4,7 +4,12 @@
   logo, then black screen with a lone "SW" at the left edge (console text
   start), which disappeared (drawn over), then after a few minutes "it
   booted". No IOGMD panic. First UI on the Mesa/RedwoodGPU graphics path.
-  Which screen, touch and frame rate not yet recorded; log not yet pulled.
+- User photo: iOS lock screen fully composed: "Wednesday, December 31",
+  clock 4:15, camera button, home indicator, green battery icon, red
+  gradient wallpaper. Date suggests the clock/RTC is not set (guess). Red
+  wallpaper unverified: could be the real wallpaper or an R/B channel swap
+  in the surface->panel path (BGRA collapse); check which wallpaper the root
+  uses. Touch and frame rate not yet recorded; log not yet pulled.
 
 # Active hardware test — wired WrapClientImage image booted, 2026-10-24
 
