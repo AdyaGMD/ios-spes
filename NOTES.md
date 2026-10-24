@@ -41,7 +41,8 @@
   "queued submissions" and RedwoodWaitsForGPU). Image
   shim/out/spes-ios-graphics-gpuport.img SHA256
   58a77cd40658698e2a79e396441155baa4ac333322ed092f7bd93b8db09dcd11; cmdline
-  has glsync=1, no glwait. Not booted. Watch for: "SPES GPU: backend
+  has glsync=1, no glwait. Temporary boot accepted send0.405s/boot0.287s/
+  total0.696s (from OrangeFox via adb reboot bootloader; product spes). Watch for: "SPES GPU: backend
   stopped" (fault/ring full), "SWEET FB: the GPU is not done with surface",
   "redwood-gl: a frame is waited for by the display's driver", and the
   frame-time split (handing on / waiting / before it).
