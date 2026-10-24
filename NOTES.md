@@ -1,3 +1,29 @@
+# Hardware result — EAGL attach fill works; single core and 10 Hz panel remain, 2026-10-24
+
+- User: "still slow". Pulled the boot log from OrangeFox: research/spes-eagl-boot.txt
+  (3290 lines, flush #37, 245326 B). The new path definitely ran: 22 lines
+  "a texture, filled from and copied into its memory by the GPU", and no
+  "redwood-gl: refill" or per-frame 10809 KB target refill. Renderer FD610 and
+  "SHADER PASS" are present; no backend stop, panic or SIGSEGV.
+- Attach cost fell: frames 8-39 median surface prep 29.1 ms (previous keep boot
+  median 191 ms, p90 320 ms). Frame-level median attach is no longer the wall.
+  The mean is still 1428 ms because frames 11/12/30 spent 23.1/10.1/8.1 s in
+  attach during app-surface churn, while glFlush stalled 6.0 s in frame 10.
+  Frames 8-39: median total 442.8 ms, p90 6374.7 ms; 15 of 31 frames still
+  refilled non-target IOSurfaces (23986 KB total) through the CPU path.
+- Remaining likely limits, in order: the image boots with cpus=1, and
+  sweetfb_hz was omitted, so patch 0056 defaults the panel to 10 Hz (a 10.8 MB
+  copy only six ticks out of sixty). Both are boot-arg choices, not kernel
+  regressions. Non-target IOSurface uploads and Mesa/GPU submission cost also
+  remain, but they cannot be judged at 10 Hz.
+- Built shim/out/spes-ios-graphics-eagl-smp6.img (SHA256
+  d45eadffea33f2fc37ad5aafa84000792cb0e714854a4e01ca5eb8fdd2dfca67) with
+  cpus=6 sweetfb_hz=60, same kernel and already-installed dylib; no userdata
+  write. Boot accepted send 0.413 s, boot 0.287 s. Awaiting the user's UI test.
+  tools/build-spes-ios-graphics.sh now takes SWEET_CPUS/SWEET_FB_HZ (defaults
+  remain 1 and 10). If this is stable, the next log will show whether SMP
+  actually reduces frame times or whether Mesa/non-target uploads still dominate.
+
 # Deployed and booting — EAGL GPU attach fill and storage reuse, 2026-10-24
 
 - User on spes-ios-graphics-keep.img: "still slow asf". The OrangeFox log pull
