@@ -1,3 +1,11 @@
+# Hardware result — wired WrapClientImage boots to UI, 2026-10-24
+
+- User report on spes-ios-graphics-wire.img (kernel out-0107, 8e3ecc5): Apple
+  logo, then black screen with a lone "SW" at the left edge (console text
+  start), which disappeared (drawn over), then after a few minutes "it
+  booted". No IOGMD panic. First UI on the Mesa/RedwoodGPU graphics path.
+  Which screen, touch and frame rate not yet recorded; log not yet pulled.
+
 # Active hardware test — wired WrapClientImage image booted, 2026-10-24
 
 - Panic photo from the wrap image (user): "IOGMD: not wired for the
