@@ -1,6 +1,15 @@
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -366,6 +366,10 @@
+@@ -207,6 +207,8 @@
+ 	fVsync->setTimeoutUS(SWEET_FB_VSYNC_US);
+ 
+ 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
++	/* For EAGL (HackiOS eagl.c display_waits()): swaps wait for the GPU, so frames need not be finished first. */
++	setProperty("RedwoodWaitsForGPU", kOSBooleanTrue);
+ 	setProperty("external", false);
+ 	setProperty("DisplayPipePlaneBaseAlignment", 64ULL, 32);
+ 	registerService();
+@@ -366,6 +368,10 @@
  		if (s == NULL || s == fSurface) {
  			OSSafeReleaseNULL(s);
  			continue;
