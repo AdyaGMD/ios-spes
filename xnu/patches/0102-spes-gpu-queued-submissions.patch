@@ -1,25 +1,23 @@
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -207,6 +207,8 @@
- 	fVsync->setTimeoutUS(SWEET_FB_VSYNC_US);
- 
- 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
-+	/* For EAGL (HackiOS eagl.c display_waits()): swaps wait for the GPU, so frames need not be finished first. */
-+	setProperty("RedwoodWaitsForGPU", kOSBooleanTrue);
- 	setProperty("external", false);
- 	setProperty("DisplayPipePlaneBaseAlignment", 64ULL, 32);
- 	registerService();
-@@ -366,6 +368,10 @@
- 		if (s == NULL || s == fSurface) {
- 			OSSafeReleaseNULL(s);
+@@ -39,2 +39,6 @@
+ extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
++/* RedwoodGPU.cpp and spes_gpu_backend.h, for the log a wait that came to nothing leaves. */
++extern "C" uint32_t redwood_gpu_last(void);
++extern "C" uint32_t redwood_gpu_completed(void);
++extern "C" void redwood_gpu_ring(uint32_t *rptr, uint32_t *tail);
+ extern "C" void spes_modem_init(void);  /* iokit/Kernel/arm/SpesModem.cpp (boot-arg modem=1) */
+@@ -368,2 +372,10 @@
  			continue;
 +		}
 +		/* GPU submissions are queued: copy a layer only once they are done with it. */
 +		if (!SweetSurfaceDrawn(s, 500)) {
-+			IOLog("SWEET FB: the GPU is not done with surface %u after 500 ms; shown as it is\n", id);
++			uint32_t rptr = 0, tail = 0;
++
++			redwood_gpu_ring(&rptr, &tail);
++			IOLog("SWEET FB: GPU not done with surface %u after 500 ms: fence %u, newest %u, completed %u, rptr %u, tail %u; shown as it is\n",
++			    id, s->drawn, redwood_gpu_last(), redwood_gpu_completed(), rptr, tail);
  		}
- 		uintptr_t src = s->kernelAddress();
- 		uint32_t bpe = s->bytesPerElement ? s->bytesPerElement : 4;
 --- a/iokit/Kernel/arm/SweetSurface.h
 +++ b/iokit/Kernel/arm/SweetSurface.h
 @@ -42,6 +42,7 @@

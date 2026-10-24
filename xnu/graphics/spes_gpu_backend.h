@@ -124,6 +124,11 @@ bool redwood_gpu_done(uint32_t fence) {
  return false;
 }
 uint32_t redwood_gpu_last(void){return sg.fence;}
+/* For the display's log when a wait for a surface comes to nothing (SweetFramebuffer.cpp). */
+uint32_t redwood_gpu_completed(void){return sg.dma?((volatile uint32_t *)(sg.dma+0xc000))[9]:0;}
+void redwood_gpu_ring(uint32_t *rptr,uint32_t *tail){
+ *rptr=sg.gpu?touch_rd(sg.gpu,0x2018)&2047u:0u;*tail=sg.tail;
+}
 bool redwood_gpu_unmap(uint64_t address,uint64_t size) {
  int owner=spes_gpu_owner(address,size);
  if(!redwood_gpu_ready() || owner<0 || address!=sg.buffers[owner].base ||
