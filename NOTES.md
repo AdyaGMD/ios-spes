@@ -1,3 +1,22 @@
+# Audio/Wi-Fi handoff — live inventory, 2026-10-24
+
+- User assigned audio and Wi-Fi here; Claude owns GPU. No GPU changes made.
+- Temporarily booted OrangeFox from Fastboot successfully (3.386 s). Read live
+  FDT and vendor_a via ro,noload; unmounted vendor when finished. Phone remains
+  in recovery. No partition writes, module loads, amp programming or radio tests.
+- Verified WCD937x/Bolero + AW87xxx speaker route (CDC DMA, EAR/AUX analog), not
+  HackiOS TDM. Stock ACF names AW87559; all 12 entry CRCs pass, but live chip ID
+  remains unmeasured. Recovery has no ALSA cards and mismatched module vermagic.
+- Added offline inventory and bounded ACF metadata validator; 7 synthetic ACF
+  tests pass. Live artifacts remain ignored in research/spes-audio-wifi/.
+- Official Xiaomi audio source cloned at 054e4f359514ddd1509095b15ad9f8e1607086a4.
+  HackiOS origin/main inspected at d82c64a3a31cd27a0a0afbf6e213e467e44b1b4c.
+- Details, verified transport addresses and next implementation steps:
+  docs/SPES-AUDIO-WIFI.md. No CI run or new audio/Wi-Fi kernel this milestone.
+  Sound and XNU Wi-Fi association remain unverified; previous Wi-Fi success
+  note was build evidence only. Next is ADSP/APR startup with amps held off and
+  audit of existing 0099 WLAN DMA setup, not a blind HackiOS hardware transplant.
+
 # Porting hackios-xnu-kernel — GPU submission model (smoothness), 2026-10-24
 
 - User priority (2026-10-24): port HackiOS's GPU implementation first, then
