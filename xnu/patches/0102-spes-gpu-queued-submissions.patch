@@ -7,7 +7,12 @@
 +extern "C" uint32_t redwood_gpu_completed(void);
 +extern "C" void redwood_gpu_ring(uint32_t *rptr, uint32_t *tail);
  extern "C" void spes_modem_init(void);  /* iokit/Kernel/arm/SpesModem.cpp (boot-arg modem=1) */
-@@ -368,2 +372,10 @@
+@@ -209,2 +213,4 @@
+ 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
++	/* For EAGL (HackiOS eagl.c display_waits()): swaps wait for the GPU, so frames need not be finished first. */
++	setProperty("RedwoodWaitsForGPU", kOSBooleanTrue);
+ 	setProperty("external", false);
+@@ -368,2 +374,10 @@
  			continue;
 +		}
 +		/* GPU submissions are queued: copy a layer only once they are done with it. */
@@ -20,20 +25,13 @@
  		}
 --- a/iokit/Kernel/arm/SweetSurface.h
 +++ b/iokit/Kernel/arm/SweetSurface.h
-@@ -42,6 +42,7 @@
- 	IOMemoryMap              *kernelMap;    /* lazily created for kernel copies */
- 	OSDictionary             *values;       /* IOSurfaceSetValue & co. */
+@@ -44,2 +44,3 @@
  	uint32_t                  purgeable;    /* IOSurfaceSetPurgeable state */
 +	uint32_t                  drawn;        /* the GPU's last submission naming the pixels (0: none; RedwoodGPU.cpp) */
  
- 	bool init() APPLE_KEXT_OVERRIDE { return OSObject::init(); }
- 	void free() APPLE_KEXT_OVERRIDE;
-@@ -64,5 +65,8 @@
- /* Send right for the surface in task (IOSurfaceLookupFromMachPort). */
- mach_port_name_t sweet_surface_port_in_task(SweetSurface *surface, task_t task);
+@@ -66,2 +67,5 @@
  
 +/* Whether the GPU is done with the surface's pixels, waiting up to that long (RedwoodGPU.cpp). */
 +bool SweetSurfaceDrawn(SweetSurface *surface, uint64_t milliseconds);
 +
  #endif /* SWEET */
- #endif /* _SWEET_SURFACE_H */
