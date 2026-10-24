@@ -117,7 +117,7 @@
 +#endif /* _SWEET_SURFACE_H */
 --- /dev/null
 +++ b/iokit/Kernel/arm/SweetSurface.cpp
-@@ -0,0 +1,1054 @@
+@@ -0,0 +1,1066 @@
 +/*
 + * Built-in IOSurface for SWEET.
 + *
@@ -206,6 +206,9 @@
 +		OSAddAtomic64(-(SInt64)allocSize, (volatile SInt64 *)&sweet_surface_wired);
 +	}
 +	OSSafeReleaseNULL(kernelMap);
++	if (externalBase != 0 && memory != NULL) {
++		memory->complete();     /* wired by wrapClientImage */
++	}
 +	OSSafeReleaseNULL(memory);
 +	OSSafeReleaseNULL(state);
 +	OSObject::free();
@@ -930,6 +933,15 @@
 +
 +	IOMemoryDescriptor *wrapped = base != 0 ? IOMemoryDescriptor::withAddressRange(base,
 +	    s->allocSize, kIODirectionInOut, fTask) : NULL;
++	/*
++	 * Wire the client's pages for the surface's lifetime: RedwoodGPU walks
++	 * surface memory with getPhysicalSegment, and an unprepared descriptor
++	 * panics there ("IOGMD: not wired for the IODMACommand").
++	 */
++	if (wrapped != NULL && wrapped->prepare() != kIOReturnSuccess) {
++		IOLog("SWEET SURF: wrap base %llx could not be wired\n", (unsigned long long)base);
++		OSSafeReleaseNULL(wrapped);
++	}
 +	if (wrapped != NULL) {
 +		s->memory = wrapped;
 +		s->externalBase = base;
