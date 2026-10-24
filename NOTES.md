@@ -1,3 +1,21 @@
+# Hardware result — WrapClientImage works, later kernel panic, 2026-10-24
+
+- User: Apple logo, then a kernel panic. Saved log
+  research/spes-graphics-wrap-boot.txt (117804 B, flush #18; OrangeFox temp
+  boot recovery/orangefox-spes-miui.img, read-only pull). The panic text is
+  NOT in the ring: it happened after the last flush (log ends at
+  wcd AKS sel 7, line 1704). Panic string still needed from the screen.
+- Observed: sel 6 now succeeds: wrap ids 3,5 (194x237 BGRA), 13,14
+  (A008 masks), 15 (256x1 RGhA), all "mapped (client memory)" with non-NULL
+  state. Zero backboardd crashes (was 3x far0x30). redwood-gl frames 2,4,5
+  drawn (2-4 draws each, 1.5-8 s per frame). SpringBoard creates surfaces
+  (sel 35/40), PosterBoard reaches AKS. Only crash: driverkitd sig 9 (seen
+  before). Last surface line: backboardd create id16 256x1 fmt 0x0 bpe2 bpr672.
+- Unverified suspects for the panic (guesses): wrapped client ranges are
+  never prepare()d/wired, yet kernelMap/GPU copies read them, and the client
+  may free that memory while the surface lives; or an issue unrelated to
+  surfaces. Need the panic text before changing code.
+
 # Active hardware test — WrapClientImage image booted, 2026-10-24
 
 - Phone was in OrangeFox recovery; adb reboot bootloader, product spes
