@@ -1,3 +1,40 @@
+# Active investigation — IOSurface shared-state pointer is NULL, 2026-10-24
+
+- Surfacefix log research/spes-graphics-surfacefix-boot.txt confirms the format
+  conversion works: create becomes BGRA planes0 and attachImage succeeds as a
+  GPU-mirrored texture. SHADER PASS and all8 EAGL replacements still occur.
+- Backboardd still restarts, but there is no longer a glDrawElements0x506 line.
+  Symbolicated against the mounted read-only iOS cache: memmove+176 <-
+  IOSurfaceClientGetBulkAttachments+68 <- CA::Render::iosurface_get_edr_factor+72
+  <- CA::WindowServer::IOSurface::wrap_buffer+236 <- GLESContext::retain_image.
+  Disassembly proves GetBulkAttachments reads the shared-state pointer at
+  IOSurfaceClient+0x70 and blindly copies from pointer+0x30; far0x30 means that
+  pointer is NULL. This is not a shader draw crash.
+- sweet_surface_fill_result intends to return ref->state address at result+0x08
+  (client+0x70). Why it is zero is not yet observed. Selector27 currently just
+  accepts/ignores bulk attachments, unlike MiniIOSurface's shared-state update.
+- Added first-eight data/state mapping-address logs and selector27 using the
+  pinned MiniIOSurface layout/mask semantics. All29 host tests, SweetSurface.cpp
+  syntax compile, patch0068 application and source comparison pass. Changes are
+  local until commit approval. This does not claim to fix the NULL pointer; the
+  new map logs are needed to identify why the returned shared address is zero.
+- Next: commit/dispatch and retest. Do not paper over the NULL pointer in Apple
+  code. Read-only DSC mount is research/dsc-mount; disassembly saved
+  research/iosurface-*-disass.txt.
+
+# Active hardware test — b3a8 surface fix image booted, 2026-10-24
+
+- CI40107127278 SUCCESS for commit466bcba. Kernel xnu/out-0104/
+  kernel.development.sweet SHA256
+  53add25f8c85df1ccee86973b9364433251b3f6e187f68e74b6dd6cb873b54f0.
+- Built shim/out/spes-ios-graphics-surfacefix.img SHA256
+  0d98335f146740df8cccc593f1267f7b985fa9fd923946c4bec530179ec235bb.
+  Flags verified, product spes, temporary boot accepted send0.398s/boot0.286s/
+  total0.690s. No partition flashing or root writes.
+- Awaiting screen result. Next after settle/Fastboot: pull saved log and require
+  surface creation as BGRA planes0, successful attachImage, and no repeating
+  backboardd crash before assessing frames/UI speed. Keep shader-pass image/log.
+
 # Verified GPU shader milestone / active b3a8 surface fix, 2026-10-24
 
 - Saved submitorder log research/spes-graphics-submitorder-boot.txt (553949 B).

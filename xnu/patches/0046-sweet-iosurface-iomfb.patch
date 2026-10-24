@@ -116,7 +116,7 @@
 +#endif /* _SWEET_SURFACE_H */
 --- /dev/null
 +++ b/iokit/Kernel/arm/SweetSurface.cpp
-@@ -0,0 +1,878 @@
+@@ -0,0 +1,926 @@
 +/*
 + * Built-in IOSurface for SWEET.
 + *
@@ -163,6 +163,7 @@
 +	kSweetSurfaceCreate             = 0,
 +	kSweetSurfaceLookup             = 4,
 +	kSweetSurfaceLimits             = 13,
++	kSweetSurfaceSetBulkAttachments = 27,
 +	kSweetSurfaceLookupFromPort     = 34,
 +	kSweetSurfaceCreatePort         = 35,
 +};
@@ -650,6 +651,11 @@
 +		ref->release();
 +		return kIOReturnVMError;
 +	}
++	static uint32_t mapped_logged;
++	if (mapped_logged++ < 8) {
++		IOLog("SWEET SURF: map id %u data=%llx state=%llx\n", s->id,
++		    (unsigned long long)ref->data->getAddress(), (unsigned long long)ref->state->getAddress());
++	}
 +	IOLockLock(fLock);
 +	SweetSurfaceRef *raced = findRef(s->id, NULL);
 +	if (raced != NULL && raced->surface == s) {
@@ -884,6 +890,48 @@
 +		s->release();
 +		sweet_surf_log_once("sel", selector);
 +		return kIOReturnSuccess;
++	}
++	case kSweetSurfaceSetBulkAttachments: {
++		static const uint8_t fields[15][2] = {
++			{ 0x00, 0x20 }, { 0x20, 0x30 }, { 0x30, 0x38 }, { 0x38, 0x39 }, { 0x39, 0x3a },
++			{ 0x3a, 0x3b }, { 0x3b, 0x3c }, { 0x3c, 0x3d }, { 0x3d, 0x3e }, { 0x3e, 0x3f },
++			{ 0x3f, 0x40 }, { 0x40, 0x58 }, { 0x58, 0x5c }, { 0x5c, 0x64 }, { 0x64, 0x65 },
++		};
++		const uint8_t *in = (const uint8_t *)args->structureInput;
++		uint32_t len = args->structureInputSize;
++		IOMemoryMap *map = NULL;
++		if (args->structureInputDescriptor != NULL) {
++			map = args->structureInputDescriptor->map(kIOMapReadOnly);
++			if (map != NULL) {
++				in = (const uint8_t *)map->getVirtualAddress();
++				len = (uint32_t)map->getLength();
++			}
++		}
++		IOReturn ret = kIOReturnBadArgument;
++		if (in != NULL && len >= 0x88) {
++			uint64_t size, mask;
++			uint32_t sid;
++			memcpy(&size, in + 0x70, sizeof(size));
++			memcpy(&mask, in + 0x78, sizeof(mask));
++			memcpy(&sid, in + 0x80, sizeof(sid));
++			if (size <= 0x70) {
++				ret = kIOReturnNotFound;
++				IOLockLock(fLock);
++				SweetSurfaceRef *ref = findRef(sid, NULL);
++				if (ref != NULL) {
++					uint8_t *attachments = (uint8_t *)ref->surface->state->getBytesNoCopy() + 0x30;
++					for (unsigned i = 0; i < 15; i++) {
++						if ((mask & (1ULL << i)) && fields[i][1] <= size)
++							memcpy(attachments + fields[i][0], in + fields[i][0], fields[i][1] - fields[i][0]);
++					}
++					ret = kIOReturnSuccess;
++				}
++				IOLockUnlock(fLock);
++			}
++		}
++		OSSafeReleaseNULL(map);
++		sweet_surf_log_once("sel", selector);
++		return ret;
 +	}
 +	default:
 +		/* Values, notifications, ownership, timestamps...: accept and ignore. */
