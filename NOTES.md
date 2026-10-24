@@ -36,7 +36,18 @@
   per-frame glFinish; tools/build-spes-ios-graphics.sh drops glwait=1
   (forced the wait), keeps glsync=1.
 - CI40121920599 (62d6435 only) cancelled as superseded; CI40122058569 for
-  459b73b running -> xnu/out-0110, image shim/out/spes-ios-graphics-gpuport.img.
+  459b73b SUCCESS. Kernel xnu/out-0110/kernel.development.sweet SHA256
+  ca0ca2cfda7a4c8a2f3ba5edee8768f69e133c169fae3ac7c6ee9770c7137de9 (has
+  "queued submissions" and RedwoodWaitsForGPU). Image
+  shim/out/spes-ios-graphics-gpuport.img SHA256
+  58a77cd40658698e2a79e396441155baa4ac333322ed092f7bd93b8db09dcd11; cmdline
+  has glsync=1, no glwait. Not booted. Watch for: "SPES GPU: backend
+  stopped" (fault/ring full), "SWEET FB: the GPU is not done with surface",
+  "redwood-gl: a frame is waited for by the display's driver", and the
+  frame-time split (handing on / waiting / before it).
+- Our present already runs on the vsync timer (swap only records the
+  pending frame), at 60 Hz (sweetfb_hz unset), so the new fence wait is off
+  backboardd's thread like HackiOS's show thread.
 - Not yet ported: GPU timing via CP_REG_TO_MEM of the always-on counter
   (A610 register unverified); MiniIOMobileFramebuffer's separate show
   thread / vsync timer ("on a thread of its own"): our swap still copies in
