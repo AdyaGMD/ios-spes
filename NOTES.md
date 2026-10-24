@@ -13,7 +13,8 @@
   7a1e61cd22836e427049cb15f1128995e99b2abc9d086865529e1ebc5fb6b751.
   Image shim/out/spes-ios-graphics-wrapro.img SHA256
   67e983f9f46e0576a7dfed8454aafc0d4b6e35135bb6efe4d148985ce9d72f13, flags
-  checked. Not booted yet. Success = icons/labels drawn and far fewer
+  checked. Temporary boot accepted send0.398s/boot0.288s/total0.691s (from
+  OrangeFox via adb reboot bootloader; product spes). Success = icons/labels drawn and far fewer
   "could not be wired" lines (now with error codes).
 
 # Survey — what to port from oosexgang/hackios-xnu-kernel, 2026-10-24
