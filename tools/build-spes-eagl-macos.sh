@@ -18,6 +18,7 @@ b='extern int spes_gl_preflight(void);\n'+a+'\n\tif (!spes_gl_preflight()) retur
 assert s.count(a)==1
 Path(sys.argv[2]).write_text(s.replace(a,b))
 PY
+patch -s "$out/eagl-spes.c" < "$root/tools/eagl-attach-gpu.patch"
 /usr/bin/clang -target arm64-apple-ios16.0 -mcpu=cortex-a53 -isysroot "$sdk" \
  -O2 -dynamiclib -install_name /redwood/lib/libredwood-gl.dylib \
  -DGL_GLEXT_PROTOTYPES -I"$out" -I"$src" -I"$root/research/mesa-build/mesa-25.0.7/include" \

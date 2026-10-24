@@ -138,6 +138,14 @@ compilation, triangle drawing and matching center/background pixel readback.
 Only a passing check permits method replacement. A passing build is not a
 passing render. This guard cannot recover from a GPU/driver kernel failure.
 
+`tools/build-spes-eagl-macos.sh` applies `tools/eagl-attach-gpu.patch` to the
+pinned bridge. Mirrored render targets are initialized by a GPU blit from the
+IOSurface-backed mirror instead of a CPU hash and upload; the existing CPU path
+remains as the fallback. BGRA fallback refills reuse texture storage with
+`glTexSubImage2D`, following MakrSas/ios-topaz commit `fe7625f` rather than
+reallocating a full-screen texture on every attach. `tests/test_eagl_attach.py`
+exercises the real helper with mocked GL state when the pinned source is present.
+
 Local checks: 26 host tests, two kernel translation-unit syntax checks, Mesa/EAGL
 cross-build and ad-hoc signature verification pass. No new kernel boot, shader
 render, IOSurface rendering or accelerated UI result has been observed yet.

@@ -1,3 +1,35 @@
+# Built — EAGL GPU attach fill and storage reuse, 2026-10-24
+
+- User on spes-ios-graphics-keep.img: "still slow asf". Buffer reuse alone is
+  therefore not enough; no OrangeFox log from that boot has been pulled yet.
+- Uncommitted EAGL change (no CI needed): tools/eagl-attach-gpu.patch, applied
+  by tools/build-spes-eagl-macos.sh. my_attachImage now initializes a mirrored
+  target with the inverse of the proven frame-end GPU blit (image->mirror ->
+  image->texture), restoring read/draw FBO bindings and retaining the CPU path
+  on allocation/FBO/blit failure. Wrapped/format-0 and texImageIOSurface paths
+  are unchanged. The target's existing level-0 storage is reused; a NULL-data
+  glTexImage2D happens only when dimensions/format differ.
+- From the user's MakrSas/ios-topaz fe7625f reference, ported the simple-BGRA
+  glTexSubImage2D refill into existing storage for the CPU fallback. Topaz
+  measured 120-145 ms for repeated full-screen glTexImage2D allocation. Its
+  format restriction is intentional (their all-format attempt made green
+  screens). Reference source/diff: research/topaz-eagl-fe7625f.*.
+- Built and ad-hoc verified research/mesa-build/out/libredwood-gl.dylib,
+  SHA256 4da758efe3f548d89d856a9520b9c0a58b67ac4fbb845e002f01941e4742792e.
+  libOSMesa unchanged at f2a67fb75e8226679e146e109cf2f37b32f48708bdeb0a5f8011517c29561f04.
+  Patch applies to pristine pinned HackiOS eagl.c and reproduces the reviewed
+  source. New mocked-GL test verifies normal/inverted blit coordinates,
+  storage allocation/reuse, attachments, binding restoration and failure
+  fallback. Build log research/mesa-build/eagl-attach-gpu-build.log.
+  Full host suite: 41/41 pass (research/eagl-attach-tests.log); git diff --check
+  passes. The pinned HackiOS source clone remains unmodified.
+- Not deployed and not committed. Deployment requires a fresh recovery root
+  snapshot and a verified reversible userdata block delta; ask before writing.
+  Device is currently in the keep-image iOS boot. Expected next log: "filled
+  from and copied into its memory by the GPU", no recurring 10809 KB refill,
+  and much lower "before it for the IOSurfaces" time. Visual correctness still
+  needs hardware validation.
+
 # Analysis — traced TLB-spin boot: attach-time CPU fill and disabled buffer reuse, 2026-10-24
 
 - User on spes-ios-graphics-tlbspin-traced.img (out-0111, 26cd57d):
@@ -31,7 +63,11 @@
   tools/build-spes-ios-graphics.sh (HackiOS default gpu_keep=1); docs
   updated. Image shim/out/spes-ios-graphics-keep.img (same kernel out-0111)
   SHA256 a68747767c035181dc8cf1d9d065ac4879b09e153378d66f5e61cbb9e1a4381e,
-  cmdline spesgpu=1 spesgpuprobe=1 glsync=1, no gltrace. Not booted.
+  cmdline spesgpu=1 spesgpuprobe=1 glsync=1, no gltrace. Temporary boot
+  accepted from Fastboot: send 0.395 s, boot 0.287 s, total 0.690 s
+  (research/spes-ios-graphics-keep-fastboot.txt). No partition writes. Awaiting
+  visual result and an OrangeFox log pull; reuse and frame times unverified.
+  Baseline host suite after the boot: 40/40 tests pass.
 
 # Hardware result — gpuport (queued submissions) + TLB-spin build, 2026-10-24
 

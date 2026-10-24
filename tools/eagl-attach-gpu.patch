@@ -1,0 +1,154 @@
+--- a/userland/src/eagl.c
++++ b/userland/src/eagl.c
+@@ -234,6 +234,7 @@
+ 	bool painted;                   /* something has been drawn into it (it is a target in fact, not only in name) */
+ 	unsigned looked;                /* ... the frame in which that memory was last looked at, */
+ 	uint64_t sum;                   /* ... and what it added up to */
++	bool sub_ok;                    /* ... refilled with glTexSubImage2D (until that fails) */
+ 	GLenum to, internal, format, type;
+ 	uint32_t plane, seed;
+ 	GLsizei width, height;
+@@ -542,6 +543,7 @@
+ 	}
+ 	memset(image, 0, sizeof(*image));
+ 	image->texture = texture;
++	image->sub_ok = true;
+ 	image->surface = (IOSurfaceRef)CFRetain(surface);
+ 	return image;
+ }
+@@ -715,8 +717,40 @@
+ 	glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
+ 	glPixelStorei(GL_UNPACK_ROW_LENGTH, (GLint)(row / pixel));
+ 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+-	glTexImage2D(image->to, 0, (GLint)internal_format(image->internal, image->format), image->width, image->height, 0,
+-	    image->format, image->type, base);
++	/*
++	 * Refill simple BGRA textures into their existing storage. glTexImage2D
++	 * gave an 11 MB target new GPU storage every attach (120-145 ms on topaz).
++	 * Other formats keep the original path: extending this to every kind made
++	 * screens green there (MakrSas/ios-topaz fe7625f).
++	 */
++	GLint had_width = 0, had_height = 0, had_format = 0;
++	bool simple = !planar && image->format == GL_BGRA && image->type == GL_UNSIGNED_BYTE && image->to == GL_TEXTURE_2D &&
++	    image->sub_ok;
++	if (simple) {
++		glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, 0x1000, &had_width);
++		glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, 0x1001, &had_height);
++		glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, 0x1003, &had_format);
++	}
++	if (simple && had_width == image->width && had_height == image->height &&
++	    had_format == (GLint)internal_format(image->internal, image->format)) {
++		static unsigned sub_told;
++		while (glGetError() != 0) {
++		}
++		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, image->width, image->height, image->format, image->type, base);
++		GLenum error = glGetError();
++		if (sub_told++ < 8) {
++			say("redwood-gl: refill %dx%d into its storage (internal %#x): error %#x\n", image->width, image->height,
++			    had_format, error);
++		}
++		if (error != 0) {
++			image->sub_ok = false;
++			glTexImage2D(image->to, 0, (GLint)internal_format(image->internal, image->format), image->width,
++			    image->height, 0, image->format, image->type, base);
++		}
++	} else {
++		glTexImage2D(image->to, 0, (GLint)internal_format(image->internal, image->format), image->width, image->height, 0,
++		    image->format, image->type, base);
++	}
+ 	glPixelStorei(GL_UNPACK_ROW_LENGTH, row_length);
+ 	glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
+ 	if (trace_placing) {
+@@ -749,6 +783,57 @@
+ 	image->seed = IOSurfaceGetSeed(surface);
+ 	e->uploads++;
+ 	e->upload_bytes += row * (size_t)image->height;
++}
++
++/*
++ * Initialize a mirrored target from its surface on the GPU. This is the
++ * inverse of target_to_surface(): the IOSurface-backed mirror is read and the
++ * private texture CoreAnimation draws into is written. The target is bound.
++ * Reuse its level-0 storage when possible; allocating 11 MB again every attach
++ * would keep the cost this path is meant to remove. False selects the CPU fill.
++ */
++static bool
++surface_to_target(struct eagl *e, struct image *image)
++{
++	GLint read = 0, draw = 0;
++	GLint had_width = 0, had_height = 0, had_format = 0;
++	bool copied = false;
++
++	while (glGetError() != 0) {
++	}
++	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, 0x1000, &had_width);
++	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, 0x1001, &had_height);
++	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, 0x1003, &had_format);
++	if (had_width != image->width || had_height != image->height ||
++	    had_format != (GLint)internal_format(image->internal, image->format)) {
++		glTexImage2D(image->to, 0, (GLint)internal_format(image->internal, image->format), image->width, image->height, 0,
++		    image->format, image->type, NULL);
++		if (glGetError() != 0) {
++			return false;
++		}
++	}
++
++	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
++	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
++	if (e->reader == 0) {
++		glGenFramebuffers(1, &e->reader);
++	}
++	if (e->writer == 0) {
++		glGenFramebuffers(1, &e->writer);
++	}
++	glBindFramebuffer(GL_READ_FRAMEBUFFER, e->reader);
++	glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, image->mirror, 0);
++	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, e->writer);
++	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, image->texture, 0);
++	if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE &&
++	    glCheckFramebufferStatus(GL_DRAW_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE) {
++		glBlitFramebuffer(0, image->invert ? image->height : 0, image->width, image->invert ? 0 : image->height,
++		    0, 0, image->width, image->height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
++		copied = glGetError() == 0;
++	}
++	glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)read);
++	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)draw);
++	return copied;
+ }
+ 
+ /* What has been drawn into a texture, into its IOSurface, unless it is there (frame_end() waits for it). */
+@@ -3951,6 +4036,7 @@
+ 	GLint texture = 0;
+ 	uint32_t pixels;
+ 	uint64_t began;
++	bool gpu_filled = false;
+ 
+ 	(void)selector;
+ 	if (e == NULL || surface == NULL) {
+@@ -3992,16 +4078,22 @@
+ 	 * around, to be shown): a texture that is not the surface's memory starts with what the surface holds.
+ 	 */
+ 	began = now_us();
+-	if (surface_mirrored(e, image) || !surface_shared(e, image)) {
+-		surface_changed(e, image);              /* (what it adds up to now) */
+-		surface_to_texture(e, image);
++	{
++		bool mirrored = surface_mirrored(e, image);
++
++		gpu_filled = mirrored && surface_to_target(e, image);
++		if ((mirrored && !gpu_filled) || (!mirrored && !surface_shared(e, image))) {
++			surface_changed(e, image);              /* (what it adds up to now) */
++			surface_to_texture(e, image);
++		}
+ 	}
+ 	e->attaching += now_us() - began;
+ 	if (attached++ < 24) {
+ 		say("redwood-gl: -attachImage: texture %d is IOSurface %u ('%.4s' %d x %d, %zu bytes a row)%s%s\n", texture,
+ 		    IOSurfaceGetID(surface), (const char *)&(uint32_t){ __builtin_bswap32(pixels) }, image->width, image->height,
+ 		    IOSurfaceGetBytesPerRow(surface), inverted ? ", drawn inverted" : "", image->shared ? ": its memory" :
+-		    image->mirror != 0 ? ": a texture, copied into its memory by the GPU" : ": a copy");
++		    image->mirror != 0 ? gpu_filled ? ": a texture, filled from and copied into its memory by the GPU" :
++		    ": a texture, copied into its memory by the GPU" : ": a copy");
+ 	}
+ 	eagl_leave(e, 0x970);
+ 	return YES;
