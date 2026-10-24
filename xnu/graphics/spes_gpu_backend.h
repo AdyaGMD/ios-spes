@@ -1,6 +1,8 @@
-/* spes synchronous backend for the HackiOS RedwoodGPU service.
+/* spes backend for the HackiOS RedwoodGPU service.
  * Included after the verified probe helpers in sweet_touch.c.
  * The service lock serializes all calls after startup. Never reset a faulted GPU.
+ * Submissions are queued as HackiOS's redwood_adreno.c queues them: the ring is
+ * waited for when it is full, never the GPU; RedwoodGPU waits on fences.
  */
 #define SPES_GPU_BASE 0x20000000ull
 #define SPES_GPU_SIZE 0x10000000ull
@@ -99,16 +101,25 @@ bool redwood_gpu_map(uint64_t address,uint64_t physical,bool ro) {
 bool redwood_gpu_mapped(void) {
  return redwood_gpu_ready() && spes_gpu_backend_sync();
 }
+/* The checks spes_gpu_retire made after every submission, made while waiting. */
+static bool spes_gpu_faulted(void) {
+ uint32_t irq=touch_rd(sg.gpu,0x208cu),hw=touch_rd(sg.gpu,0x2084u),irq0=touch_rd(sg.gpu,0x804u),
+     gf=touch_rd(sg.smmu,0x48u),fs=touch_rd(sg.smmu,sg.context+0x58u);
+ return irq || hw || (irq0&0x31c002c2u) || gf || (fs&0xc00001feu);
+}
 bool redwood_gpu_done(uint32_t fence) {
  if(!redwood_gpu_ready() || fence>sg.fence)return false;
  __asm__ volatile("dsb sy" ::: "memory");
- return ((volatile uint32_t *)(sg.dma+0xc000))[9]>=fence;
+ if(((volatile uint32_t *)(sg.dma+0xc000))[9]>=fence)return true;
+ if(spes_gpu_faulted())redwood_gpu_report("fault while waiting for a fence");
+ return false;
 }
 uint32_t redwood_gpu_last(void){return sg.fence;}
 bool redwood_gpu_unmap(uint64_t address,uint64_t size) {
  int owner=spes_gpu_owner(address,size);
  if(!redwood_gpu_ready() || owner<0 || address!=sg.buffers[owner].base ||
-     size!=sg.buffers[owner].size || !redwood_gpu_done(sg.fence))return false;
+     size!=sg.buffers[owner].size)return false;
+ /* (RedwoodGPU unmaps a buffer only once its own fence is done) */
  for(uint64_t offset=0;offset<size;offset+=4096){
   uint64_t *leaf=spes_gpu_leaf(address+offset,false);
   if(leaf){*leaf=0;to_memory((vm_offset_t)leaf,8);}
@@ -130,9 +141,21 @@ void redwood_gpu_to_memory(void *start,uint64_t size) {
  if(size && (!start || size>SPES_GPU_SIZE || (uintptr_t)start+size<(uintptr_t)start))return;
  to_memory((vm_offset_t)start,(vm_size_t)size);
 }
+/* Into the ring behind what is there, if there is room: rptr chases tail. */
+static bool spes_gpu_ring_queue(const uint32_t *words,uint32_t count) {
+ volatile uint32_t *ring=(volatile uint32_t *)(sg.dma+0x8000);
+ uint32_t head=touch_rd(sg.gpu,0x2018)&2047u;
+ /* Pad at the boundary so no packet straddles the end of the 8 KiB ring. */
+ uint32_t pad=sg.tail+count>2048u?2048u-sg.tail:0u;
+ uint32_t room=(head+2048u-sg.tail-1u)&2047u;  /* keep one slot empty */
+ if(sg.tail>=2048u || !count || pad+count>room)return false;
+ for(uint32_t i=0;i<pad;++i)ring[sg.tail++]=0x70108000u;
+ sg.tail&=2047u;
+ for(uint32_t i=0;i<count;++i){ring[sg.tail]=words[i];sg.tail=(sg.tail+1u)&2047u;}
+ return true;
+}
 uint32_t redwood_gpu_submit(const uint64_t *addresses,const uint32_t *words,uint32_t count) {
- if(!redwood_gpu_ready() || !count || count>64 || sg.fence==0xffffffffu ||
-     !redwood_gpu_done(sg.fence))return 0;
+ if(!redwood_gpu_ready() || !count || count>64 || sg.fence==0xffffffffu)return 0;
  uint32_t commands[268],n=0;
  /* The hardware-proven A610 order: indirect buffer(s), CP_WAIT_FOR_IDLE, then
   * CACHE_FLUSH_TS. Do not prepend EAGL-style invalidate events here. */
@@ -150,22 +173,19 @@ uint32_t redwood_gpu_submit(const uint64_t *addresses,const uint32_t *words,uint
  commands[n++]=0x70268000;
  commands[n++]=0x70460004;commands[n++]=4;commands[n++]=0x011f0024;
  commands[n++]=0;commands[n++]=fence;
- if(!spes_gpu_ring_append((volatile uint32_t *)(sg.dma+0x8000),&sg.tail,
-     touch_rd(sg.gpu,0x2018),commands,n))return 0;
+ /* As redwood_adreno.c: up to 2 s for room, 100 us at a time. */
+ bool queued=false;
+ for(unsigned i=0;i<20000 && !queued;++i){
+  if((queued=spes_gpu_ring_queue(commands,n)))break;
+  if(spes_gpu_faulted()){redwood_gpu_report("fault while waiting for ring room");return 0;}
+  delay(100);
+ }
+ if(!queued){redwood_gpu_report("ring full: the GPU is not reading it");return 0;}
  sg.fence=fence;
  __asm__ volatile("dsb sy" ::: "memory");
  touch_wr(sg.gpu,0x201c,sg.tail);
- if(!spes_gpu_retire(sg.gpu,sg.smmu,sg.context,sg.tail,NULL)){
-  redwood_gpu_report("submission fault or timeout");return 0;
- }
- for(unsigned i=0;i<1000;++i){
-  if(redwood_gpu_done(fence)){
-   if(!spes_gpu_retire(sg.gpu,sg.smmu,sg.context,sg.tail,NULL))break;
-   ++sg.submissions;return fence;
-  }
-  touch_wait(1);
- }
- redwood_gpu_report("completion fence timeout");return 0;
+ ++sg.submissions;
+ return fence;
 }
 void redwood_gpu_space(uint64_t *used,uint32_t *live,uint64_t *largest,unsigned *holes,
     unsigned *most,uint64_t *lost,uint32_t *refused){
@@ -203,6 +223,6 @@ static bool spes_gpu_backend_start(vm_offset_t gpu,vm_offset_t smmu,uint32_t con
  sg.fence=((volatile uint32_t *)(dma+0xc000))[9];
  sg.ready=true;
  RedwoodGPUStart();
- printf("SPES GPU: persistent backend ready; synchronous submissions, 256 MiB VA\n");
+ printf("SPES GPU: persistent backend ready; queued submissions, 256 MiB VA\n");
  return true;
 }

@@ -27,7 +27,7 @@ typedef uintptr_t addr64_t;
 #define VM_KERN_MEMORY_IOKIT 1
 #define KERN_SUCCESS 0
 static int kernel_map, kernel_pmap;
-static bool sync_ok=true, retire_ok=true;
+static bool sync_ok=true;
 static unsigned starts, allocs;
 static uint32_t rptr, captured[266], captured_count;
 static uint32_t *fence_word;
@@ -40,21 +40,23 @@ static uint64_t pmap_find_phys(int p,addr64_t v){(void)p;(void)v;return (0x10000
 #define ptoa_64(p) ((p)<<14)
 static void to_memory(vm_offset_t p,vm_size_t n){(void)p;(void)n;}
 static bool spes_gpu_tlb_sync(vm_offset_t s,uint32_t c){(void)s;(void)c;return sync_ok;}
-static void touch_wr(vm_offset_t g,uint32_t r,uint32_t v){(void)g;if(r==0x201c){rptr=v;if(complete && captured_count)*fence_word=captured[captured_count-1];}}
-static uint32_t touch_rd(vm_offset_t g,uint32_t r){(void)g;(void)r;return rptr;}
-static void touch_wait(unsigned n){(void)n;}
-static bool spes_gpu_retire(vm_offset_t g,vm_offset_t s,uint32_t c,uint32_t t,const char *tag){
- (void)g;(void)s;(void)c;(void)t;(void)tag;return retire_ok;
+static uint32_t *ring_words, wptr, faults;
+/* WPTR write: capture what was queued since the last one; the GPU "runs" it at once if complete. */
+static void touch_wr(vm_offset_t g,uint32_t r,uint32_t v){
+ (void)g;if(r!=0x201c)return;
+ captured_count=0;
+ for(uint32_t i=wptr;i!=v;i=(i+1)&2047)captured[captured_count++]=ring_words[i];
+ wptr=v;if(complete){rptr=v;if(captured_count)*fence_word=captured[captured_count-1];}
 }
-static bool spes_gpu_ring_append(volatile uint32_t *r,uint32_t *tail,uint32_t head,const uint32_t *p,uint32_t n){
- (void)head;assert(n<=268);memcpy(captured,p,n*4);captured_count=n;for(unsigned i=0;i<n;++i){r[*tail]=p[i];*tail=(*tail+1)&2047;}return true;
-}
+static uint32_t touch_rd(vm_offset_t g,uint32_t r){(void)g;return r==0x2018?rptr:(r==0x2084?faults:0);}
+static void delay(int us){(void)us;}
 void RedwoodGPUStart(void){++starts;}
 '''
         suffix=r'''
 int main(void){
  uint64_t l2[512]={0};uint8_t *dma=calloc(1,65536);
  fence_word=&((uint32_t *)(dma+0xc000))[9];*fence_word=2048;
+ ring_words=(uint32_t *)(dma+0x8000);rptr=wptr=1116;
  assert(spes_gpu_backend_start(1,2,0x8000,(uintptr_t)dma,l2,1116));
  assert(starts==1 && redwood_gpu_ready());
  assert(!redwood_gpu_address(0) && !redwood_gpu_address(1) && !redwood_gpu_address(UINT64_MAX));
@@ -76,6 +78,16 @@ int main(void){
  assert(captured_count==262 && captured[0]==0x70bf8003);
  assert(captured[256]==0x70268000 && captured[259]==0x011f0024);
  assert(*fence_word==2049 && redwood_gpu_done(2049));
+ /* Queued, not synchronous: a second submission goes in while the first is still running. */
+ complete=false;words[0]=4;
+ assert(redwood_gpu_submit(ib,words,1)==2050 && !redwood_gpu_done(2050));
+ assert(redwood_gpu_submit(ib,words,1)==2051 && !redwood_gpu_done(2050) && redwood_gpu_ready());
+ *fence_word=2051;rptr=wptr;complete=true;
+ assert(redwood_gpu_done(2050) && redwood_gpu_done(2051));
+ /* A fault seen while waiting stops the backend instead of timing out later. */
+ complete=false;assert(redwood_gpu_submit(ib,words,1)==2052);
+ faults=1;assert(!redwood_gpu_done(2052) && !redwood_gpu_ready());
+ faults=0;sg.faulted=false;sg.ready=true;*fence_word=2052;rptr=wptr;complete=true;
  ib[0]=a+4096;assert(!redwood_gpu_submit(ib,words,1)); /* unmapped */
  ib[0]=a;words[0]=0x100000;assert(!redwood_gpu_submit(ib,words,1));
 

@@ -1,6 +1,6 @@
 /* Adapted for spes from oosexgang/hackios-xnu-kernel commit
  * 8e61187098f2c26c5daee8f9f72b6416aa64b9ab. Upstream APSL-2.0; see LICENSE.
- * Synchronous spes backend: a successful submission has completed its fence.
+ * The spes backend queues submissions; surfaces carry their last fence.
  */
 /*
  * RedwoodGPU: the phone's Adreno for programs to draw with.
@@ -257,6 +257,21 @@ gpuWait(uint32_t fence, uint64_t milliseconds)
 		gGPUReported = !redwood_gpu_recover();
 	}
 	return false;
+}
+
+/* Whether the GPU is done with the surface's pixels (MiniIOSurfaceDrawn in HackiOS). */
+bool
+SweetSurfaceDrawn(SweetSurface * surface, uint64_t milliseconds)
+{
+	uint32_t fence = surface->drawn;
+	bool done = true;
+
+	if (fence != 0 && gGPULock != NULL) {
+		IOLockLock(gGPULock);
+		done = !redwood_gpu_ready() || gpuWait(fence, milliseconds);
+		IOLockUnlock(gGPULock);
+	}
+	return done;
 }
 
 
@@ -828,6 +843,11 @@ RedwoodGPUUserClient::surfaceBuffer(struct redwood_surface * request)
 	if (s == NULL) {
 		return kIOReturnNotFound;
 	}
+	if (s->externalBase != 0) {
+		/* (memory of a program's own with a surface made around it: not in whole pages, and seldom in rows the GPU takes) */
+		s->release();
+		return kIOReturnUnsupported;
+	}
 	size = round_page_64(s->allocSize);
 	memory = IOSubMemoryDescriptor::withSubRange(s->memory, 0, size, kIODirectionInOut);
 	if (memory == NULL || size == 0 || size > GPU_BUFFER_MAX || size > s->memory->getLength() || !s->kernelAddress()) {
@@ -1044,7 +1064,7 @@ RedwoodGPUUserClient::submit(struct msm_gem_submit * request)
 		if (b != NULL) {
 			b->fence = request->fence;
 			if (b->surface != NULL) {
-				/* Synchronous backend completed this fence before submit returned. */
+				b->surface->drawn = request->fence;
 			}
 		}
 	}

@@ -1,0 +1,32 @@
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -366,6 +366,10 @@
+ 		if (s == NULL || s == fSurface) {
+ 			OSSafeReleaseNULL(s);
+ 			continue;
++		}
++		/* GPU submissions are queued: copy a layer only once they are done with it. */
++		if (!SweetSurfaceDrawn(s, 500)) {
++			IOLog("SWEET FB: the GPU is not done with surface %u after 500 ms; shown as it is\n", id);
+ 		}
+ 		uintptr_t src = s->kernelAddress();
+ 		uint32_t bpe = s->bytesPerElement ? s->bytesPerElement : 4;
+--- a/iokit/Kernel/arm/SweetSurface.h
++++ b/iokit/Kernel/arm/SweetSurface.h
+@@ -42,6 +42,7 @@
+ 	IOMemoryMap              *kernelMap;    /* lazily created for kernel copies */
+ 	OSDictionary             *values;       /* IOSurfaceSetValue & co. */
+ 	uint32_t                  purgeable;    /* IOSurfaceSetPurgeable state */
++	uint32_t                  drawn;        /* the GPU's last submission naming the pixels (0: none; RedwoodGPU.cpp) */
+ 
+ 	bool init() APPLE_KEXT_OVERRIDE { return OSObject::init(); }
+ 	void free() APPLE_KEXT_OVERRIDE;
+@@ -64,5 +65,8 @@
+ /* Send right for the surface in task (IOSurfaceLookupFromMachPort). */
+ mach_port_name_t sweet_surface_port_in_task(SweetSurface *surface, task_t task);
+ 
++/* Whether the GPU is done with the surface's pixels, waiting up to that long (RedwoodGPU.cpp). */
++bool SweetSurfaceDrawn(SweetSurface *surface, uint64_t milliseconds);
++
+ #endif /* SWEET */
+ #endif /* _SWEET_SURFACE_H */
