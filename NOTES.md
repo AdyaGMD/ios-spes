@@ -1,3 +1,13 @@
+# Active hardware test — WrapClientImage image booted, 2026-10-24
+
+- Phone was in OrangeFox recovery; adb reboot bootloader, product spes
+  verified. Image SHA256 rechecked (9e41931d...596ae9). Temporary boot of
+  shim/out/spes-ios-graphics-wrap.img accepted send0.400s/boot0.288s/
+  total0.691s. No partition flashing or root writes.
+- Next after settle/Fastboot: pull saved log (read-only recovery), look for
+  "SWEET SURF: wrap" lines and check whether backboardd still restarts with
+  far0x30.
+
 # Built — WrapClientImage image ready for temporary boot, 2026-10-24
 
 - Commit 07fbd1c (sel 6 handler) failed CI40115058743: 0068 no longer applied.
