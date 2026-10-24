@@ -38,7 +38,16 @@ void redwood_gpu_report(const char *why) {
  sg.faulted = true;
  redwood_gpu_stop();
 }
+/*
+ * TLBIASID + TLBSYNC, spinning on TLBSTATUS as HackiOS's redwood_gpu_unmap does: the sync
+ * takes microseconds, and spes_gpu_tlb_sync's 1 ms sleeps made every new GPU buffer cost
+ * 4-29 ms. That sleeping sync stays as the fallback if the spin runs out.
+ */
 static bool spes_gpu_backend_sync(void) {
+ touch_wr(sg.smmu, sg.context + 0x610u, 0u); /* TLBIASID, ASID 0 */
+ touch_wr(sg.smmu, sg.context + 0x7f0u, 1u); /* TLBSYNC */
+ for (unsigned n = 0; n < 100000u; ++n)
+  if (!(touch_rd(sg.smmu, sg.context + 0x7f4u) & 1u)) return true;
  if (spes_gpu_tlb_sync(sg.smmu, sg.context)) return true;
  redwood_gpu_report("TLB sync timeout; allocations retained");
  return false;

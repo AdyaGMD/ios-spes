@@ -48,7 +48,7 @@ static void touch_wr(vm_offset_t g,uint32_t r,uint32_t v){
  for(uint32_t i=wptr;i!=v;i=(i+1)&2047)captured[captured_count++]=ring_words[i];
  wptr=v;if(complete){rptr=v;if(captured_count)*fence_word=captured[captured_count-1];}
 }
-static uint32_t touch_rd(vm_offset_t g,uint32_t r){(void)g;return r==0x2018?rptr:(r==0x2084?faults:0);}
+static uint32_t touch_rd(vm_offset_t g,uint32_t r){(void)g;if((r&0xfff)==0x7f4)return sync_ok?0:1;return r==0x2018?rptr:(r==0x2084?faults:0);}
 static void delay(int us){(void)us;}
 void RedwoodGPUStart(void){++starts;}
 '''
