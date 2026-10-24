@@ -29,8 +29,9 @@
   ac7d9a3297be55c44f50fcbe3b1d488b75a4299198488b23e677c0c337ecc606;
   traced variant shim/out/spes-ios-graphics-tlbspin-traced.img (cmdline +
   glframes=1 gltrace=40-40) SHA256
-  dcac5b4b0da069915f2627e99671f83278df686e2d59a1c736cdc0a64dc78243. Neither
-  booted. Traced boot shows which texture is refilled and its flags.
+  dcac5b4b0da069915f2627e99671f83278df686e2d59a1c736cdc0a64dc78243. Traced
+  image temp-booted send0.422s/boot0.287s/total0.712s (from OrangeFox;
+  product spes). Plain tlbspin image not booted. Traced boot shows which texture is refilled and its flags.
 - Shared working tree: the other agent committed 9a58f70/f02942b (docs,
   tests, tools; no kernel patches) locally; they were pushed with 26cd57d.
   Its untracked xnu/patches/0103-spes-audio-survey-wlfw-memory.patch and
