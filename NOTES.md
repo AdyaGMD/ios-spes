@@ -1,3 +1,41 @@
+# Porting hackios-xnu-kernel — step 1 done (IOSurface), 2026-10-24
+
+- Commit 33a1656 (patch0046, SweetSurface.{h,cpp}): ported MiniIOSurface
+  SetValue/CopyValue/RemoveValue (9/10/11) with per-surface OSDictionary
+  values and valuesSeed(+0x20)/valuesSize(+0x28) in the shared state page
+  (struct sweet_surface_shared = MiniIOSurface.h layout; our existing
+  registry id 0x00, seed 0x0c, attachments 0x30 already matched), plus
+  SetPurgeable 20, BindAccel 12, SetYCbCrMatrix 5. Unknown selectors still
+  return success (reference returns kIOReturnUnsupported). Before: sel 9 was
+  accepted and dropped, so CopyValue always came back empty. Pre-edit
+  copies research/pre-values/. Local compile 0/3 failed (SweetSurface,
+  RedwoodGPU, SweetFramebuffer; research/graphics-values-compile.log);
+  0046+0068 match build tree. Selectors seen in logs (first call only, so
+  counts understate): backboardd 5,6,9,13,27,34; SpringBoard 35,40,41
+  (40/41 not in reference either). Reference is iOS 16.5, we run 16.7.16;
+  selector numbers assumed equal (not verified).
+- CI40120094724 dispatched for 33a1656; image to be
+  shim/out/spes-ios-graphics-values.img. Includes the wrapro changes.
+- Reference clones are 4 commits behind upstream, none graphics-related
+  (thermald, var_store, loader ramfb, setup.sh).
+- Slowness, more data (wire log, 30-frame summary): 5.78 s a frame average
+  incl. startup = 2.06 s handing commands on (flush), 0.30 s waiting,
+  3.49 s preparing IOSurface textures. Our EAGL is the reference eagl.c +
+  gl_osmesa.c, Mesa built with all reference patches incl.
+  freedreno-darwin.patch, so zero-copy sharing (surface_shared ->
+  glEGLImageTargetTexture2DOES -> RedwoodGPU surfaceBuffer) should exist;
+  sharing requires GL_BGRA, plane 0, not inverted, whole surface. Created
+  surfaces map cached (kIOMapDefaultCache), so not an uncached-read issue.
+  Still unexplained: why one full 4544x2436 surface (10809 KB) is copied
+  every frame and why flush takes ~2 s. Next: boot with glframes=1 /
+  gltrace to see which image is refilled and whether surface_shared is
+  refused (e->refused).
+- Step 2 candidates (framebuffer): backboardd calls FB selectors our
+  SweetFramebuffer (600 lines) only accepts but MiniIOMobileFramebuffer
+  (1648 lines) implements: 79 GetBlock (3x), 74 SupportedFrameInfo,
+  57 GetColorRemapMode, 29 GetDisplayArea; also unhandled 15,17,22,27,33,
+  50,55,68,84 (68/84 not in reference). Not started.
+
 # Built — read-only/page-exact wrap (MiniIOSurface port), 2026-10-24
 
 - Commit 5360497 (patch0046): wrap tries prepare() InOut then Out, wires
