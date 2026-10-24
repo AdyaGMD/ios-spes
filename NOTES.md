@@ -1,3 +1,19 @@
+# Active hardware test — cache-address fix boot accepted, 2026-10-24
+
+- Fix commit a26f77a; CI40095679058 SUCCESS; 29 host tests and local pmap compile pass.
+  Downloaded kernel xnu/out-0101/kernel.development.sweet checksum verified:
+  eb64d5bdc898f5c84feb79b3dcd451354740c9159aa43b22c22a58a08ba24949.
+- New image shim/out/spes-ios-graphics-cachefix.img SHA256
+  36e91a2da79c9a087510657c66ada1cfbf7bdc38ff8a6f0de0337af88922e0d6.
+  Original0100 image retained as shim/out/spes-ios-graphics-0100.img.
+- Recovery rebooted to Fastboot; product spes verified; temporary boot accepted
+  send0.434s/boot0.287s/total0.726s. No additional userdata writes performed.
+- Awaiting user result: iOS, logo or panic. The previous panic is consistent with
+  the reproduced cache-address truncation, but no claim that hardware is fixed
+  until this boot is observed. No shader/UI acceleration confirmed yet.
+- Next: interpret screen; read saved log via temporary recovery if needed. Keep
+  installed libraries; root-delta rollback must not overwrite changed metadata.
+
 # Active fix — GPU userspace cache-transition panic, 2026-10-24
 
 - Photo shows phystokv_range illegal physical address panic after backboardd
@@ -13,7 +29,7 @@
   invokes this path; new GPU buffers request write-combined mappings. This matches
   photo panic class/address range; exact stack not persisted, so hardware retest
   still needed to confirm it is the sole trigger.
-- Fix commit a26f77a; CI40095679058 building. All29 host tests pass.
+- Fix commit a26f77a; CI40095679058 SUCCESS. All29 host tests pass.
 - Patch0101 widens pp BEFORE shift. Regression reproduces old truncation and
   checks >=4GiB physical addresses. Local pmap translation unit compile passes.
   Next: complete host tests, commit/build0101, temporary full graphics boot;
