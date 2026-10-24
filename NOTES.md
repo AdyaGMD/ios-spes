@@ -1,3 +1,38 @@
+# Analysis — traced TLB-spin boot: attach-time CPU fill and disabled buffer reuse, 2026-10-24
+
+- User on spes-ios-graphics-tlbspin-traced.img (out-0111, 26cd57d):
+  "feels the same". First OrangeFox temp boot after it did not bring up adb
+  (phone returned to Fastboot); second one worked.
+- Log research/spes-graphics-tlbspin-traced-boot.txt (392238 B, flush #44,
+  1422 gltrace lines for frame 40). Frames 10-39 avg 501 ms (gpuport 669):
+  flush 239, wait 15, IOSurface prep 389. Buffer batches now 1-1.4 ms each
+  in places (TLB spin helped) but others still 6-14 ms each.
+- Frame 40 trace: the only full-screen texture is 199 (1125x2436 BGRA),
+  the frame's own render target (framebuffer 58 "into texture 199"), also
+  sampled into a 96x96 framebuffer near the dock (blur backdrop). The
+  10809 KB "refilled" each frame is NOT a shown texture: it is eagl.c
+  my_attachImage (~line 3946). CA attaches a rotating BGRA 1125x2436 display
+  surface every frame; with glblit=1 (blit_targets, HackiOS default) the
+  target is "a texture, copied into its memory by the GPU", and attach first
+  runs surface_changed (CPU hash, 10.8 MB) + surface_to_texture (CPU upload,
+  10.8 MB). That is e->attaching = "before it for the IOSurfaces".
+  Idea (not done): fill the target texture from image->mirror (the surface's
+  own memory as an EGLImage texture) with glBlitFramebuffer on the GPU, the
+  reverse of the end-of-frame copy (eagl.c ~779), and skip the hash for
+  non-wrapped targets. This is a userland EAGL change: needs rebuild
+  (tools/build-spes-eagl-macos.sh) and a userdata root delta (snapshot +
+  apply-ios-root-delta.py) with explicit user approval.
+- Also seen: format-0 attached surfaces (e.g. IOSurface 64, 180x179, 720 B
+  rows, "a copy") are treated by eagl.c as wrapped + alpha_first ("opacity
+  first, then blue, green, red"). Relevant to the missing app icons later.
+- Buffer reuse was OFF: the image passed gpu_keep=0 ("a test: none kept";
+  docs said "disables caching for initial integration"), so every Mesa
+  buffer paid full creation cost ("0 kept ones given again"). Removed from
+  tools/build-spes-ios-graphics.sh (HackiOS default gpu_keep=1); docs
+  updated. Image shim/out/spes-ios-graphics-keep.img (same kernel out-0111)
+  SHA256 a68747767c035181dc8cf1d9d065ac4879b09e153378d66f5e61cbb9e1a4381e,
+  cmdline spesgpu=1 spesgpuprobe=1 glsync=1, no gltrace. Not booted.
+
 # Hardware result — gpuport (queued submissions) + TLB-spin build, 2026-10-24
 
 - User on spes-ios-graphics-gpuport.img (out-0110, 459b73b): "very slow

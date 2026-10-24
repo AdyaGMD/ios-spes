@@ -128,7 +128,8 @@ not implemented. This is an experimental trusted-userland bring-up interface.
 repeat, remap and allocated-buffer gates in sequence, then publishes the service
 only after success. The opt-in `tools/build-spes-ios-graphics.sh` builds that full
 iOS image, preserving the existing software boot image. It does not install files
-or boot a device. `gpu_keep=0` disables caching for initial integration.
+or boot a device. GPU buffer reuse uses the HackiOS default (`gpu_keep=1`);
+the image no longer passes `gpu_keep=0`, which disabled it for initial integration.
 
 The host build scripts use pinned HackiOS userland and Mesa25.0.7. The A610
 bank-layout setting matches the live spes device tree (chip06010001, bank14).
