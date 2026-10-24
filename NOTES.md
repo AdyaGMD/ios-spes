@@ -1,3 +1,31 @@
+# Analysis — wired boot log: blank icons/text and slow frames, 2026-10-24
+
+- Log research/spes-graphics-wire-boot.txt (245025 B, flush #41, OrangeFox
+  read-only pull). 0 backboardd crashes; Preferences launched; ~28+ frames.
+- Missing icons/text = failed wiring. 76 sel6 wraps: 30 mapped, 46 "could
+  not be wired" -> private ZEROED buffer -> blank. Failures include every
+  87x87 BGRA wrap (app icons) and every A008 (0x41303038, bpe1) text strip,
+  many with unaligned bases (...040, ...b40).
+- Reference oosexgang/hackios-xnu-kernel (research/hackios-xnu-kernel,
+  8e61187) MiniIOSurface.cpp:626-650 differs in exactly two ways: (1) tries
+  prepare() with kIODirectionInOut, then retries kIODirectionOut ("a picture
+  that is only shown need not be" writable); (2) wraps exactly the owner's
+  size (IOSurfaceAllocSize/needed), never rounded up. SweetSurface uses InOut
+  only and round_page(alloc), which for unaligned bases runs past the
+  client's memory. Hypothesis (not yet proven): read-only image memory
+  and/or the over-long range make prepare() fail. Our log does not print the
+  prepare() error code.
+- Slowness, from eagl.c frame stats (research/hackios-xnu-userland 906425b,
+  eagl.c:1119): "handing on" = e->flushing, "waiting" = waited-before,
+  "before it for the IOSurfaces" = e->attaching. Steady frames 0.3-0.8 s,
+  mostly handing-on (e.g. frame24 655 of 787 ms), waiting 50-120 ms, and
+  ~10.8 MB "textures refilled from IOSurfaces" EVERY frame (= one full
+  1125x2436x4 surface re-uploaded). RedwoodGPU stats say "GPU worked 0 us"
+  for every submission, which looks like a broken counter (unverified).
+- Next (proposed): port the two wrap differences + log prepare() error;
+  then look at why the full-screen surface is re-uploaded each frame and
+  what flushing spends its time on.
+
 # Hardware result — wired WrapClientImage boots to UI, 2026-10-24
 
 - User report on spes-ios-graphics-wire.img (kernel out-0107, 8e3ecc5): Apple
