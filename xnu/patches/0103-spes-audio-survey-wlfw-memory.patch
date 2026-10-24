@@ -1,0 +1,224 @@
+--- a/iokit/Kernel/arm/SpesModem.cpp
++++ b/iokit/Kernel/arm/SpesModem.cpp
+@@ -3158,13 +3158,19 @@
+ 	}
+ }
+ 
+-static void
++#include "spes_wlfw_memory.h"
++
++static bool
+ w_on_msa_info(const uint8_t *d, uint32_t len)
+ {
+ 	uint16_t l = 0;
+ 	const uint8_t *v = qm_find(d, len, 0x03, &l);
+ 	uint32_t n = (v != NULL && l >= 1) ? v[0] : 0;
+ 
++	if (!spes_msa_regions_valid(v, l, WLFW_MSA_BASE, WLFW_MSA_SIZE)) {
++		LOG("wlfw: invalid MSA region list; ownership unchanged");
++		return false;
++	}
+ 	LOG("wlfw: %u MSA region(s)", n);
+ 	IOSleep(20);                                /* ath10k: give the modem time before the XPU update */
+ 	for (uint32_t i = 0; i < n && 1 + 13 * (i + 1) <= l; i++) {
+@@ -3176,12 +3182,12 @@
+ 		uint8_t sec = e[12];
+ 		static const uint32_t vm[3] = { VMID_MSS_MSA, VMID_WLAN, VMID_WLAN_CE };
+ 		LOG(" MSA region %u: %llx + %x secure %u", i, addr, size, sec);
+-		if (addr < WLFW_MSA_BASE || addr + size > (uint64_t)WLFW_MSA_BASE + WLFW_MSA_SIZE) {
+-			LOG(" out of the MSA window, skipped");
+-			continue;
+-		}
+-		(void)scm_assign(addr, size, vm, sec ? 2 : 3);
+-	}
++		if (scm_assign(addr, size, vm, sec ? 2 : 3) != 0) {
++			LOG("wlfw: MSA assignment failed; not announcing MSA_READY");
++			return false; /* Previously assigned regions remain owned; do not retry. */
++		}
++	}
++	return true;
+ }
+ 
+ static unsigned w_arrivals, w_cap_tries, w_cap_retry_ms;
+@@ -3274,8 +3280,11 @@
+ 	case WLFW_MSA_INFO:
+ 		LOG("wlfw: msa_info %s err %u", ok ? "ok" : "FAILED", err);
+ 		if (ok) {
+-			w_on_msa_info(d, len);
+-			w_simple(WLFW_MSA_READY, "msa_ready sent");
++			if (w_on_msa_info(d, len)) {
++				w_simple(WLFW_MSA_READY, "msa_ready sent");
++			} else {
++				w_step = "MSA validation/assignment failed (stopped)";
++			}
+ 		}
+ 		break;
+ 	case WLFW_MSA_READY:
+@@ -6186,6 +6195,8 @@
+ 	thread_terminate(current_thread());
+ }
+ 
++#include "spes_audio_survey.inc"
++
+ extern "C" void
+ spes_modem_init(void)
+ {
+@@ -6193,6 +6204,7 @@
+ 	uint32_t on = 0;
+ 	thread_t thread;
+ 
++	spes_audio_survey_init();
+ 	if (started || !PE_parse_boot_argn("modem", &on, sizeof(on)) || on == 0) {
+ 		return;
+ 	}
+--- /dev/null
++++ b/iokit/Kernel/arm/spes_wlfw_memory.h
+@@ -0,0 +1,31 @@
++/* WLFW MSA_INFO TLV: u8 count, then {le64 address, le32 size, u8 secure}.
++ * Validate every region before transferring ownership. No hardware dependencies.
++ */
++#ifndef SPES_WLFW_MEMORY_H
++#define SPES_WLFW_MEMORY_H
++static bool
++spes_msa_regions_valid(const uint8_t *v, uint32_t len, uint64_t base, uint32_t size)
++{
++    if (!v || !len || !v[0] || len != 1u + 13u * v[0]) return false;
++    for (unsigned i = 0; i < v[0]; i++) {
++        const uint8_t *e = v + 1 + 13 * i;
++        uint64_t addr = 0;
++        uint32_t bytes = 0;
++        for (unsigned b = 0; b < 8; b++) addr |= (uint64_t)e[b] << (8 * b);
++        for (unsigned b = 0; b < 4; b++) bytes |= (uint32_t)e[8 + b] << (8 * b);
++        if (!bytes || e[12] > 1 || addr < base || addr - base >= size ||
++            bytes > size - (addr - base)) return false;
++        for (unsigned j = 0; j < i; j++) {
++            const uint8_t *p = v + 1 + 13 * j;
++            uint64_t previous = 0;
++            uint32_t previous_bytes = 0;
++            for (unsigned b = 0; b < 8; b++) previous |= (uint64_t)p[b] << (8 * b);
++            for (unsigned b = 0; b < 4; b++) previous_bytes |= (uint32_t)p[8 + b] << (8 * b);
++            /* Both addresses already bounded by the supplied window. */
++            if (addr - base < previous - base + previous_bytes &&
++                previous - base < addr - base + bytes) return false;
++        }
++    }
++    return true;
++}
++#endif
+--- /dev/null
++++ b/iokit/Kernel/arm/spes_smem_read.h
+@@ -0,0 +1,56 @@
++/* Read-only, bounded Qualcomm private SMEM decoding. No mapped pointers escape
++ * until the partition and item bounds have been checked. Caller supplies a
++ * snapshot: this parser does not synchronize with a running remote processor.
++ */
++#ifndef SPES_SMEM_READ_H
++#define SPES_SMEM_READ_H
++static uint32_t spes_le32(const uint8_t *p) {
++    return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
++}
++static uint16_t spes_le16(const uint8_t *p) { return (uint16_t)p[0] | (uint16_t)p[1] << 8; }
++static const uint8_t *
++spes_smem_partition_read(const uint8_t *mem, uint32_t size, uint16_t remote, uint32_t *length)
++{
++    *length = 0;
++    if (!mem || size < 4096) return NULL;
++    const uint8_t *toc = mem + size - 4096;
++    if (memcmp(toc, "$TOC", 4) || spes_le32(toc + 4) != 1) return NULL;
++    uint32_t count = spes_le32(toc + 8);
++    if (count > (4096 - 32) / 48) return NULL;
++    for (unsigned i = 0; i < count; i++) {
++        const uint8_t *e = toc + 32 + 48 * i;
++        uint16_t a = spes_le16(e + 12), b = spes_le16(e + 14);
++        if (!((a == 0 && b == remote) || (b == 0 && a == remote))) continue;
++        uint32_t off = spes_le32(e), bytes = spes_le32(e + 4);
++        if (!off || bytes < 32 || off > size - 4096 || bytes > size - 4096 - off) return NULL;
++        const uint8_t *p = mem + off;
++        if (memcmp(p, "$PRT", 4) || spes_le16(p + 4) != a || spes_le16(p + 6) != b ||
++            spes_le32(p + 8) != bytes) return NULL;
++        uint32_t uncached = spes_le32(p + 12), cached = spes_le32(p + 16);
++        if (uncached < 32 || uncached > bytes || cached < uncached || cached > bytes) return NULL;
++        *length = bytes;
++        return p;
++    }
++    return NULL;
++}
++static const uint8_t *
++spes_smem_item_read(const uint8_t *part, uint32_t length, uint16_t id, uint32_t *bytes)
++{
++    *bytes = 0;
++    if (!part || length < 32) return NULL;
++    uint32_t end = spes_le32(part + 12);
++    if (end < 32 || end > length) return NULL;
++    for (uint32_t pos = 32; end - pos >= 16;) {
++        const uint8_t *h = part + pos;
++        uint32_t size = spes_le32(h + 4), pad = spes_le16(h + 8), hdrpad = spes_le16(h + 10);
++        if (spes_le16(h) != 0xa5a5 || pad > size || hdrpad > end - pos - 16 ||
++            size > end - pos - 16 - hdrpad) return NULL;
++        if (spes_le16(h + 2) == id) {
++            *bytes = size - pad;
++            return h + 16 + hdrpad;
++        }
++        pos += 16 + hdrpad + size;
++    }
++    return NULL;
++}
++#endif
+--- /dev/null
++++ b/iokit/Kernel/arm/spes_audio_survey.inc
+@@ -0,0 +1,55 @@
++/* Included by SpesModem.cpp; independent of modem=1. Read-only first stage
++ * of the HackiOS ADSP survey, using spes SMEM instead of redwood IPCC/RPMh.
++ * No PAS, mailbox, regulator, codec or amplifier writes.
++ */
++#include "spes_smem_read.h"
++static void
++spes_audio_survey_thread(void *, wait_result_t)
++{
++    IOMemoryMap *mapping = map_phys(SMEM_PA, SMEM_SIZE, true);
++    uint8_t *snapshot = (uint8_t *)IOMalloc(SMEM_SIZE);
++    if (!mapping || !snapshot) {
++        IOLog("SPES AUDIO: SMEM snapshot allocation failed\n");
++    } else {
++        memcpy(snapshot, (const void *)mapping->getVirtualAddress(), SMEM_SIZE);
++        uint32_t length = 0;
++        const uint8_t *part = spes_smem_partition_read(snapshot, SMEM_SIZE, 2, &length);
++        IOLog("SPES AUDIO: read-only ADSP survey; partition=%s bytes=%u\n", part ? "valid" : "absent-or-invalid", length);
++        const uint16_t ids[] = { 443, 429, 423, 478, 479, 480 };
++        for (unsigned i = 0; part && i < sizeof(ids) / sizeof(ids[0]); i++) {
++            uint32_t bytes = 0;
++            const uint8_t *item = spes_smem_item_read(part, length, ids[i], &bytes);
++            IOLog("SPES AUDIO: SMEM item=%u present=%u bytes=%u\n", ids[i], item != NULL, bytes);
++            if ((ids[i] == 443 || ids[i] == 429) && item && bytes >= 20 &&
++                spes_le32(item) == 0x504d5324 && item[4] == 1) {
++                uint16_t total = spes_le16(item + 12), valid = spes_le16(item + 14);
++                if (total > 16 || valid > total || (uint32_t)valid * 20 > bytes - 20) {
++                    IOLog("SPES AUDIO: invalid SMP2P entry bounds\n");
++                    continue;
++                }
++                IOLog("SPES AUDIO: SMP2P local=%u remote=%u entries=%u flags=%x\n",
++                    spes_le16(item + 8), spes_le16(item + 10), valid, spes_le32(item + 16));
++                for (unsigned j = 0; j < valid; j++) {
++                    char name[17];
++                    memcpy(name, item + 20 + 20 * j, 16); name[16] = 0;
++                    IOLog("SPES AUDIO: SMP2P %.16s=%x\n", name, spes_le32(item + 36 + 20 * j));
++                }
++            }
++        }
++        IOLog("SPES AUDIO: survey complete; DSP and amplifiers not started\n");
++    }
++    if (snapshot) IOFree(snapshot, SMEM_SIZE);
++    if (mapping) mapping->release();
++    thread_terminate(current_thread());
++}
++static void
++spes_audio_survey_init(void)
++{
++    uint32_t enabled = 0;
++    static bool started;
++    if (started || !PE_parse_boot_argn("spesaudiosurvey", &enabled, sizeof(enabled)) || enabled != 1) return;
++    thread_t worker;
++    started = true;
++    if (kernel_thread_start(spes_audio_survey_thread, NULL, &worker) == KERN_SUCCESS) thread_deallocate(worker);
++    else IOLog("SPES AUDIO: could not start survey thread\n");
++}
