@@ -9,7 +9,12 @@
   failed (research/graphics-wrapro-compile.log); 0046+0068 match build tree.
   RedwoodGPU needs 4K-aligned physical pages (RedwoodGPU.cpp:652), so an
   exact unaligned range could not be GPU-mapped; hence page-exact + offset.
-- CI40119146776 dispatched; image to be shim/out/spes-ios-graphics-wrapro.img.
+- CI40119146776 SUCCESS. Kernel xnu/out-0108/kernel.development.sweet SHA256
+  7a1e61cd22836e427049cb15f1128995e99b2abc9d086865529e1ebc5fb6b751.
+  Image shim/out/spes-ios-graphics-wrapro.img SHA256
+  67e983f9f46e0576a7dfed8454aafc0d4b6e35135bb6efe4d148985ce9d72f13, flags
+  checked. Not booted yet. Success = icons/labels drawn and far fewer
+  "could not be wired" lines (now with error codes).
 
 # Survey — what to port from oosexgang/hackios-xnu-kernel, 2026-10-24
 
