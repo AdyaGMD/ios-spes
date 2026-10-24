@@ -1,0 +1,42 @@
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -1242,7 +1242,25 @@
+ 	/* Step 9: Configure and start GFX RCG clock (CXO 19.2 MHz safe baseline) */
+ 	printf("SPES GPU: 19. GFX RCG configure (curr cmd=%#x cfg=%#x)\n",
+ 	    touch_rd(cc, 0x101c), touch_rd(cc, 0x1020));
+-	touch_wr(cc, 0x1020, 0u); /* SRC_SEL = 0 (CXO 19.2MHz), DIV = 0 (div 1) */
++	/* Topaz A610: GPLL0 (600 MHz), source 5, HID divider 3 (/2).
++	 * Keep the diagnostic CXO default unless the UI image explicitly opts in.
++	 * No GPU PLL programming or high-rate voltage assumptions here.
++	 */
++	uint32_t gpu_mhz = 19, gfx_cfg = 0;
++	(void)PE_parse_boot_argn("spesgpu_mhz", &gpu_mhz, sizeof(gpu_mhz));
++	if (gpu_mhz != 19 && gpu_mhz != 300) {
++		printf("SPES GPU: unsupported spesgpu_mhz=%u (19 or 300); stopping\n", gpu_mhz);
++		return;
++	}
++	if (gpu_mhz == 300) {
++		touch_wr(st.gcc, 0x79004u, touch_rd(st.gcc, 0x79004u) | (1u << 15));
++		if (!(touch_rd(st.gcc, 0x79004u) & (1u << 15))) {
++			printf("SPES GPU: GPLL0 GPU parent vote failed; stopping\n");
++			return;
++		}
++		gfx_cfg = 0x503u;
++	}
++	touch_wr(cc, 0x1020, gfx_cfg);
+ 	touch_wr(cc, 0x101c, 3u); /* ROOT_EN=1, UPDATE=1 */
+ 	bool rcg_ok = false;
+ 	for (int i = 0; i < 100; ++i) {
+@@ -1256,6 +1274,12 @@
+ 	    rcg_ok, touch_rd(cc, 0x101c), touch_rd(cc, 0x1020));
+ 
+ 	if (!rcg_ok) { printf("SPES GPU: RCG update timeout; stopping\n"); return; }
++	if (touch_rd(cc, 0x1020) != gfx_cfg || (touch_rd(cc, 0x101c) & (1u << 31))) {
++		printf("SPES GPU: GFX clock configuration/off check failed; stopping\n");
++		return;
++	}
++	printf("SPES GPU: GFX clock selected %s cfg=%#x (not a frequency measurement)\n",
++	    gpu_mhz == 300 ? "GPLL0 / 2, nominal 300 MHz" : "CXO 19.2 MHz", gfx_cfg);
+ 
+ 	/* Step 10: Ungate graphics core branch clocks */
+ 	touch_wr(cc, 0x108c, 1u); /* CX SNOC */

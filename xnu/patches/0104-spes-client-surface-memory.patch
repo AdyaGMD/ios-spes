@@ -1,0 +1,124 @@
+--- a/iokit/Kernel/arm/SweetSurface.h
++++ b/iokit/Kernel/arm/SweetSurface.h
+@@ -35,6 +35,8 @@
+ 	uint32_t cacheMode, planeCount, parentID;
+ 	struct sweet_surface_plane planes[SWEET_SURFACE_MAX_PLANES];
+ 
++	task_t                    externalTask; /* owner of the wrapped address, retained */
++	uint32_t                  externalDelta; /* page prefix excluded from owner base */
+ 	uint64_t                  externalBase; /* pixels wrapped from a client (sel 6), or 0 */
+ 	IOMemoryDescriptor       *memory;       /* pixels (buffer, physical or wrapped) */
+ 	IOOptionBits              mapCache;     /* cache mode for user mappings */
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -26,6 +26,7 @@
+  * ignored (logged once per selector).
+  */
+ #include "SweetSurface.h"
++#include <kern/task.h>
+ 
+ #if defined(SWEET)
+ #include <IOKit/IOService.h>
+@@ -97,6 +98,7 @@
+ 		memory->complete();     /* wired by wrapClientImage */
+ 	}
+ 	OSSafeReleaseNULL(memory);
++	if (externalTask != TASK_NULL) task_deallocate(externalTask);
+ 	OSSafeReleaseNULL(state);
+ 	OSObject::free();
+ }
+@@ -411,7 +413,14 @@
+ 	if (alloc < end) {
+ 		alloc = end;
+ 	}
+-	alloc = round_page(alloc);
++	/* Client-owned pictures must keep their exact extent (HackiOS MiniIOSurface). */
++	if (props->getObject("IOSurfaceAddress") != NULL) {
++		uint64_t supplied = sweet_dict_u32(props, "IOSurfaceAllocSize", (uint32_t)end);
++		if (supplied < end) return kIOReturnBadArgument;
++		alloc = supplied;
++	} else {
++		alloc = round_page(alloc);
++	}
+ 	if (alloc == 0 || alloc > SWEET_SURFACE_MAX_ALLOC) {
+ 		return kIOReturnNoMemory;
+ 	}
+@@ -605,11 +614,11 @@
+ 	 * A wrapped client image is already mapped at s->externalBase in this
+ 	 * task: map only the state page, and report the caller's own pointer.
+ 	 */
+-	if (s->externalBase == 0) {
+-		ref->data = s->memory->createMappingInTask(fTask, 0, kIOMapAnywhere | s->mapCache);
++	if (s->externalBase == 0 || s->externalTask != fTask) {
++		ref->data = s->memory->createMappingInTask(fTask, 0, kIOMapAnywhere | s->mapCache | (s->externalBase ? kIOMapReadOnly : 0));
+ 	}
+ 	ref->state = s->state->createMappingInTask(fTask, 0, kIOMapAnywhere | kIOMapReadOnly);
+-	if ((s->externalBase == 0 && ref->data == NULL) || ref->state == NULL) {
++	if (((s->externalBase == 0 || s->externalTask != fTask) && ref->data == NULL) || ref->state == NULL) {
+ 		ref->release();
+ 		return kIOReturnVMError;
+ 	}
+@@ -653,7 +662,7 @@
+ sweet_surface_fill_result(SweetSurface *s, SweetSurfaceRef *ref, uint8_t *out)
+ {
+ 	bzero(out, SWEET_SURFACE_RESULT_SIZE);
+-	put64(out, 0x00, s->externalBase != 0 ? s->externalBase : ref->data->getAddress());
++	put64(out, 0x00, ref->data != NULL ? ref->data->getAddress() : s->externalBase);
+ 	put64(out, 0x08, ref->state->getAddress());
+ 	put64(out, 0x10, ref->state->getAddress() + SWEET_SURFACE_TIMESTAMPS);
+ 	put32(out, 0x18, s->id);
+@@ -661,7 +670,7 @@
+ 	put32(out, 0x20, s->width);
+ 	put32(out, 0x24, s->height);
+ 	put32(out, 0x28, s->bytesPerRow);
+-	put32(out, 0x2c, s->externalBase != 0 ? 0 : s->offset);     /* (a wrapped base is exact) */
++	put32(out, 0x2c, ref->data != NULL ? s->offset : s->offset - s->externalDelta);     /* (a wrapped base is exact) */
+ 	put32(out, 0x30, s->pixelFormat);
+ 	put32(out, 0x34, s->allocSize);
+ 	put32(out, 0x38, s->planeCount);
+@@ -769,8 +778,33 @@
+ 		return kIOReturnNoMemory;
+ 	}
+ 	s->parentID = args->scalarInputCount > 0 ? (uint32_t)args->scalarInput[0] : 0;
+-	ret = sweet_surface_layout(s, props);
+-	if (ret == kIOReturnSuccess) {
++	ret = props->getObject("IOSurfaceAddressRanges") != NULL ? kIOReturnUnsupported : sweet_surface_layout(s, props);
++	OSNumber *address = OSDynamicCast(OSNumber, props->getObject("IOSurfaceAddress"));
++	if (props->getObject("IOSurfaceAddress") != NULL && address == NULL) ret = kIOReturnBadArgument;
++	if (ret == kIOReturnSuccess && address != NULL) {
++		uint64_t base = address->unsigned64BitValue();
++		IOReturn held = kIOReturnVMError;
++		if (base != 0 && base <= UINT64_MAX - s->allocSize) {
++			for (unsigned attempt = 0; attempt < 2 && held != kIOReturnSuccess; attempt++) {
++				OSSafeReleaseNULL(s->memory);
++				s->memory = IOMemoryDescriptor::withAddressRange(base, s->allocSize,
++				    attempt ? kIODirectionOut : kIODirectionInOut, fTask);
++				held = s->memory != NULL ? s->memory->prepare() : kIOReturnNoMemory;
++			}
++		}
++		if (held != kIOReturnSuccess) {
++			OSSafeReleaseNULL(s->memory);
++			ret = kIOReturnVMError;
++		} else {
++			s->externalBase = base;
++			s->externalTask = fTask;
++			task_reference(fTask);
++			s->mapCache = kIOMapDefaultCache;
++			ret = sweet_surface_publish(s) ? kIOReturnSuccess : kIOReturnNoResources;
++		}
++		IOLog("SWEET SURF: create around client memory %ux%u size %u -> 0x%x\n",
++		    s->width, s->height, s->allocSize, ret);
++	} else if (ret == kIOReturnSuccess) {
+ 		IOBufferMemoryDescriptor *mem = NULL;
+ 		if ((uint64_t)OSAddAtomic64(s->allocSize, (volatile SInt64 *)&sweet_surface_wired) +
+ 		    s->allocSize <= SWEET_SURFACE_WIRED_MAX) {
+@@ -916,6 +950,9 @@
+ 	if (wrapped != NULL) {
+ 		s->memory = wrapped;
+ 		s->externalBase = base;
++		s->externalTask = fTask;
++		task_reference(fTask);
++		s->externalDelta = (uint32_t)lead;
+ 		s->offset = (uint32_t)lead;
+ 		IOLog("SWEET SURF: wrap base %llx mapped (%u bytes)\n",
+ 		    (unsigned long long)base, s->allocSize);

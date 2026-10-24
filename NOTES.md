@@ -1,3 +1,22 @@
+# GPU upstream parity — implementation prepared, 2026-10-24
+
+- User reassigned GPU here and requested thorough comparison with latest Topaz
+  and HackiOS. Reports DeepSeek frame holding works as described but UI slow.
+- Fetched Topaz e477291 and HackiOS d82c64a. Critical observed gap: GFX CFG=0
+  in the fence boot log, still 19.2 MHz diagnostic clock versus Topaz 300 MHz.
+- Added 0104 IOSurfaceAddress wrapping/owner-aware mappings, 0105 retained-frame
+  presenter thread, 0106 published 60 Hz modes/current-mode reply, 0107 opt-in
+  GPLL0/2 nominal 300 MHz. UI defaults 6 cores/60 Hz/300 MHz; SPES_GPU_MHZ=19
+  selects the former clock. Hardware behavior remains untested.
+- Analysis: docs/GPU-UPSTREAM-COMPARISON.md. Do not wholesale replace EAGL:
+  our HackiOS basis has shader handlers absent from Topaz's older fork. Topaz's
+  contiguous screen reserve targets its identity mapping, unlike spes SMMU.
+- Audio checkpoint saved as d56ecfd: opt-in read-only ADSP SMEM survey and
+  WLFW ownership validation/SCM failure handling; native ASan/UBSan tests and
+  SpesModem arm64 syntax check pass. No audio CI or device boot performed.
+- Unrelated build artifacts were already staged by another actor (380 paths
+  under out-*). Do not commit those; all our commits use explicit file lists.
+
 # Fence diagnostic: the display was copying unfinished frames; backpressure added, 2026-10-24
 
 - User on the 6-core/60 Hz UI: "feels faster, not usable yet"; black only

@@ -1,0 +1,112 @@
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -123,6 +123,7 @@
+ 	bool          fPresentReady;
+ 	static void presenterMain(void *owner, wait_result_t result);
+ 	void presenter();
++	void publishModes();
+ 	bool          fDirty;
+ 	uint32_t      fFlushTicks;    /* vsync ticks between panel copies */
+ 	bool          fPowerOff;      /* RequestPowerChange(0) */
+@@ -223,6 +224,7 @@
+ 	thread_deallocate(presenterThread);
+ 	fVsync->setTimeoutUS(SWEET_FB_VSYNC_US);
+ 
++	publishModes();
+ 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
+ 	/* For EAGL (HackiOS eagl.c display_waits()): swaps wait for the GPU, so frames need not be finished first. */
+ 	setProperty("RedwoodWaitsForGPU", kOSBooleanTrue);
+@@ -243,6 +245,69 @@
+ 	IOLog("SWEET FB: AppleCLCD %ux%u stride %u at 0x%llx, default surface %u, presented as %ux%u\n",
+ 	    fWidth, fHeight, fRowBytes, fPhys, fSurface->id, fLogicalW, fLogicalH);
+ 	return true;
++}
++
++/* Mode ABI adapted from Topaz 0948 / HackiOS publishModes(). */
++#define SWEET_FB_TIMING_ID      1
++#define SWEET_FB_COLOR_ID       1
++
++static void
++sweet_set_number(OSDictionary *d, const char *key, uint64_t value)
++{
++	OSNumber *n = OSNumber::withNumber(value, 32);
++	if (n != NULL) {
++		d->setObject(key, n);
++		n->release();
++	}
++}
++
++void
++AppleCLCD::publishModes(void)
++{
++	OSDictionary *timing = OSDictionary::withCapacity(8);
++	OSDictionary *horizontal = OSDictionary::withCapacity(4);
++	OSDictionary *vertical = OSDictionary::withCapacity(4);
++	OSDictionary *color = OSDictionary::withCapacity(8);
++	OSArray *timings = OSArray::withCapacity(1);
++	OSArray *colors = OSArray::withCapacity(1);
++	const uint32_t rate = 60u << 16;        /* 16.16 */
++
++	if (timing != NULL && horizontal != NULL && vertical != NULL && color != NULL && timings != NULL && colors != NULL) {
++		sweet_set_number(color, "ID", SWEET_FB_COLOR_ID);
++		sweet_set_number(color, "PixelEncoding", 0);
++		sweet_set_number(color, "Depth", 8);
++		sweet_set_number(color, "Colorimetry", 1);
++		sweet_set_number(color, "EOTF", 1);
++		sweet_set_number(color, "DynamicRange", 0);
++		sweet_set_number(color, "Score", 1);
++		color->setObject("IsVirtual", kOSBooleanFalse);
++		colors->setObject(color);
++		sweet_set_number(horizontal, "Active", fLogicalW);
++		sweet_set_number(horizontal, "Total", fLogicalW);
++		sweet_set_number(horizontal, "SyncRate", rate);
++		sweet_set_number(horizontal, "PreciseSyncRate", rate);
++		sweet_set_number(vertical, "Active", fLogicalH);
++		sweet_set_number(vertical, "Total", fLogicalH);
++		sweet_set_number(vertical, "SyncRate", rate);
++		sweet_set_number(vertical, "PreciseSyncRate", rate);
++		sweet_set_number(timing, "ID", SWEET_FB_TIMING_ID);
++		sweet_set_number(timing, "Score", 1);
++		timing->setObject("IsVirtual", kOSBooleanFalse);
++		timing->setObject("IsOverscanned", kOSBooleanFalse);
++		timing->setObject("HorizontalAttributes", horizontal);
++		timing->setObject("VerticalAttributes", vertical);
++		timing->setObject("ColorModes", colors);
++		timings->setObject(timing);
++		setProperty("TimingElements", timings);
++		setProperty("ColorElements", colors);
++		IOLog("SWEET FB: modes published: %ux%u at 60 Hz\n", fLogicalW, fLogicalH);
++	}
++	OSSafeReleaseNULL(timings);
++	OSSafeReleaseNULL(colors);
++	OSSafeReleaseNULL(timing);
++	OSSafeReleaseNULL(horizontal);
++	OSSafeReleaseNULL(vertical);
++	OSSafeReleaseNULL(color);
+ }
+ 
+ void
+@@ -631,6 +696,23 @@
+ 		out[0] = 1;
+ 		outCount = 1;
+ 		break;
++	case 79: { /* GetBlock: current colour/timing mode (0x40). */
++		uint8_t mode[12] = {};
++		uint32_t color = SWEET_FB_COLOR_ID, timing = SWEET_FB_TIMING_ID;
++		if (args->scalarInputCount < 1 || args->scalarInput[0] != 0x40) return kIOReturnUnsupported;
++		memcpy(mode + 4, &color, 4);
++		memcpy(mode + 8, &timing, 4);
++		if (args->structureOutputDescriptor != NULL) {
++			if (args->structureOutputDescriptor->getLength() < sizeof(mode)) return kIOReturnNoSpace;
++			if (args->structureOutputDescriptor->writeBytes(0, mode, sizeof(mode)) != sizeof(mode)) return kIOReturnVMError;
++			args->structureOutputDescriptorSize = sizeof(mode);
++		} else {
++			if (!args->structureOutput || args->structureOutputSize < sizeof(mode)) return kIOReturnNoSpace;
++			memcpy(args->structureOutput, mode, sizeof(mode));
++			args->structureOutputSize = sizeof(mode);
++		}
++		return kIOReturnSuccess;
++	}
+ 	case kSweetFBGetDotPitch:
+ 		out[0] = SWEET_FB_DOT_PITCH;
+ 		outCount = 1;
