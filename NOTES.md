@@ -1,3 +1,35 @@
+# Active fix — unhandled IOSurface selector 6 (WrapClientImage), 2026-10-24
+
+- Saved surfacestate log research/spes-graphics-surfacestate-boot.txt. Created
+  surfaces id2..4 (1125x2436 BGRA, planes0) all map with non-NULL state pages
+  (e.g. id2 data=108000000 state=1051fc000), so the create path is fine.
+- backboardd also calls sel 5, 6, 9, 13, 27 and traps 2/3. Sel 6 =
+  IOSurfaceClientWrapClientImage had no handler; backboardd then crashes three
+  times with SIGSEGV far0x30 (pid 56/118/150), i.e. the GetBulkAttachments
+  NULL shared-state read on the wrapped surface. Disassembly saved in
+  research/iosurface-wrapclientimage-disass.txt, ca-wrap-buffer-full-disass.txt.
+- Patch0046 (uncommitted): wrapClientImage() parses the 0x20-byte input,
+  wraps the client range with withAddressRange (fallback: own buffer), always
+  maps a state page and returns the normal lock result; kernelMap now uses
+  mapCache. Local SweetSurface.cpp compile 0/1 failed
+  (research/graphics-wrap-compile.log), host tests pass
+  (research/graphics-wrap-tests.log). Not hardware-tested.
+- Next: commit, dispatch xnu.yml, build image, temporary boot. Success = log
+  shows "SWEET SURF: wrap id" and no backboardd far0x30 restart loop.
+
+# Active hardware test — IOSurface shared-state diagnostics booted, 2026-10-24
+
+- CI40109088113 SUCCESS for commit cd74914. Kernel xnu/out-0105/
+  kernel.development.sweet SHA256
+  9d3f6ac79880844592c3f171899cfcb99f147acf81f3681eb3377b9f48b650c6.
+- Built shim/out/spes-ios-graphics-surfacestate.img SHA256
+  9efb5a7356dd575dcddef54db9aebeddc321356143d30087e12384517f6ecab6.
+  Product spes and flags checked; temporary boot accepted send0.449s/boot0.287s/
+  total0.741s. No partition flashing or root writes.
+- Next after settle/Fastboot: inspect SWEET SURF map lines, selector27 result,
+  bulk-attachment crash, and whether backboardd reaches its first frame. Shader
+  pass remains expected; usable UI is still unconfirmed.
+
 # Active investigation — IOSurface shared-state pointer is NULL, 2026-10-24
 
 - Surfacefix log research/spes-graphics-surfacefix-boot.txt confirms the format
