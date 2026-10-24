@@ -13,6 +13,7 @@
   invokes this path; new GPU buffers request write-combined mappings. This matches
   photo panic class/address range; exact stack not persisted, so hardware retest
   still needed to confirm it is the sole trigger.
+- Fix commit a26f77a; CI40095679058 building. All29 host tests pass.
 - Patch0101 widens pp BEFORE shift. Regression reproduces old truncation and
   checks >=4GiB physical addresses. Local pmap translation unit compile passes.
   Next: complete host tests, commit/build0101, temporary full graphics boot;
