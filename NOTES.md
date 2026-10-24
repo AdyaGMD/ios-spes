@@ -1,3 +1,25 @@
+# Built — WrapClientImage image ready for temporary boot, 2026-10-24
+
+- Commit 07fbd1c (sel 6 handler) failed CI40115058743: 0068 no longer applied.
+  Cause: the hand edit of 0046 left new-file hunk counts short (SweetSurface.h
+  65->66, SweetSurface.cpp 1033->1054), so git apply silently dropped the final
+  lines (trap table, #endif), and 0068's context moved. Commit 7a4060b fixes
+  the counts and regenerates 0068; 0046+0068 now reproduce
+  research/gpu-buildtree SweetSurface.{h,cpp} byte-for-byte. Local syntax
+  compile 0/1 failed (research/graphics-wrap-compile2.log; ~/swift clang is
+  gone, used XNU_CC_CLANG=/usr/bin/clang and
+  XNU_CC_CI_DXB=/Users/runner/work/ios-spes/ios-spes/dxb).
+- CI40115536861 SUCCESS. Kernel xnu/out-0106/kernel.development.sweet SHA256
+  68c66ae772eecc848ee6b0f133fb5222896c4adc6b88717798e07c8ea2585387 (contains
+  "SWEET SURF: wrap" strings).
+- Built shim/out/spes-ios-graphics-wrap.img SHA256
+  9e41931d3640ca56f804406736d47584c7558ea7ee25249123893c7649596ae9 with
+  MKBOOTIMG=tools/mkbootimg CROSS_COMPILE=aarch64-elf-, dtb/spes-live.dtb.
+  Flags spesgpu=1 spesgpuprobe=1 gpu_keep=0, ufsroot=userdata checked.
+  Not booted; nothing sent to the phone.
+- Next: fastboot boot (temporary), settle, pull log. Success = "SWEET SURF:
+  wrap id" line and no backboardd far0x30 restart loop.
+
 # Active fix — unhandled IOSurface selector 6 (WrapClientImage), 2026-10-24
 
 - Saved surfacestate log research/spes-graphics-surfacestate-boot.txt. Created
