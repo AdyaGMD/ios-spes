@@ -117,7 +117,7 @@
 +#endif /* _SWEET_SURFACE_H */
 --- /dev/null
 +++ b/iokit/Kernel/arm/SweetSurface.cpp
-@@ -0,0 +1,1066 @@
+@@ -0,0 +1,1089 @@
 +/*
 + * Built-in IOSurface for SWEET.
 + *
@@ -712,7 +712,7 @@
 +	put32(out, 0x20, s->width);
 +	put32(out, 0x24, s->height);
 +	put32(out, 0x28, s->bytesPerRow);
-+	put32(out, 0x2c, s->offset);
++	put32(out, 0x2c, s->externalBase != 0 ? 0 : s->offset);     /* (a wrapped base is exact) */
 +	put32(out, 0x30, s->pixelFormat);
 +	put32(out, 0x34, s->allocSize);
 +	put32(out, 0x38, s->planeCount);
@@ -912,12 +912,19 @@
 +	if (bytesPerRow < row || bytesPerRow > SWEET_SURFACE_MAX_DIM * 16) {
 +		bytesPerRow = (uint32_t)((row + SWEET_SURFACE_ROW_ALIGN - 1) & ~(uint64_t)(SWEET_SURFACE_ROW_ALIGN - 1));
 +	}
-+	uint64_t alloc = (uint64_t)bytesPerRow * height;
-+	if (alloc < dataSize && dataSize <= SWEET_SURFACE_MAX_ALLOC) {
-+		alloc = dataSize;
++	uint64_t bytes = (uint64_t)bytesPerRow * height;
++	if (bytes < dataSize && dataSize <= SWEET_SURFACE_MAX_ALLOC) {
++		bytes = dataSize;
 +	}
-+	alloc = round_page(alloc);
-+	if (alloc == 0 || alloc > SWEET_SURFACE_MAX_ALLOC) {
++	/*
++	 * Wrapped, the surface is the pages the client's image lies in and no
++	 * more (MiniIOSurface wraps exactly the owner's size): rounding the
++	 * length up from an unaligned base ran past the client's memory. The
++	 * GPU maps whole pages, so the image starts at s->offset in them.
++	 */
++	uint64_t lead = base & PAGE_MASK;
++	uint64_t alloc = round_page(lead + bytes);
++	if (bytes == 0 || alloc > SWEET_SURFACE_MAX_ALLOC) {
 +		s->release();
 +		return kIOReturnNoMemory;
 +	}
@@ -931,20 +938,32 @@
 +	s->cacheMode = 0;
 +	s->mapCache = kIOMapDefaultCache;
 +
-+	IOMemoryDescriptor *wrapped = base != 0 ? IOMemoryDescriptor::withAddressRange(base,
-+	    s->allocSize, kIODirectionInOut, fTask) : NULL;
 +	/*
 +	 * Wire the client's pages for the surface's lifetime: RedwoodGPU walks
 +	 * surface memory with getPhysicalSegment, and an unprepared descriptor
-+	 * panics there ("IOGMD: not wired for the IODMACommand").
++	 * panics there ("IOGMD: not wired for the IODMACommand"). As in
++	 * MiniIOSurface, held for writing if it can be written, else for
++	 * reading: a picture that is only shown (icons, glyphs) is read-only.
 +	 */
-+	if (wrapped != NULL && wrapped->prepare() != kIOReturnSuccess) {
-+		IOLog("SWEET SURF: wrap base %llx could not be wired\n", (unsigned long long)base);
++	IOMemoryDescriptor *wrapped = NULL;
++	IOReturn held = kIOReturnNoMemory;
++	for (unsigned attempt = 0; base != 0 && attempt < 2 && held != kIOReturnSuccess; attempt++) {
++		OSSafeReleaseNULL(wrapped);
++		wrapped = IOMemoryDescriptor::withAddressRange(base - lead, s->allocSize,
++		    attempt == 0 ? kIODirectionInOut : kIODirectionOut, fTask);
++		held = wrapped != NULL ? wrapped->prepare() : kIOReturnNoMemory;
++	}
++	if (held != kIOReturnSuccess) {
++		if (base != 0) {
++			IOLog("SWEET SURF: wrap base %llx (%u bytes) could not be wired (0x%x)\n",
++			    (unsigned long long)base, s->allocSize, held);
++		}
 +		OSSafeReleaseNULL(wrapped);
 +	}
 +	if (wrapped != NULL) {
 +		s->memory = wrapped;
 +		s->externalBase = base;
++		s->offset = (uint32_t)lead;
 +		IOLog("SWEET SURF: wrap base %llx mapped (%u bytes)\n",
 +		    (unsigned long long)base, s->allocSize);
 +	} else {
@@ -964,6 +983,10 @@
 +			return kIOReturnNoMemory;
 +		}
 +		bzero(mem->getBytesNoCopy(), s->allocSize);
++		/* (a copy of the picture as it is now beats an empty one) */
++		if (base != 0 && copyin((user_addr_t)base, mem->getBytesNoCopy(), (size_t)bytes) != 0) {
++			IOLog("SWEET SURF: wrap base %llx cannot be copied either\n", (unsigned long long)base);
++		}
 +		s->memory = mem;
 +	}
 +	if (!sweet_surface_publish(s)) {
