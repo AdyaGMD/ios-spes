@@ -1,3 +1,26 @@
+# Active hardware test — wired WrapClientImage image booted, 2026-10-24
+
+- Panic photo from the wrap image (user): "IOGMD: not wired for the
+  IODMACommand @IOMemoryDescriptor.cpp:3248", caller 0xfffffe0007bc6734,
+  cpu 0. Confirms the suspect: the wrapped withAddressRange descriptor was
+  never prepare()d, and RedwoodGPU walks surface memory with
+  getPhysicalSegment (RedwoodGPU.cpp:652).
+- Commit 8e3ecc5: wrapClientImage prepare()s the client range (failure ->
+  log "could not be wired" and private-buffer fallback); SweetSurface::free
+  complete()s it. 0046 SweetSurface.cpp hunk regenerated with computed count
+  (1066); 0046+0068 reproduce research/gpu-buildtree byte-for-byte; pre-edit
+  copy research/pre-wire/SweetSurface.cpp; local compile 0/1 failed
+  (research/graphics-wire-compile.log).
+- CI40117497623 SUCCESS. Kernel xnu/out-0107/kernel.development.sweet SHA256
+  2c2a4e9f26addd651913828673c561bc7b01ddf8cf2aee4896229959c6438fb8.
+  Image shim/out/spes-ios-graphics-wire.img SHA256
+  65942fdb40b6d8f5b04a9f080e3f254b5a9ce417fa81f9e8850af913a02ae834, flags
+  checked. Temporary boot accepted send0.396s/boot0.287s/total0.687s. No
+  flashing or root writes.
+- Next: watch for the IOGMD panic; if it settles, pull the log (OrangeFox
+  temp boot recovery/orangefox-spes-miui.img + tools/sweet-log-pull.sh) and
+  check wrap lines, "could not be wired", frames, SpringBoard progress.
+
 # Hardware result — WrapClientImage works, later kernel panic, 2026-10-24
 
 - User: Apple logo, then a kernel panic. Saved log
