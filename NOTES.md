@@ -1,3 +1,34 @@
+# Built — read-only/page-exact wrap (MiniIOSurface port), 2026-10-24
+
+- Commit 5360497 (patch0046): wrap tries prepare() InOut then Out, wires
+  only the pages the image lies in (base-lead .. round_page(lead+bytes)),
+  s->offset = lead for kernel/GPU while the lock result keeps the client's
+  own pointer and reports offset 0; logs the prepare() error code; failed
+  wraps copyin the client's pixels into the fallback buffer (was zeroed).
+  Pre-edit copy research/pre-wrapro/SweetSurface.cpp. Local compile 0/1
+  failed (research/graphics-wrapro-compile.log); 0046+0068 match build tree.
+  RedwoodGPU needs 4K-aligned physical pages (RedwoodGPU.cpp:652), so an
+  exact unaligned range could not be GPU-mapped; hence page-exact + offset.
+- CI40119146776 dispatched; image to be shim/out/spes-ios-graphics-wrapro.img.
+
+# Survey — what to port from oosexgang/hackios-xnu-kernel, 2026-10-24
+
+- User request: port as much of hackios-xnu-kernel as possible (they have
+  home screen with all icons, apps, Control Center on GPU via
+  Mesa/freedreno). Their GPU is Adreno 642L (redwood) vs our A610, so
+  RedwoodGPU bring-up does not transfer; the surface/framebuffer/EAGL layers
+  do. Local clone research/hackios-xnu-kernel 8e61187.
+- Size gap: MiniIOSurface.cpp 1814 lines vs our SweetSurface.cpp 1101;
+  MiniIOMobileFramebuffer.cpp 1648 vs SweetFramebuffer.cpp 600;
+  RedwoodGPU.cpp 1295 vs ours 1273. Selectors: reference handles 22
+  (0,4,5,6,7,9,10,11,12,13,19,20,21,22,24,27,32,33,34,35,43,44), ours 7
+  (0,4,6,13,27,34,35). Missing incl. 5 SetYCbCrMatrix, 7 WrapClientMemory,
+  9/10/11 Set/Copy/RemoveValue, 12 BindAccel, 20 SetPurgeable, 24/33
+  timestamps, 32 CommPageAddress.
+- Proposed order: (1) remaining IOSurface selectors; (2) framebuffer swap
+  path (likely related to the per-frame 10.8 MB re-upload); (3) compare
+  userland eagl.c with ours. Not started.
+
 # Analysis — wired boot log: blank icons/text and slow frames, 2026-10-24
 
 - Log research/spes-graphics-wire-boot.txt (245025 B, flush #41, OrangeFox
