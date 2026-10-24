@@ -47,7 +47,7 @@ static bool spes_gpu_retire(vm_offset_t g,vm_offset_t s,uint32_t c,uint32_t t,co
  (void)g;(void)s;(void)c;(void)t;(void)tag;return retire_ok;
 }
 static bool spes_gpu_ring_append(volatile uint32_t *r,uint32_t *tail,uint32_t head,const uint32_t *p,uint32_t n){
- (void)head;assert(n<=266);memcpy(captured,p,n*4);captured_count=n;for(unsigned i=0;i<n;++i){r[*tail]=p[i];*tail=(*tail+1)&2047;}return true;
+ (void)head;assert(n<=268);memcpy(captured,p,n*4);captured_count=n;for(unsigned i=0;i<n;++i){r[*tail]=p[i];*tail=(*tail+1)&2047;}return true;
 }
 void RedwoodGPUStart(void){++starts;}
 '''
@@ -73,8 +73,8 @@ int main(void){
  for(unsigned i=0;i<64;++i){ib[i]=a;words[i]=4;}
  assert(!redwood_gpu_submit(ib,words,65));
  assert(redwood_gpu_submit(ib,words,64)==2049);
- assert(captured_count==266 && captured[4]==0x70bf8003);
- assert(captured[260]==0x70268000 && captured[263]==0x011f0024);
+ assert(captured_count==262 && captured[0]==0x70bf8003);
+ assert(captured[256]==0x70268000 && captured[259]==0x011f0024);
  assert(*fence_word==2049 && redwood_gpu_done(2049));
  ib[0]=a+4096;assert(!redwood_gpu_submit(ib,words,1)); /* unmapped */
  ib[0]=a;words[0]=0x100000;assert(!redwood_gpu_submit(ib,words,1));

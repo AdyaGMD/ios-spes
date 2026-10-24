@@ -1,3 +1,40 @@
+# Active fix — first submission stalls after an invalidate packet, 2026-10-24
+
+- Saved diagnostics log research/spes-graphics-submitdiag-boot.txt (145090 B,
+  read-only recovery). FD610 selected; first submission again fence2049/tail164.
+  SUBMIT_STATUS observed: rptr151 wptr164 int0 fault0 int00 GFSR0 FSR0x400;
+  SUBMIT_IB1 base0:0x10001000 remaining0. No CP/RBBM/SMMU fault and no new IB
+  fetch. This is a stall/timeout, not the earlier hardware error class.
+- The backend prepended EAGL-style EVENT_INVALIDATE_DEPTH/COLOR packets before
+  each batch. Hardware-proven IB/fence and 512-repeat tests never used those
+  invalidates; they used indirect buffer(s), CP_WAIT_FOR_IDLE and CACHE_FLUSH_TS.
+  Hypothesis: one of the A610 invalidate events stalls the CP at this point.
+  RPTR stops immediately after the first two-word invalidate is consumed, which
+  is consistent but does not by itself prove that packet is the cause.
+- Removed the unproven prepended invalidates and now submit the exact proven
+  sequence. Updated host backend test to require the IB at word0, CP_WAIT at256,
+  CACHE_FLUSH_TS payload at259 and 262 total words for one 64-command submit.
+  This is a candidate fix, not a claimed hardware result.
+- Next: run all host/local compile checks, commit/dispatch, temporary boot. If
+  it still stalls, add a boot-only packet-order probe rather than guessing shader
+  state. No root changes needed. Keep the diagnostic image and log.
+
+# Active hardware test — submission diagnostics boot accepted, 2026-10-24
+
+- CI40103562875 SUCCESS for commit beabc78. Downloaded kernel xnu/out-0102/
+  kernel.development.sweet SHA256
+  1702a39d2ebff96d4124ffa8a267c99ce82a816dc2d4b127eb063532c19637d8.
+- Built shim/out/spes-ios-graphics-submitdiag.img SHA256
+  50993b89fb15cd6ad22857d882a886d71e11fa874a8a025367bc529aa7395063.
+  Payload checked for spesgpu=1 spesgpuprobe=1 gpu_keep=0 and UFS userdata root.
+  Initial local rebuilds only lacked MKBOOTIMG/CROSS_COMPILE environment; final
+  build used tools/mkbootimg and aarch64-elf- successfully.
+- Recovery rebooted to Fastboot; product spes verified. Temporary boot accepted
+  send0.404s/boot0.286s/total0.695s. No partition flashing or new root writes.
+- Next: let iOS settle, then return to Fastboot and retrieve the saved log. Need
+  SUBMIT_STATUS and SUBMIT_IB1 from the first failing Mesa submission. This boot
+  adds diagnostics only; it is not expected to fix rendering or UI speed.
+
 # Active investigation — first Mesa submission stops GPU, 2026-10-24
 
 - User confirms0101 image opens iOS, but "slow as hell". This boot gets past the
@@ -16,9 +53,11 @@
   diagnostic/reporting change, not yet a hardware rendering fix.
 - Regenerated0100 from a reversed temporary baseline. All29 host tests and
   git diff --check pass; local cross-compile of sweet_touch.c and RedwoodGPU.cpp
-  passes (research/graphics-submit-diagnostics-compile.log). Changes are not
-  yet committed or sent to CI.
-- Next: commit/dispatch a new kernel and temporary full-graphics boot. Capture
+  passes (research/graphics-submit-diagnostics-compile.log).
+- Diagnostic commit beabc78 pushed to fork/spes; CI40103562875 dispatched and
+  queued at handoff. First dispatch accidentally targeted upstream and got403;
+  no upstream change occurred. Correct fork dispatch succeeded.
+- Next: download the successful CI kernel and temporary full-graphics boot. Capture
   SUBMIT_STATUS/SUBMIT_IB1 to distinguish a hardware fault from a timeout before
   changing shader setup. Installed root libraries need no update for this
   kernel-only diagnostic.

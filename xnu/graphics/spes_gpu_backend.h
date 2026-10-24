@@ -133,10 +133,9 @@ void redwood_gpu_to_memory(void *start,uint64_t size) {
 uint32_t redwood_gpu_submit(const uint64_t *addresses,const uint32_t *words,uint32_t count) {
  if(!redwood_gpu_ready() || !count || count>64 || sg.fence==0xffffffffu ||
      !redwood_gpu_done(sg.fence))return 0;
- uint32_t commands[266],n=0;
- /* Linux/HackiOS invalidate depth/color before each batch. */
- commands[n++]=0x70468001;commands[n++]=0x18;
- commands[n++]=0x70468001;commands[n++]=0x19;
+ uint32_t commands[268],n=0;
+ /* The hardware-proven A610 order: indirect buffer(s), CP_WAIT_FOR_IDLE, then
+  * CACHE_FLUSH_TS. Do not prepend EAGL-style invalidate events here. */
  for(unsigned i=0;i<count;++i){
   if(!words[i] || words[i]>0xfffffu || (addresses[i]&3) ||
       spes_gpu_owner(addresses[i],(uint64_t)words[i]*4)<0)return 0;
