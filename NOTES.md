@@ -2,8 +2,25 @@
 
 - User on spes-ios-graphics-wrapro.img (out-0108, 5360497): labels and the
   Settings icon now draw; other app icons still missing. No panic reported.
-  Partial fix confirmed for read-only/page-exact wrapping. Log (with
-  prepare() error codes) not yet pulled.
+  Partial fix confirmed for read-only/page-exact wrapping.
+- Log research/spes-graphics-wrapro-boot.txt (244683 B, flush #44):
+  84 wraps, all 84 mapped, 0 "could not be wired", 0 copy fallbacks,
+  0 backboardd crashes. So missing app icons are NOT a wiring problem now.
+  87x87 BGRA wraps (ids 61,63,65...) all wired.
+- Home-screen-size icons: backboardd creates 17 surfaces with pixel format
+  0x0 (bpe4, e.g. ids 33,36,39,42,43 at 180x180, keys 8); EAGL samples them
+  as "IOSurface shown" GL_RGBA/GL_RGBA 180x180 (7 times). No EAGL errors.
+  Neither SweetSurface nor MiniIOSurface special-cases format 0. Whether
+  those surfaces hold pixels, or icon draws (alpha masks 0x1906 used too)
+  fail in GL, is unknown from this log.
+- Next: boot values image (IOSurface values port); if icons still missing,
+  traced boot with eagl gltrace_place over the first icon row +
+  gltrace_look=1 gltrace_shaders=1.
+- Values image built: CI40120094724 SUCCESS, kernel xnu/out-0109 SHA256
+  83da8582bbabb2e3474405815b70e6d4652cdb732d3d0849c10851a629def3dd; image
+  shim/out/spes-ios-graphics-values.img SHA256
+  74a69673c044c7a9aa9418ddcf9beca7bf5457846825aadf9c7c2418146be5c3, flags
+  checked. Not booted yet.
 
 # Porting hackios-xnu-kernel — step 1 done (IOSurface), 2026-10-24
 
