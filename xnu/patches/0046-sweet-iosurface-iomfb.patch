@@ -116,7 +116,7 @@
 +#endif /* _SWEET_SURFACE_H */
 --- /dev/null
 +++ b/iokit/Kernel/arm/SweetSurface.cpp
-@@ -0,0 +1,872 @@
+@@ -0,0 +1,878 @@
 +/*
 + * Built-in IOSurface for SWEET.
 + *
@@ -407,6 +407,12 @@
 +	s->elementWidth = (uint8_t)sweet_dict_u32(props, "IOSurfaceElementWidth", 1);
 +	s->elementHeight = (uint8_t)sweet_dict_u32(props, "IOSurfaceElementHeight", 1);
 +	s->pixelFormat = sweet_dict_u32(props, "IOSurfacePixelFormat", 0);
++	/* This panel has no wide gamut. Match MiniIOSurface: report ordinary
++	 * BGRA for ten-bit requests, and collapse b3a8's alpha plane. */
++	if (s->pixelFormat == 'w30r' || s->pixelFormat == 'l10r' || s->pixelFormat == 'w30R')
++		s->pixelFormat = 'BGRA';
++	bool onePlane = s->pixelFormat == 'b3a8';
++	if (onePlane) s->pixelFormat = 'BGRA';
 +	s->cacheMode = sweet_dict_u32(props, "IOSurfaceCacheMode", 0);
 +	s->offset = sweet_dict_u32(props, "IOSurfaceOffset", 0);
 +	if (s->width > SWEET_SURFACE_MAX_DIM || s->height > SWEET_SURFACE_MAX_DIM ||
@@ -420,7 +426,7 @@
 +	}
 +	end = (uint64_t)s->offset + (uint64_t)s->bytesPerRow * sweet_div_up(s->height, s->elementHeight);
 +
-+	OSArray *planes = OSDynamicCast(OSArray, props->getObject("IOSurfacePlaneInfo"));
++	OSArray *planes = onePlane ? NULL : OSDynamicCast(OSArray, props->getObject("IOSurfacePlaneInfo"));
 +	s->planeCount = 0;
 +	if (planes != NULL) {
 +		uint64_t next = s->offset;

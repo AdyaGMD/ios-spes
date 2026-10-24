@@ -1,3 +1,39 @@
+# Verified GPU shader milestone / active b3a8 surface fix, 2026-10-24
+
+- Saved submitorder log research/spes-graphics-submitorder-boot.txt (553949 B).
+  First Mesa submissions 2049..2052 now complete; SPES GL SHADER PASS
+  center=0,255,0 corner=0,0,255. All8 EAGLContext methods replaced and the
+  CoreAnimation context reports FD610. This is verified shader rendering, not
+  yet a usable accelerated UI.
+- The repeated shader text is backboardd crashing and restarting. After shader
+  1/2, the first CoreAnimation glDrawElements reports GL_INVALID_OPERATION
+  0x506 and backboardd dies with SIGSEGV far0x30. Immediately before that,
+  attachImage rejects IOSurface pixel format b3a8 with two planes.
+- Reference MiniIOSurface.cpp explicitly converts ten-bit w30r/l10r/w30R to
+  BGRA and b3a8 to one-plane BGRA because the panel has no wide gamut. SweetSurface
+  lacked that substitution. Ported the same conversion to patch0046; local
+  SweetSurface.cpp syntax compile and all29 existing host tests pass. This is a
+  candidate fix for the rejected attachment/incomplete framebuffer, not yet
+  hardware-tested. No userspace/root update is needed.
+- Next: validate patch series, commit/dispatch and temporary boot. Success means
+  attachImage accepts the reported BGRA surface and backboardd reaches frames
+  without the repeating crash. Keep the submitorder kernel/image/log as the
+  verified shader milestone.
+
+# Active hardware test — proven packet order image booted, 2026-10-24
+
+- CI40105111173 SUCCESS for commit8d352e7. Kernel xnu/out-0103/
+  kernel.development.sweet SHA256
+  51ee336dfd2b059e289df7c9bb646bac4590a0a31830113e5d322c84f4af9357.
+- Built shim/out/spes-ios-graphics-submitorder.img SHA256
+  fb01885bc0805c939d6e7716ed073445c40154a0494daa6a84da21e10a6e8198.
+  Payload flags rechecked; product spes. Temporary boot accepted
+  send0.399s/boot0.287s/total0.691s. No partition flashing or root writes.
+- No hardware result yet. Next: let iOS settle; if it opens, retrieve the saved
+  log after returning to Fastboot and check first submission, SHADER PASS and
+  EAGL replacement before judging speed. If the same stall recurs, stop changing
+  packets blindly and add a boot-only packet-order probe.
+
 # Active fix — first submission stalls after an invalidate packet, 2026-10-24
 
 - Saved diagnostics log research/spes-graphics-submitdiag-boot.txt (145090 B,
