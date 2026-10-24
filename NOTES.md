@@ -1,3 +1,23 @@
+# Active fix — GPU userspace cache-transition panic, 2026-10-24
+
+- Photo shows phystokv_range illegal physical address panic after backboardd
+  successfully opens RedwoodGPU. Saved log research/spes-graphics-first-boot.txt
+  ends before panic, but independently confirms combined tests: repeat512/512,
+  wraps3/fence513; remap3/3; allocated buffers pass/fence2048; backend ready.
+  No shader PASS/UI acceleration. OCR of photo is imperfect; do not invent stack.
+- User confirmed Fastboot; temporary OrangeFox boot accepted send3.183s/boot0.287s.
+  Phone now in recovery; no further partition writes made.
+- Found definite 32-bit truncation in pmap_sync_page_attributes_phys:
+  flush_dcache((vm_offset_t)(pp << PAGE_SHIFT),...) shifts uint32_t ppnum_t
+  before widening. RAM starts at0x100000000. Cache-mode transition pmap_sync_wimg
+  invokes this path; new GPU buffers request write-combined mappings. This matches
+  photo panic class/address range; exact stack not persisted, so hardware retest
+  still needed to confirm it is the sole trigger.
+- Patch0101 widens pp BEFORE shift. Regression reproduces old truncation and
+  checks >=4GiB physical addresses. Local pmap translation unit compile passes.
+  Next: complete host tests, commit/build0101, temporary full graphics boot;
+  installed Mesa/EAGL package can remain unchanged (no new root write needed).
+
 # Active hardware test — combined graphics boot accepted, 2026-10-24
 
 - Approved31MiB userdata delta installed; all31 changed blocks readback verified.
