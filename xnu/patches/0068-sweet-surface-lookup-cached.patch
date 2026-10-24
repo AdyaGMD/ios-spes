@@ -1,6 +1,6 @@
 --- a/iokit/Kernel/arm/SweetSurface.cpp
 +++ b/iokit/Kernel/arm/SweetSurface.cpp
-@@ -407,7 +407,7 @@
+@@ -416,7 +416,7 @@
  	OSArray *fRefs;
  
  	SweetSurfaceRef *findRef(uint32_t id, unsigned int *index);
@@ -8,8 +8,8 @@
 +	IOReturn addRef(SweetSurface *s, SweetSurfaceRef **refOut, bool *existing);
  	IOReturn returnSurface(SweetSurface *s, IOExternalMethodArguments *args);
  	IOReturn create(IOExternalMethodArguments *args);
- 
-@@ -495,17 +495,25 @@
+ 	IOReturn wrapClientImage(IOExternalMethodArguments *args);
+@@ -505,17 +505,25 @@
  /*
   * Count one more create/lookup of s by this client, mapping it into the
   * task the first time. Takes over the caller's user count on s.
@@ -37,7 +37,7 @@
  		return kIOReturnSuccess;
  	}
  	IOLockUnlock(fLock);
-@@ -615,7 +623,8 @@
+@@ -637,7 +645,8 @@
  IOSurfaceRootUserClient::returnSurface(SweetSurface *s, IOExternalMethodArguments *args)
  {
  	SweetSurfaceRef *ref = NULL;
@@ -47,7 +47,7 @@
  	if (ret != kIOReturnSuccess) {
  		return ret;
  	}
-@@ -624,10 +633,13 @@
+@@ -646,10 +655,13 @@
  		ret = kIOReturnNoMemory;
  	} else {
  		sweet_surface_fill_result(s, ref, out);

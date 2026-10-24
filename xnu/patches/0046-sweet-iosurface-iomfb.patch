@@ -48,7 +48,7 @@
  bool
 --- /dev/null
 +++ b/iokit/Kernel/arm/SweetSurface.h
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,66 @@
 +/*
 + * Built-in IOSurface for SWEET (see SweetSurface.cpp).
 + *
@@ -117,7 +117,7 @@
 +#endif /* _SWEET_SURFACE_H */
 --- /dev/null
 +++ b/iokit/Kernel/arm/SweetSurface.cpp
-@@ -0,0 +1,1033 @@
+@@ -0,0 +1,1054 @@
 +/*
 + * Built-in IOSurface for SWEET.
 + *
@@ -856,9 +856,9 @@
 + * whose pixel format it cannot create a surface for. The lock result still
 + * has to carry a mapped state page: IOSurfaceClientGetBulkAttachments reads
 + * that pointer at +0x70, and CA dereferences it while binding the display's
-+ * first image. The wrapper gets its own buffer; the display path copies layer
-+ * surfaces into panel memory, so the client's original pointer is only a
-+ * logging aid here.
++ * first image. Alias the caller's pixels with an IOMemoryDescriptor so the
++ * returned base is the client's own pointer; if the range cannot be described
++ * (or the base is zero), fall back to a private zeroed buffer.
 + *
 + * Input (0x20 bytes): +0 base address, +8 width, +0xc height, +0x10 pixel
 + * format, +0x14 bytes per element, +0x18 bytes per row, +0x1c data size.
