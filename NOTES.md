@@ -1,3 +1,19 @@
+# Active hardware test — combined graphics boot accepted, 2026-10-24
+
+- Approved31MiB userdata delta installed; all31 changed blocks readback verified.
+  Log research/spes-graphics-delta/install-device.log. Only userdata written.
+- Recovery rebooted to Fastboot; product spes checked. Temporary boot accepted:
+  send0.414s, boot0.287s, total0.706s; image shim/out/spes-ios-graphics.img
+  SHA256d7e470d8f2268121174a3aa58a3d0a9947380942bd7021a81d410755185b194a.
+  Kernel8095b81/CI40075286580 SUCCESS; deployment tooling commit05245c5.
+- Awaiting user screen/responsiveness result. No hardware shader/UI success claimed.
+  Question asks lock/home screen vs logo/panic and scrolling responsiveness.
+- Keep phone booting until user reports. Need saved boot log to establish SHADER
+  PASS, service readiness or failure (visual responsiveness alone is not proof).
+  If rollback needed, retained original snapshot + per-block before payloads.
+  Never apply rollback blindly after iOS has changed filesystem metadata: tool
+  checks every block first and stops on divergence; inspect a new snapshot instead.
+
 # Active deployment — combined graphics approved, 2026-10-24
 
 - Kernel commit8095b81; CI40075286580 SUCCESS. Downloaded to xnu/out-0100;
