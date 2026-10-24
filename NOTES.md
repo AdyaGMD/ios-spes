@@ -1,3 +1,39 @@
+# Fence diagnostic: the display was copying unfinished frames; backpressure added, 2026-10-24
+
+- User on the 6-core/60 Hz UI: "feels faster, not usable yet"; black only
+  during lock->home and leaving an app, then later "black when I don't scroll,
+  frames when I do". That second report is the useful one: the panel kept the
+  last copy, and the last copy was an unfinished (black) surface.
+- Booted the diagnostic kernel from CI 40141982365 (commit b2a7fba) with
+  cpus=6 sweetfb_hz=60: shim/out/spes-ios-graphics-fence.img, SHA256
+  0dd1ab2c2af0ff17294a5fcab9ccae556650d282e85df19908136b2ffe005e3a.
+  Log: research/spes-eagl-fence-boot.txt (3543 lines, flush #15, 23 timeouts).
+  Note: the image built before that (same name, SHA256 d45eadff...) was the
+  old 05cfaf4 kernel because shim/build.sh needs MKBOOTIMG and CROSS_COMPILE
+  in the environment: use `MKBOOTIMG=$PWD/tools/mkbootimg
+  CROSS_COMPILE=aarch64-elf-`.
+- Every timeout line is a real queue, not a fence bookkeeping bug. Examples:
+  surface 29: fence 2083, newest 2083, completed 2081, rptr 816 tail 872;
+  surface 226: fence 2513, newest 2520, completed 2506, rptr 1588 tail 1860;
+  surface 235: fence 2568, newest 2577, completed 2560, rptr 482 tail 768.
+  `completed` is 2-18 submissions behind `newest`, and `rptr` is short of
+  `tail`: the core is working through the ring. A timeout is the 500 ms
+  display wait expiring, then "shown as it is" copied an undrawn surface.
+  The client is not throttled: SwapEnd only records, and SwapWait is a no-op,
+  so CoreAnimation runs ahead of a ~20 fps GPU and the queue never drains
+  (HackiOS's present ran synchronously in SwapEnd, which was the throttle).
+- Fix in xnu/patches/0102 (commit e13f3f4): swap() waits up to 1 s for the
+  previous frame to be shown; present() checks every layer's fence first,
+  returns false when one is not ready and the vsync timer keeps the swap
+  pending (last good frame stays on the panel), ten failures drop the frame;
+  power-off clears fDirty so a swap is not held while the panel is off.
+  Nothing undrawn is copied. Syntax: research/graphics-fence-diag-compile.log;
+  host suite: research/graphics-backpressure-tests.log (41/41).
+- CI 40143154625 (commit e13f3f4) dispatched; next: download, build the image,
+  boot, then test a still screen and the two transitions. Expected: few or no
+  timeout lines; if the queue still stands 10 deep, the client throttle did
+  not take and SwapEnd/SwapWait needs the wait itself.
+
 # Hardware result — EAGL attach fill works; single core and 10 Hz panel remain, 2026-10-24
 
 - User: "still slow". Pulled the boot log from OrangeFox: research/spes-eagl-boot.txt
