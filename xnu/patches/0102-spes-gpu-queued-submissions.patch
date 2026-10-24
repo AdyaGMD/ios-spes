@@ -1,37 +1,161 @@
 --- a/iokit/Kernel/arm/SweetFramebuffer.cpp
 +++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
-@@ -39,2 +39,6 @@
+@@ -38,4 +38,8 @@
+ 
  extern "C" int sweet_console_muted;     /* osfmk/console/serial_console.c */
 +/* RedwoodGPU.cpp and spes_gpu_backend.h, for the log a wait that came to nothing leaves. */
 +extern "C" uint32_t redwood_gpu_last(void);
 +extern "C" uint32_t redwood_gpu_completed(void);
 +extern "C" void redwood_gpu_ring(uint32_t *rptr, uint32_t *tail);
  extern "C" void spes_modem_init(void);  /* iokit/Kernel/arm/SpesModem.cpp (boot-arg modem=1) */
-@@ -209,2 +213,4 @@
+ 
+@@ -51,4 +55,5 @@
+ #include <pexpert/pexpert.h>
+ #include <kern/clock.h>
++#include <mach/mach_time.h>
+ #include <sys/proc.h>
+ 
+@@ -118,4 +123,5 @@
+ 	bool          fPowerOff;      /* RequestPowerChange(0) */
+ 	uint32_t      fFadeStep;      /* fade-out steps done while off */
++	uint32_t      fMissed;        /* frames held back because the GPU was not done with them */
+ 
+ 	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
+@@ -123,5 +129,5 @@
+ 	void removeClient(IOMobileFramebufferUserClient *client);
+ 	void swap(const uint8_t *rec);
+-	void present(const uint8_t *rec);
++	bool present(const uint8_t *rec);
+ };
+ 
+@@ -208,4 +214,6 @@
+ 
  	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
 +	/* For EAGL (HackiOS eagl.c display_waits()): swaps wait for the GPU, so frames need not be finished first. */
 +	setProperty("RedwoodWaitsForGPU", kOSBooleanTrue);
  	setProperty("external", false);
-@@ -368,2 +374,10 @@
- 			continue;
+ 	setProperty("DisplayPipePlaneBaseAlignment", 64ULL, 32);
+@@ -251,4 +259,5 @@
+ 			fb->fFadeStep = step + 1;
+ 		}
++		fb->fDirty = false;             /* nothing is shown while off: do not hold a swap */
+ 		IOLockUnlock(fb->fLock);
+ 		if (step <= 6) {
+@@ -269,11 +278,19 @@
+ 		if (rec != NULL) {
+ 			memcpy(rec, fb->fPending, SWEET_FB_SWAP_REC_SIZE);
+-			fb->fDirty = false;
++			/* fDirty stays set: the swap's driver holds the next swap until this one is shown. */
+ 		}
+ 	}
+ 	IOLockUnlock(fb->fLock);
+ 	if (rec != NULL) {
+-		fb->present(rec);
++		bool shown = fb->present(rec);
++
+ 		IOFreeData(rec, SWEET_FB_SWAP_REC_SIZE);
++		IOLockLock(fb->fLock);
++		/* Ten attempts (about five seconds) with no frame: let the client go on. */
++		if (shown || ++fb->fMissed >= 10) {
++			fb->fDirty = false;
++			fb->fMissed = 0;
 +		}
-+		/* GPU submissions are queued: copy a layer only once they are done with it. */
-+		if (!SweetSurfaceDrawn(s, 500)) {
++		IOLockUnlock(fb->fLock);
+ 	}
+ 	sender->setTimeoutUS(SWEET_FB_VSYNC_US);
+@@ -320,5 +337,27 @@
+ AppleCLCD::swap(const uint8_t *rec)
+ {
++	uint64_t began = mach_absolute_time();
++
+ 	IOLockLock(fLock);
++	/*
++	 * One frame in flight: the client is held here until the vsync timer has shown the
++	 * last one, as HackiOS's synchronous present held it. Without that the client runs
++	 * frames ahead of a GPU that takes longer than 16.7 ms a frame, the queue grows and
++	 * the display's wait for a surface (500 ms) comes to nothing: it copies an unfinished
++	 * (black) surface, and with no swap after it the panel stays black.
++	 */
++	while (fDirty) {
++		uint64_t ns;
++
++		IOLockUnlock(fLock);
++		absolutetime_to_nanoseconds(mach_absolute_time() - began, &ns);
++		if (ns >= NSEC_PER_SEC) {
++			IOLog("SWEET FB: swap %u waited 1 s for the last frame; it is replaced\n", get32(rec, 0x50));
++			IOLockLock(fLock);
++			break;
++		}
++		delay_for_interval(200, NSEC_PER_USEC);
++		IOLockLock(fLock);
++	}
+ 	memcpy(fPending, rec, SWEET_FB_SWAP_REC_SIZE);
+ 	fDirty = true;
+@@ -329,9 +368,9 @@
+ }
+ 
+-void
++bool
+ AppleCLCD::present(const uint8_t *rec)
+ {
+ 	uint32_t mask = get32(rec, 0x104);
+-
++	bool ready = true;
+ 
+ 	if (!fConsolePaused) {
+@@ -344,4 +383,33 @@
+ 		}
+ 	}
++	/*
++	 * Only a frame the GPU is done with is copied: an unfinished surface is black or half
++	 * drawn. When one is not ready the caller keeps the swap pending and the panel keeps
++	 * the last good frame; the next vsync tries again.
++	 */
++	for (uint32_t layer = 0; layer < SWEET_FB_LAYERS; layer++) {
++		uint32_t id = get32(rec, 0x54 + 4 * layer);
++		SweetSurface *s;
++
++		if (!(mask & (1u << layer)) || id == 0) {
++			continue;
++		}
++		s = sweet_surface_copy(id);
++		if (s == NULL) {
++			continue;
++		}
++		if (s != fSurface && !SweetSurfaceDrawn(s, 500)) {
 +			uint32_t rptr = 0, tail = 0;
 +
 +			redwood_gpu_ring(&rptr, &tail);
-+			IOLog("SWEET FB: GPU not done with surface %u after 500 ms: fence %u, newest %u, completed %u, rptr %u, tail %u; shown as it is\n",
++			IOLog("SWEET FB: GPU not done with surface %u after 500 ms: fence %u, newest %u, completed %u, rptr %u, tail %u; frame held back\n",
 +			    id, s->drawn, redwood_gpu_last(), redwood_gpu_completed(), rptr, tail);
- 		}
++			ready = false;
++		}
++		s->release();
++	}
++	if (!ready) {
++		return false;
++	}
+ 
+ 	for (uint32_t layer = 0; layer < SWEET_FB_LAYERS; layer++) {
+@@ -420,4 +488,5 @@
+ 		s->release();
+ 	}
++	return true;
+ }
+ 
 --- a/iokit/Kernel/arm/SweetSurface.h
 +++ b/iokit/Kernel/arm/SweetSurface.h
-@@ -44,2 +44,3 @@
+@@ -43,4 +43,5 @@
+ 	OSDictionary             *values;       /* IOSurfaceSetValue & co. */
  	uint32_t                  purgeable;    /* IOSurfaceSetPurgeable state */
 +	uint32_t                  drawn;        /* the GPU's last submission naming the pixels (0: none; RedwoodGPU.cpp) */
  
-@@ -66,2 +67,5 @@
+ 	bool init() APPLE_KEXT_OVERRIDE { return OSObject::init(); }
+@@ -65,4 +66,7 @@
+ mach_port_name_t sweet_surface_port_in_task(SweetSurface *surface, task_t task);
  
 +/* Whether the GPU is done with the surface's pixels, waiting up to that long (RedwoodGPU.cpp). */
 +bool SweetSurfaceDrawn(SweetSurface *surface, uint64_t milliseconds);
 +
  #endif /* SWEET */
+ #endif /* _SWEET_SURFACE_H */
