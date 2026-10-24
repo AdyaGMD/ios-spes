@@ -1,3 +1,31 @@
+# Active deployment — combined graphics approved, 2026-10-24
+
+- Kernel commit8095b81; CI40075286580 SUCCESS. Downloaded to xnu/out-0100;
+  kernel SHA256795e52bb5bfa724b740063b8d29ddeb186ebbc2cf4f91731f3fd18a8862427e6 verified.
+- Full iOS image shim/out/spes-ios-graphics.img SHA256
+  d7e470d8f2268121174a3aa58a3d0a9947380942bd7021a81d410755185b194a.
+  Flags verified spesgpu=1 spesgpuprobe=1 gpu_keep=0, UFS userdata root.
+- Fresh 16GiB snapshot research/spes-phone-root-20261024.img + .sha256 retained.
+  adb exec-out appended dd's 93-byte success trailer: saved .copy.log and removed
+  only that trailer after verifying exact16384-block success. Snapshot is exact16GiB.
+  Read-only fsck passed, but dirty journal prevented mount; disposable APFS clone
+  research/spes-phone-root-graphics-working.img mounted RW and replayed journal.
+  Original snapshot untouched. Current daemon matches original local root hash.
+- Guarded EAGL now requires exact spesgpu=1 boot arg, otherwise returns immediately.
+  No version-specific private-address patch. Staged backboardd adds a weak dylib
+  dependency in verified zero header padding and preserves original entitlements;
+  ad-hoc signature verifies. Files staged from CURRENT root, not stale root.
+- Offline working image contains Mesa/EAGL libraries and that daemon change.
+  research/spes-graphics-delta has31 changed1MiB blocks with before/after SHA256,
+  forward and rollback payloads. All31 live phone blocks matched before approval.
+  User explicitly answered "Install and boot" for this31MB update and temp boot.
+- apply-ios-root-delta.py --apply currently running, session8186, log
+  research/spes-graphics-delta/install-device.log. Check exit and final readback
+  before rebooting. --rollback --apply can restore mixed original/updated states.
+- 28 host tests pass; two kernel TUs compile; Mesa/EAGL build/sign checks pass.
+  No shader or UI acceleration hardware result yet. Next: verify install, reboot
+  recovery to Fastboot, check product spes, fastboot boot above image, obtain result.
+
 # Active handoff — combined graphics integration, 2026-10-24
 
 - User reports allocated-buffer test success (kernel acdbf93, CI39994157865).

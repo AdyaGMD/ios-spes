@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <sys/sysctl.h>
 #include <IOKit/IOKitLib.h>
 static GLuint spes_shader(GLenum kind,const char *text) {
  GLuint shader=glCreateShader(kind);GLint ok=0;
@@ -14,6 +15,14 @@ static GLuint spes_shader(GLenum kind,const char *text) {
  if(!ok){glDeleteShader(shader);return 0;}return shader;
 }
 int spes_gl_preflight(void) {
+ char args[2048]={0};size_t len=sizeof(args)-1;int enabled=0;
+ if(sysctlbyname("kern.bootargs",args,&len,NULL,0)==0){
+  args[sizeof(args)-1]=0;
+  char *save=NULL;
+  for(char *word=strtok_r(args," ",&save);word;word=strtok_r(NULL," ",&save))
+   if(!strcmp(word,"spesgpu=1"))enabled=1;
+ }
+ if(!enabled)return 0; /* The established software boot remains immediately usable. */
  io_service_t service=0;
  for(unsigned i=0;i<300;++i){
   service=IOServiceGetMatchingService(MACH_PORT_NULL,IOServiceMatching("RedwoodGPU"));
