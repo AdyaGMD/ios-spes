@@ -1,3 +1,41 @@
+# Hardware result — gpuport (queued submissions) + TLB-spin build, 2026-10-24
+
+- User on spes-ios-graphics-gpuport.img (out-0110, 459b73b): "very slow
+  startup, app icons still don't appear, still very slow". No crash.
+- Log research/spes-graphics-gpuport-boot.txt (218075 B, flush #34, ends at
+  frame 29). EAGL: "a frame is waited for by the display's driver, not
+  here" (RedwoodWaitsForGPU works). No "backend stopped", no "GPU is not
+  done with surface". Frames 10-40 averages (ms):
+    wire    896 total = flush 412 + wait 140 + IOSurface prep 421
+    wrapro 1383 total = flush 528 + wait 164 + IOSurface prep 772
+    gpuport 669 total = flush 264 + wait  15 + IOSurface prep 537
+  Frames 28-29: flush 7-10 ms, wait 12-14 ms, IOSurface prep 140-150 ms.
+- Cause 1 (fixed in 26cd57d, untested): "RedwoodGPU: buffers: N made in
+  3.7-29 ms each, 0 kept ones given again". Every new GPU buffer ended in
+  spes_gpu_tlb_sync (sweet_touch.c), which polls TLBSTATUS with
+  touch_wait(1) sleeps. HackiOS commits tables with a cache clean only and
+  spins on TLBSTATUS (redwood_adreno.c redwood_gpu_unmap). Backend sync now
+  spins up to 100000 reads, falls back to the sleeping sync. Test mock reads
+  TLBSTATUS from sync_ok. 40/40 tests (incl. the other agent's new tests).
+- Cause 2 (open): one full-screen surface (4544x2436 = 10809 KB) is
+  refilled every frame = the 140 ms. eagl.c surface_shared() refuses
+  invert/alpha_first images, and surface_to_texture then copies+flips on the
+  CPU. Guess: the previous frame read back for blur, inverted. Not verified.
+- "0 kept ones given again": RedwoodGPU never reuses buffers; not
+  investigated yet.
+- CI40123538908 SUCCESS for 26cd57d: kernel xnu/out-0111 SHA256
+  8bd6ea6b79076608cbf1805574355516988f03525b9976c3e9b838708313d79c.
+  Images: shim/out/spes-ios-graphics-tlbspin.img SHA256
+  ac7d9a3297be55c44f50fcbe3b1d488b75a4299198488b23e677c0c337ecc606;
+  traced variant shim/out/spes-ios-graphics-tlbspin-traced.img (cmdline +
+  glframes=1 gltrace=40-40) SHA256
+  dcac5b4b0da069915f2627e99671f83278df686e2d59a1c736cdc0a64dc78243. Neither
+  booted. Traced boot shows which texture is refilled and its flags.
+- Shared working tree: the other agent committed 9a58f70/f02942b (docs,
+  tests, tools; no kernel patches) locally; they were pushed with 26cd57d.
+  Its untracked xnu/patches/0103-spes-audio-survey-wlfw-memory.patch and
+  xnu/peripherals/ are left alone; next GPU patch number is 0104.
+
 # Audio/Wi-Fi handoff — live inventory, 2026-10-24
 
 - User assigned audio and Wi-Fi here; Claude owns GPU. No GPU changes made.
