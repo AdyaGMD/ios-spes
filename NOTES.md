@@ -17,7 +17,8 @@
   4b47bab474facd48c329feaa4612cbe9e35073346d51ff0b8b260a7476151da8;
   shim/out/spes-ios-graphics-all23.img (spescodec=1,
   sweetnull=backboardd,SpringBoard,PosterBoard,pkd) SHA256
-  3080cc0ee490c8ef99fe72e6c685bd673b3a3619824b56ebd0c2ac6847aff953. Not booted.
+  3080cc0ee490c8ef99fe72e6c685bd673b3a3619824b56ebd0c2ac6847aff953.
+  Temp-booted 2026-10-25 (hash verified).
   Risk: stage 2 touches LPASS registers for the first time (votes/clocks given
   first). A hang there = bus hang; a forced reboot recovers.
 
