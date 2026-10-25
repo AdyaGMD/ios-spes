@@ -1,3 +1,12 @@
+# Hardware result — scanout image: ~20 fps, freeze in Settings > General, 2026-10-25
+
+- User on spes-ios-graphics-scanout.img (0108+0109, kernel out-0114): "works,
+  significantly faster, runs about 20 fps", "lots of stutters between
+  operations", and it "completely froze after entering the General settings
+  submenu". Whether icons now draw was not stated. Log not pulled yet (the
+  next boot overwrites it). Next GPU step later: the freeze, then 60 fps.
+- User (2026-10-25): now focus on sound and Wi-Fi, then optimize to 60 fps.
+
 # GPU back here — Topaz/HackiOS analysis, 0108 release semantics, 0109 MDP scanout, 2026-10-25
 
 - User (2026-10-25): GPU reassigned back to this session; GPT's parity build
