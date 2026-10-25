@@ -27,7 +27,8 @@
   188b63b58805b54f954d9d6f592ca897f6d265ba390483b1bdfd36cb7af5574b;
   shim/out/spes-ios-graphics-all15.img (sweetpanel=1 spesamp=1
   sweetlsreset=1, no backlight service) SHA256
-  ed2d1daae8b4eacf6fe8182924b63794cef96fea6876872d04316dcbd5dc259b. Not booted.
+  ed2d1daae8b4eacf6fe8182924b63794cef96fea6876872d04316dcbd5dc259b.
+  Temp-booted 2026-10-25 (hash verified): the csstore rename runs on this boot.
   First boot after the reset may be slow while lsd re-registers everything.
 
 # all14bl result: a separate backlight service stalls backboardd too; brightness parked, 2026-10-25
