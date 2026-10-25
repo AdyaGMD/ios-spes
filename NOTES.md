@@ -26,7 +26,8 @@
   88c7a2bd587eeebdafa647b29fb929c8ab081ba86bb3d795e2f33b286fedc6ec;
   shim/out/spes-ios-graphics-all20.img (sweetpanel=1 spesamp=1
   sweetscan/sweetnull=backboardd,SpringBoard,PosterBoard) SHA256
-  7670d7c0e6997fd366ed3891002730f2dd46ac5f1f4c8848796dc1c55849440e. Not booted.
+  7670d7c0e6997fd366ed3891002730f2dd46ac5f1f4c8848796dc1c55849440e.
+  Temp-booted 2026-10-25 (hash verified).
 
 # Codec port plan (spes = Topaz codec + HackiOS APR), 2026-10-25
 
