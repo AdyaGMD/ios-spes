@@ -1,3 +1,30 @@
+# all12 result: GPU stays on (512 MiB VA), frames ~11 ms; amps NACK (pins unmuxed); WebKit GPU process makes BGRA tiles; all13 built, 2026-10-25
+
+- User report template unfilled. Log research/spes-all12-boot.txt
+  (1447999 B, flush #29).
+- Observed: "persistent backend ready; queued submissions, 512 MiB VA"; 0
+  "no addresses left", no GL 0x505, 0 copied-out frames of 192 logged
+  (max frame 3080). backboardd frame > 200: median 10.8 ms, p90 21.3 ms
+  (all5 was 27.2 / 47.8). CPU vote Gold 300 -> 2400 MHz again fine.
+- Observed: SE1 I2C firmware present but 0x64 (aw2016 LED), 0x58, 0x5b
+  all NACK. Live DT qupv3_se1_i2c_active: gpio4/gpio5 function qup1, 2 mA,
+  bias-disable; sleep state = plain gpio: pins were not muxed.
+- Observed (Safari): com.apple.WebKit.GPU creates the page tiles itself
+  (1125x1536 / 1125x1905 / 1125x144 BGRA, 535x108, 144x144 ...), all
+  succeed; uses sel 44 and sel 20 (SetPurgeable). No EXIT lines this boot.
+  So tiles exist in plain BGRA; whether anything draws into them, and
+  whether backboardd textures them, is the next question (the gamut theory
+  does not fit: no 10-bit formats requested).
+- mediaserverd crashed twice (sig 6), not investigated.
+- Commit 0130 (spes-amp-pinmux): GPIO 4/5 -> function 1 on WEST 0x500000
+  (same as touch's qup2 GPIO 6/7) before the reads. Syntax check OK.
+- CI 40199918217 SUCCESS: kernel xnu/out-0131 SHA256
+  11a1e47c088cd014946d41abe8ca21437b3145781f124c021f571ea088ae1c76.
+  shim/out/spes-ios-graphics-all13.img SHA256
+  c6967e1efbb1a1ec0729828aedcc4715491ad309e3d58f051e1949dba391954d;
+  shim/out/spes-ios-graphics-all13bl.img (+ sweetbacklight=2) SHA256
+  5ac0b946a8f4dccb55bf676bbbfc8d14f6c351291d78c02fa38b69b50810d453. Not booted.
+
 # all11 result: GPU address space ran out (fast, then slow); amp SE1 has I2C firmware; all12 built, 2026-10-25
 
 - User on all11: fast, then black, then laggy (thought the GPU crashed).
