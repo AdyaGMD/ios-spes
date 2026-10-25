@@ -1,3 +1,27 @@
+# Wi-Fi radio works under XNU: firmware ready, scan hears 38 networks, 2026-10-25
+
+- wifi2 boot log pulled after the phone reappeared: research/spes-wifi2-boot.txt
+  (454804 B, flush #30; git-ignored, contains nearby SSIDs: do not copy them
+  into tracked files). Boot-args sweetkeys=1 modem=1 wifi=1.
+- With 0110: both MSA regions' SCM reassignment refused (ret -2 res 56;
+  region 0 51900000+10000 secure 1, region 1 51910000+f0000 secure 0);
+  MSA_READY sent -> MSA_READY indication 493 ms; cap ok: chip_id 0x130
+  family 0x4007 board_id 0xff, fw 324a83fe (2022-02-21),
+  WLAN.HL.3.2.4-01022-QCAHLSWMTPLZ-1; bdwlan.bin 26328 B in 5 segments;
+  cal_report ok; *** WLAN FIRMWARE READY *** at 4379 ms; wlan_cfg ok; mission
+  mode; CE 12 rings; HTC ready (credits 2 x 2184, 22 endpoints); WMI
+  SERVICE_READY (abi 01000000, 1 RF chain), WMI READY; HTT 3.96; chan list
+  37 ch; passive scan STARTED at 4650 ms and heard 38 BSSs (ch 1/6/..., -62
+  to -94 dBm). No Wi-Fi errors.
+- Gaps: WMI READY reports fw MAC 00:00:00:00:00:00 (need a MAC before
+  association; check how Topaz sets it); no en0/Apple80211, so iOS wifid and
+  Settings cannot see the radio. Next: port Topaz 0900 (en0 + Apple80211 for
+  wifid) onto 0099's spes_wlan_* API (scan/join/join_pmk/transmit/rx hook),
+  plus Topaz 0129/0130 behaviour (WPA2 4-way in kernel, PMK from wifid).
+- Also seen: backboardd SIGSEGV far 0x18, pc 0x10615f6a0 (outside the shared
+  cache: our injected Mesa/EAGL libraries); one restart. Possibly related to
+  the Settings freeze; not investigated yet.
+
 # Hardware result — wifi2: icons work, volume works, display off slow, 2026-10-25
 
 - User on spes-ios-graphics-wifi2.img (kernel out-0115, 0110+0111, keys on,
