@@ -1,0 +1,49 @@
+Panel: DSI buffer in the splash region, backlight-control, a known start level (sweetpanel=1).
+
+- The DSI command buffer moves from the scanout pool (0121) to the last page of the 15 MB
+  splash region (0x5cefc000): with it in the pool, every direct pool frame after the first
+  panel command came out black (all7, all7p3), while CPU copies into panel memory showed the
+  UI (all7nodirect).
+- AppleCLCD says backlight-control = true: backboardd's CoreBrightness matches on it and found
+  nothing (all7), so it never set IOMFBBrightnessLevel and the slider did nothing.
+- The panel is set to the level the fades assume (0x3ff, 250 nits) at start: the bootloader's
+  level was lower, so a lock first jumped brighter, then faded.
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -283,18 +283,19 @@
+ 	{
+ 		int panel = 0;
+ 		PE_parse_boot_argn("sweetpanel", &panel, sizeof(panel));
+-		fPanelLevel = 0x400;
++		fPanelLevel = 0x3ff;    /* 250 nits, the level published below */
+ 		if (panel) {
+ 			fDsi = (volatile uint8_t *)ml_io_map(0x05e94000, 0x1000);
+ 			/*
+ 			 * The DSI DMA address register takes 32 bits and all of XNU's RAM is above 4 GiB
+ 			 * here, so a kernel buffer's address came out truncated and the controller read
+ 			 * some other low page: the phone reset as soon as CoreBrightness set a level
+-			 * (all6). The buffer is the last page of the black frame's scanout slot, which
+-			 * the 11 MB frame leaves unused.
++			 * (all6). The buffer is the last page of the 15 MB splash region (cont_splash_region
++			 * 0x5c000000 + 0xf00000 in the live DT), past the 10.3 MB panel frame: in the scanout
++			 * pool (0121) the DSI fetch left every later direct pool frame black (all7, all7p3;
++			 * all7nodirect showed the UI).
+ 			 */
+-			fDsiBufPhys = SWEET_SCANOUT_BASE + (uint64_t)SWEET_SCANOUT_BLACK * SWEET_SCANOUT_SLOT +
+-			    SWEET_SCANOUT_SLOT - page_size;
++			fDsiBufPhys = 0x5c000000ull + 0xf00000ull - page_size;
+ 			fDsiBuf = (volatile uint32_t *)ml_io_map_wcomb(fDsiBufPhys, page_size);
+ 			if (fDsiBuf == NULL || fDsiBufPhys + page_size > (1ull << 32)) {
+ 				fDsiBufPhys = 0;
+@@ -306,6 +307,10 @@
+ 				IOLog("SWEET FB: DSI0 ctrl %#x: panel commands on (sleep, brightness), buffer %#llx\n",
+ 				    *(volatile uint32_t *)(fDsi + 0x004), fDsiBufPhys);
+ 				setProperty("IOMFBBrightnessLevel", (unsigned long long)(250u << 16), 32);
++				/* backboardd's CoreBrightness only drives a service that says this (all7: 0 found) */
++				setProperty("backlight-control", kOSBooleanTrue);
++				/* the bootloader's level is unknown: start from the one the fades assume */
++				setPanelLevel(fPanelLevel);
+ 			}
+ 		}
+ 	}
