@@ -18,8 +18,11 @@
   apr_audio_svc: AVCS_CMD_ADSP_EVENT_GET_STATE every 500 ms until 1, then
   AVCS_GET_VERSIONS, logs "APR: ADSP audio services state = N" and the
   service ids/versions. Port of HackiOS redwood_adsp.c step 11.
-- CI40182352085 (refusal fix) cancelled by CI40182473187 (both) -> image
-  spes-ios-graphics-all4.img (modem=1 wifi=1 adsp=1 + wlan_mac).
+- CI40182352085 (refusal fix) cancelled by CI40182473187 (both) SUCCESS:
+  kernel xnu/out-0122 SHA256 db5db1add8064a295a4eeb7d35b87bf4009b70a7efd04ed0be11dfc6f07df32f;
+  image shim/out/spes-ios-graphics-all4.img (modem=1 wifi=1 adsp=1 +
+  wlan_mac) SHA256 bdd3d2c87aa8008a2904e908b3875b062249b5420040866be7d11e3dfbd4198e.
+  Not booted.
 
 # all2 result: ADSP boots and speaks APR; wifid never started (no ADT wlan node); still slow, 2026-10-25
 
