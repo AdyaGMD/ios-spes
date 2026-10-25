@@ -15,7 +15,7 @@
   SHA256 4831ff4390a7b61b10c122252c0b3a7a509e1ab99803d8c6f58e7b87aee82b20;
   shim/out/spes-ios-graphics-all6nopanel.img (cpufreq on, no sweetpanel)
   SHA256 72af85d2045b3447711ce29db7f2b6b26bab40bca8ac55c9c12c56196ba044d2.
-  Boot all6nocpu first. Not booted.
+  all6nocpu temp-booted 2026-10-25 (fastboot boot, hash verified).
 
 # all5 result: no GPU crash/freeze; brightness, sound, WebKit open; 0119 panel fade, 2026-10-25
 
