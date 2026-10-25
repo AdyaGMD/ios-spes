@@ -1,0 +1,165 @@
+Ported from MakrSas/ios-topaz 0131, 0135, 0136, 0137 (same SweetSurface lineage, SM6225).
+
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -437,8 +437,10 @@
+ 	IOMemoryMap  *data;
+ 	IOMemoryMap  *state;
+ 	uint32_t      count;
++	bool          detached;     /* trap 4 seen: the framework is releasing this view (Topaz 0136) */
++	bool          released;     /* released: only its state page stays mapped (fZombies, Topaz 0137) */
+ 
+-	bool init() APPLE_KEXT_OVERRIDE { return OSObject::init(); }
++	bool init() APPLE_KEXT_OVERRIDE { detached = false; released = false; return OSObject::init(); }
+ 	void free() APPLE_KEXT_OVERRIDE;
+ };
+ 
+@@ -450,7 +452,9 @@
+ 	OSSafeReleaseNULL(data);
+ 	OSSafeReleaseNULL(state);
+ 	if (surface != NULL) {
+-		sweet_surface_put(surface);
++		if (!released) {
++			sweet_surface_put(surface);
++		}
+ 		surface->release();
+ 		surface = NULL;
+ 	}
+@@ -485,8 +489,9 @@
+ 	task_t   fTask;
+ 	IOLock  *fLock;
+ 	OSArray *fRefs;
++	OSArray *fZombies;      /* released views whose state page is still mapped, oldest first */
+ 
+-	SweetSurfaceRef *findRef(uint32_t id, unsigned int *index);
++	SweetSurfaceRef *findRef(uint32_t id, unsigned int *index, bool detached = false);
+ 	IOReturn addRef(SweetSurface *s, SweetSurfaceRef **refOut, bool *existing);
+ 	IOReturn returnSurface(SweetSurface *s, IOExternalMethodArguments *args);
+ 	IOReturn create(IOExternalMethodArguments *args);
+@@ -506,6 +511,7 @@
+ 	IOReturn trapUseCount(void *id, void *category, void *, void *, void *, void *);
+ 	IOReturn trapLock(void *id, void *options, void *seedOut, void *, void *, void *);
+ 	IOReturn trapUnlock(void *id, void *options, void *seedOut, void *, void *, void *);
++	IOReturn trapDetach(void *id, void *, void *, void *, void *, void *);
+ 	IOReturn trapRelease(void *id, void *, void *, void *, void *, void *);
+ };
+ 
+@@ -535,13 +541,15 @@
+ 	fTask = owningTask;
+ 	fLock = IOLockAlloc();
+ 	fRefs = OSArray::withCapacity(16);
+-	return fLock != NULL && fRefs != NULL;
++	fZombies = OSArray::withCapacity(16);
++	return fLock != NULL && fRefs != NULL && fZombies != NULL;
+ }
+ 
+ void
+ IOSurfaceRootUserClient::free()
+ {
+ 	OSSafeReleaseNULL(fRefs);
++	OSSafeReleaseNULL(fZombies);
+ 	if (fLock != NULL) {
+ 		IOLockFree(fLock);
+ 		fLock = NULL;
+@@ -554,6 +562,7 @@
+ {
+ 	IOLockLock(fLock);
+ 	fRefs->flushCollection();
++	fZombies->flushCollection();
+ 	IOLockUnlock(fLock);
+ 	terminate();
+ 	return kIOReturnSuccess;
+@@ -561,11 +570,11 @@
+ 
+ /* Lock held. */
+ SweetSurfaceRef *
+-IOSurfaceRootUserClient::findRef(uint32_t id, unsigned int *index)
++IOSurfaceRootUserClient::findRef(uint32_t id, unsigned int *index, bool detached)
+ {
+ 	for (unsigned int i = 0; i < fRefs->getCount(); i++) {
+ 		SweetSurfaceRef *ref = (SweetSurfaceRef *)fRefs->getObject(i);
+-		if (ref->surface->id == id) {
++		if (ref->surface->id == id && ref->detached == detached) {
+ 			if (index != NULL) {
+ 				*index = i;
+ 			}
+@@ -1278,6 +1287,18 @@
+ 		return kIOReturnSuccess;
+ 	}
+ 	default:
++		/*
++		 * A call that answers with a lock result (child surfaces, wrap client memory 7)
++		 * would hand IOSurface.framework a client made of zeroes, with no shared state
++		 * (Topaz 0131; CoreAnimation's GL renderer crashed at 0x30 on one). Refused,
++		 * the framework returns NULL and its callers take their other path.
++		 */
++		if ((args->structureOutputDescriptor != NULL &&
++		    args->structureOutputDescriptor->getLength() >= SWEET_SURFACE_RESULT_SIZE) ||
++		    (args->structureOutput != NULL && args->structureOutputSize >= SWEET_SURFACE_RESULT_SIZE)) {
++			sweet_surf_log_once("sel (refused: lock result)", selector);
++			return kIOReturnUnsupported;
++		}
+ 		/* Notifications, ownership, timestamps...: accept and ignore. */
+ 		for (uint32_t i = 0; i < args->scalarOutputCount; i++) {
+ 			args->scalarOutput[i] = 0;
+@@ -1351,6 +1372,24 @@
+ 	    !((uintptr_t)options & kIOSurfaceLockReadOnly));
+ 	s->release();
+ 	return ret;
++}
++
++/*
++ * IOSurfaceClientRelease calls trap 4 under its cache lock and trap 5 after it, for ONE
++ * release (Topaz 0135/0136). Releasing at both dropped two references per release and
++ * unmapped surfaces another IOSurface object of the task still used. Trap 4 now only
++ * detaches the view, so a lookup in between gets a view of its own; trap 5 releases.
++ */
++IOReturn
++IOSurfaceRootUserClient::trapDetach(void *id, void *, void *, void *, void *, void *)
++{
++	IOLockLock(fLock);
++	SweetSurfaceRef *ref = findRef((uint32_t)(uintptr_t)id, NULL);
++	if (ref != NULL) {
++		ref->detached = true;
++	}
++	IOLockUnlock(fLock);
++	return kIOReturnSuccess;
+ }
+ 
+ IOReturn
+@@ -1358,9 +1397,24 @@
+ {
+ 	unsigned int index;
+ 	IOLockLock(fLock);
+-	SweetSurfaceRef *ref = findRef((uint32_t)(uintptr_t)id, &index);
++	SweetSurfaceRef *ref = findRef((uint32_t)(uintptr_t)id, &index, true);
++	if (ref == NULL) {
++		ref = findRef((uint32_t)(uintptr_t)id, &index);
++	}
+ 	if (ref != NULL && --ref->count == 0) {
+-		fRefs->removeObject(index);     /* unmaps and drops the user count */
++		/*
++		 * The pixels are unmapped now; the read-only state page stays mapped a while
++		 * (Topaz 0137): another IOSurface object of the task may still read its seed.
++		 * The last 256 released views keep their page, the oldest goes first.
++		 */
++		OSSafeReleaseNULL(ref->data);
++		sweet_surface_put(ref->surface);
++		ref->released = true;
++		ref->detached = false;
++		if (fZombies->setObject(ref) && fZombies->getCount() > 256) {
++			fZombies->removeObject(0);
++		}
++		fRefs->removeObject(index);
+ 	}
+ 	IOLockUnlock(fLock);
+ 	return ref != NULL ? kIOReturnSuccess : kIOReturnNotFound;
+@@ -1371,7 +1425,7 @@
+ 	[kSweetSurfaceTrapDecrementUse]  = { NULL, (IOTrap) & IOSurfaceRootUserClient::trapUseCount },
+ 	[kSweetSurfaceTrapLock]          = { NULL, (IOTrap) & IOSurfaceRootUserClient::trapLock },
+ 	[kSweetSurfaceTrapUnlock]        = { NULL, (IOTrap) & IOSurfaceRootUserClient::trapUnlock },
+-	[kSweetSurfaceTrapRelease]       = { NULL, (IOTrap) & IOSurfaceRootUserClient::trapRelease },
++	[kSweetSurfaceTrapRelease]       = { NULL, (IOTrap) & IOSurfaceRootUserClient::trapDetach },
+ 	[kSweetSurfaceTrapReleaseFailed] = { NULL, (IOTrap) & IOSurfaceRootUserClient::trapRelease },
+ };
+ 
