@@ -1,0 +1,1556 @@
+Sound step 1 (adsp=1): boot the ADSP and log what it offers, ported from MakrSas/ios-topaz
+0144 (TopazAudio.cpp -> SpesAudio.cpp, spes carveout 0x2e00000); SpesModem shares its SoC
+mappings, SMEM, pool, SCM and firmware reader (spes_* calls) under a lock.
+
+--- a/iokit/conf/files.arm64
++++ b/iokit/conf/files.arm64
+@@ -11,6 +11,7 @@
+ 
+ iokit/Kernel/arm/SweetCPU.cpp                                    optional iokitcpp
+ iokit/Kernel/arm/SpesModem.cpp                                   optional iokitcpp
++iokit/Kernel/arm/SpesAudio.cpp optional iokitcpp
+ iokit/Kernel/arm/RedwoodWLAN.cpp optional iokitcpp
+ iokit/Kernel/arm/MiniIONetworkStack.cpp optional iokitcpp
+ iokit/Kernel/arm/SweetEntitlements.cpp                           optional iokitcpp
+--- a/iokit/Kernel/arm/SpesModem.cpp
++++ b/iokit/Kernel/arm/SpesModem.cpp
+@@ -83,6 +83,7 @@
+ static uint8_t *smem;                           /* write-combined */
+ static volatile uint8_t *apcs, *tcsr_mutex;     /* device */
+ static uint8_t *pool;
++static IOLock *soc_lock;                        /* SMEM allocation and the pool, shared with SpesAudio.cpp */
+ static uint64_t pool_used;
+ 
+ static inline void mb(void) { __asm__ volatile ("dsb sy" ::: "memory"); }
+@@ -108,12 +109,21 @@
+ pool_alloc(uint64_t size, uint64_t *pa)
+ {
+ 	size = (size + 0xfff) & ~0xfffull;
++	if (soc_lock != NULL) {
++		IOLockLock(soc_lock);
++	}
+ 	if (pool == NULL || pool_used + size > MODEM_POOL_SIZE) {
++		if (soc_lock != NULL) {
++			IOLockUnlock(soc_lock);
++		}
+ 		return NULL;
+ 	}
+ 	*pa = MODEM_POOL_BASE + pool_used;
+ 	void *va = pool + pool_used;
+ 	pool_used += size;
++	if (soc_lock != NULL) {
++		IOLockUnlock(soc_lock);
++	}
+ 	bzero(va, size);                            /* Normal NC: DC ZVA is fine */
+ 	return va;
+ }
+@@ -318,9 +328,19 @@
+ 	uint32_t aligned = (size + 7) & ~7u, need = sizeof(struct smem_priv_entry) + aligned;
+ 	void *v = smem_get(p, item, NULL);
+ 
+-	if (v != NULL || p == NULL || !smem_lock()) {
++	if (v != NULL || p == NULL) {
+ 		return v;
+ 	}
++	/* (the hardware mutex keeps the remote processors out, not a second thread of ours) */
++	if (soc_lock != NULL) {
++		IOLockLock(soc_lock);
++	}
++	if (!smem_lock()) {
++		if (soc_lock != NULL) {
++			IOLockUnlock(soc_lock);
++		}
++		return smem_get(p, item, NULL);
++	}
+ 	v = smem_get(p, item, NULL);
+ 	if (v == NULL && p->free_uncached + need <= p->free_cached) {
+ 		struct smem_priv_entry *h = (struct smem_priv_entry *)((uint8_t *)p + p->free_uncached);
+@@ -339,6 +359,9 @@
+ 		LOG("SMEM partition full: %x..%x need %x", p->free_uncached, p->free_cached, need);
+ 	}
+ 	smem_unlock();
++	if (soc_lock != NULL) {
++		IOLockUnlock(soc_lock);
++	}
+ 	return v;
+ }
+ 
+@@ -6191,42 +6214,132 @@
+ 	return ok;
+ }
+ 
+-static void
+-spes_modem_thread(void *arg __unused, wait_result_t wr __unused)
++/*
++ * The SoC mappings the modem and the ADSP (SpesAudio.cpp, adsp=1) both need, made once by
++ * whichever asks first (as Topaz 0144 split topaz_soc_map out of its modem thread): the
++ * firmware partition readable, SMEM, the pool, the APCS doorbell, the TCSR mutex.
++ */
++extern "C" bool
++spes_soc_map(void)
+ {
++	static IOLock *once;
++	static int state;                           /* 0 not yet, 1 ok, -1 failed */
+ 	IOMemoryMap *smem_map, *pool_map;
+-	unsigned watch = 0;                         /* 0: serve the modem for the whole session */
+ 
+-	(void)PE_parse_boot_argn("modem_watch", &watch, sizeof(watch));
++	if (once == NULL) {
++		IOLock *l = IOLockAlloc();
++		if (!OSCompareAndSwapPtr(NULL, l, (void * volatile *)&once)) {
++			IOLockFree(l);
++		}
++	}
++	IOLockLock(once);
++	if (state != 0) {
++		IOLockUnlock(once);
++		return state > 0;
++	}
++	state = -1;
++	soc_lock = IOLockAlloc();
+ 	(void)PE_parse_boot_argn("modem_part", fw_part, sizeof(fw_part));
+-	/* sweet_ufs comes up with the root device; the modem is not needed before that */
+-	{
+-		uint8_t probe[16];
+-		int err = EAGAIN;
+-		for (int i = 0; i < 120 && err == EAGAIN; i++) {
+-			err = sweet_ufs_read_part(fw_part, fw_files[0].off, probe, sizeof(probe));
+-			if (err == EAGAIN) {
+-				IOSleep(500);
+-			}
++	/* sweet_ufs comes up with the root device; neither DSP is needed before that */
++	uint8_t probe[16];
++	int err = EAGAIN;
++	for (int i = 0; i < 120 && err == EAGAIN; i++) {
++		err = sweet_ufs_read_part(fw_part, fw_files[0].off, probe, sizeof(probe));
++		if (err == EAGAIN) {
++			IOSleep(500);
+ 		}
+-		if (err != 0) {
+-			LOG("partition %s: %d", fw_part, err);
+-			thread_terminate(current_thread());
+-			return;
+-		}
+ 	}
++	if (err != 0) {
++		LOG("partition %s: %d", fw_part, err);
++		IOLockUnlock(once);
++		return false;
++	}
+ 	smem_map = map_phys(SMEM_PA, SMEM_SIZE, true);
+ 	pool_map = map_phys(MODEM_POOL_BASE, MODEM_POOL_SIZE, true);
+ 	apcs = (volatile uint8_t *)ml_io_map(APCS_PA, 0x1000);
+ 	tcsr_mutex = (volatile uint8_t *)ml_io_map(TCSR_MUTEX_PA, 0x4000);
+-	if (smem_map == NULL || pool_map == NULL || apcs == NULL || tcsr_mutex == NULL) {
+-		LOG("mappings failed");
+-		thread_terminate(current_thread());
+-		return;
++	if (smem_map == NULL || pool_map == NULL || apcs == NULL || tcsr_mutex == NULL || soc_lock == NULL) {
++		LOG("mappings failed");
++		IOLockUnlock(once);
++		return false;
+ 	}
++	/* (kept for the session: both DSPs use SMEM from now on) */
+ 	smem = (uint8_t *)smem_map->getVirtualAddress();
+ 	pool = (uint8_t *)pool_map->getVirtualAddress();
+ 	LOG("SMEM version %u", *(volatile uint32_t *)(smem + 64 + 7 * 4) >> 16);
++	state = 1;
++	IOLockUnlock(once);
++	return true;
++}
++
++/* ---------------------------------------------------------------- shared with SpesAudio.cpp */
++
++extern "C" void *
++spes_smem_partition(uint16_t a, uint16_t b)
++{
++	return smem_partition(a, b);
++}
++
++extern "C" void *
++spes_smem_get(void *part, uint16_t item, uint32_t *size)
++{
++	return smem_get((struct smem_part_hdr *)part, item, size);
++}
++
++extern "C" void *
++spes_smem_alloc(void *part, uint16_t item, uint32_t size)
++{
++	return smem_alloc((struct smem_part_hdr *)part, item, size);
++}
++
++extern "C" void
++spes_apcs_kick(unsigned bit)
++{
++	mb();
++	*(volatile uint32_t *)(apcs + APCS_IPC) = 1u << bit;
++	mb();
++}
++
++extern "C" uint64_t
++spes_scm(uint32_t fn, uint64_t arginfo, uint64_t a, uint64_t b, uint64_t c, uint64_t *res1)
++{
++	return scm(fn, arginfo, a, b, c, res1);
++}
++
++extern "C" void *
++spes_pool_alloc(uint64_t size, uint64_t *pa)
++{
++	return pool_alloc(size, pa);
++}
++
++/* A file of the firmware partition by its path ("image/adsp.mdt"): size, or -1. */
++extern "C" int64_t
++spes_part_fw_size(const char *path)
++{
++	return fw_size(path);
++}
++
++/* n bytes from offset off of that file (the table's extents; no crc for a part of a file). */
++extern "C" bool
++spes_part_fw_read(const char *path, uint64_t off, void *dst, uint64_t n)
++{
++	int i = fw_find(path);
++	if (i < 0 || off > fw_files[i].size || n > fw_files[i].size - off) {
++		return false;
++	}
++	return sweet_ufs_read_part(fw_part, fw_files[i].off + off, dst, n) == 0;
++}
++
++static void
++spes_modem_thread(void *arg __unused, wait_result_t wr __unused)
++{
++	unsigned watch = 0;                         /* 0: serve the modem for the whole session */
++
++	(void)PE_parse_boot_argn("modem_watch", &watch, sizeof(watch));
++	if (!spes_soc_map()) {
++		thread_terminate(current_thread());
++		return;
++	}
+ 	if (wifi_enabled() && !smmu_identity(WLAN_SID, WLAN_SID_MASK, "WLAN")) {
+ 		LOG("wifi: no SMMU stream for WLAN, the radio stays off");
+ 		wifi_on = 0;
+@@ -6234,13 +6347,13 @@
+ 	if (modem_boot()) {
+ 		modem_watch(smem_partition(0, 1), watch);
+ 	}
+-	/* keep the mappings: the modem uses SMEM from now on */
+ 	thread_terminate(current_thread());
+ }
+ 
+ #include "spes_audio_survey.inc"
+ 
+ extern "C" void spes_sta_init(void);
++extern "C" void spes_audio_init(void);   /* SpesAudio.cpp (adsp=1) */
+ extern "C" void
+ spes_modem_init(void)
+ {
+@@ -6249,6 +6362,7 @@
+ 	thread_t thread;
+ 
+ 	spes_audio_survey_init();
++	spes_audio_init();                          /* independent of modem=1 */
+ 	if (started || !PE_parse_boot_argn("modem", &on, sizeof(on)) || on == 0) {
+ 		return;
+ 	}
+--- /dev/null
++++ b/iokit/Kernel/arm/SpesAudio.cpp
+@@ -0,0 +1,1298 @@
++/*
++ * spes (SM6225): sound, step 1 - boot the ADSP (LPASS Hexagon) and see what it offers.
++ * Ported from MakrSas/ios-topaz 0144 (TopazAudio.cpp, itself a port of topaz-woa
++ * drivers/TopazAudio). Same SoC; the spes differences: the carveout is 0x2e00000 long (live
++ * DT pil_adsp_region), and spes's stock audio stack talks APR (apr_audio_svc) where Topaz's
++ * talks GPR (adsp_apps): every channel the ADSP opens is logged, "(no client)" when unserved.
++ * Topaz's notes on the boot sequence:
++ *   TrustZone PAS (id 1): init_image (.mdt metadata) -> mem_setup -> copy the adsp.bNN
++ *   segments into the carveout 0x53800000+0x2300000 -> auth_and_reset -> SMP2P: our item 429,
++ *   the ADSP's item 443 with "slave-kernel" READY -> GLINK on the "lpass" edge (apps<->adsp
++ *   SMEM partition, items 478/479/480, APCS IPC bit 8) -> QRTR on IPCRTR (+ pd-mapper for the
++ *   ADSP's protection domains) -> GPR on adsp_apps: APM GET_SPF_STATE until it says 1.
++ *
++ * Boot-arg adsp=1. Firmware: image/adsp.* from the modem partition (SpesModem's reader).
++ * SMEM, the APCS doorbell, SCM and the pool are SpesModem's (spes_* calls). Polling only.
++ * Lesson from Windows: never boot the ADSP over SMEM state of an earlier run (the SoC reset):
++ * if item 443 or 480 exists, refuse.
++ */
++#include <pexpert/arm64/board_config.h>
++
++#if defined(SWEET)
++#include <IOKit/IOLib.h>
++#include <IOKit/IOMemoryDescriptor.h>
++#include <kern/thread.h>
++#include <pexpert/pexpert.h>
++#include <sys/param.h>
++
++#define LOG(fmt, ...)       IOLog("SpesAudio: " fmt "\n", ##__VA_ARGS__)
++
++extern "C" bool     spes_soc_map(void);
++extern "C" void    *spes_smem_partition(uint16_t a, uint16_t b);
++extern "C" void    *spes_smem_get(void *part, uint16_t item, uint32_t *size);
++extern "C" void    *spes_smem_alloc(void *part, uint16_t item, uint32_t size);
++extern "C" void     spes_apcs_kick(unsigned bit);
++extern "C" uint64_t spes_scm(uint32_t fn, uint64_t arginfo, uint64_t a, uint64_t b, uint64_t c, uint64_t *res1);
++extern "C" void    *spes_pool_alloc(uint64_t size, uint64_t *pa);
++extern "C" int64_t  spes_part_fw_size(const char *path);
++extern "C" bool     spes_part_fw_read(const char *path, uint64_t off, void *dst, uint64_t n);
++
++#define ADSP_PID            2                   /* SMEM host / SMP2P / GLINK remote pid */
++#define ADSP_PAS_ID         1
++#define ADSP_CARVE_PA       0x53800000u         /* DT pil_adsp_region */
++#define ADSP_CARVE_SIZE     0x02e00000u         /* spes live DT (Topaz: 0x2300000) */
++#define ITEM_SMP2P_OUT      429                 /* apps -> adsp (DT qcom,smem = <443 429>: in, out) */
++#define ITEM_SMP2P_IN       443                 /* adsp -> apps */
++#define ITEM_ADSP_CRASH     423
++#define ADSP_SMP2P_BIT      10
++#define ADSP_GLINK_BIT      8
++#define SMEM_GLOBAL_HOST    0xFFFE
++
++#define SCM_FN(svc, cmd)    (0x42000000u | ((uint32_t)(svc) << 8) | (uint32_t)(cmd))
++#define SCM_SVC_PIL         0x02
++#define PIL_INIT_IMAGE      0x01
++#define PIL_MEM_SETUP       0x02
++#define PIL_AUTH_RESET      0x05
++#define PIL_SHUTDOWN        0x06
++#define SCM_ARG_RW          2
++
++#define PT_LOAD             1
++#define MDT_TYPE_MASK       (7u << 24)
++#define MDT_TYPE_HASH       (2u << 24)
++#define MDT_RELOCATABLE     (1u << 27)
++
++#define SMP2P_MAGIC         0x504D5324u         /* "$SMP" */
++#define SMP2P_MAX_ENTRY     16
++
++struct elf32_ehdr {
++	uint8_t  e_ident[16];
++	uint16_t e_type, e_machine;
++	uint32_t e_version, e_entry, e_phoff, e_shoff, e_flags;
++	uint16_t e_ehsize, e_phentsize, e_phnum, e_shentsize, e_shnum, e_shstrndx;
++} __attribute__((packed));
++struct elf32_phdr {
++	uint32_t p_type, p_offset, p_vaddr, p_paddr, p_filesz, p_memsz, p_flags, p_align;
++} __attribute__((packed));
++struct smp2p_hdr { uint32_t magic; uint8_t version, features[3]; uint16_t local_pid, remote_pid, total, valid; uint32_t flags; } __attribute__((packed));
++struct smp2p_entry { char name[16]; uint32_t value; } __attribute__((packed));
++
++static inline void mb(void) { __asm__ volatile ("dsb sy" ::: "memory"); }
++
++static uint64_t t0;
++static unsigned
++ms(void)
++{
++	uint64_t ns;
++	absolutetime_to_nanoseconds(mach_absolute_time() - t0, &ns);
++	return (unsigned)(ns / 1000000);
++}
++#define T   ms() / 1000, ms() % 1000
++
++static void *part;                              /* apps<->adsp SMEM partition */
++
++/* ---------------------------------------------------------------- SMP2P */
++
++static struct smp2p_hdr *sp_out, *sp_in;
++static volatile uint32_t *stop_entry, *adsp_state;
++
++static volatile uint32_t *
++smp2p_find(struct smp2p_hdr *h, const char *name)
++{
++	struct smp2p_entry *e = (struct smp2p_entry *)(h + 1);
++
++	for (uint32_t i = 0; i < h->valid && i < SMP2P_MAX_ENTRY; i++) {
++		if (strncmp(e[i].name, name, 16) == 0) {
++			return &e[i].value;
++		}
++	}
++	return NULL;
++}
++
++static volatile uint32_t *
++smp2p_add(struct smp2p_hdr *o, const char *name, uint32_t value)
++{
++	struct smp2p_entry *e = (struct smp2p_entry *)(o + 1);
++	volatile uint32_t *v = smp2p_find(o, name);
++
++	if (v != NULL || o->valid >= o->total || o->valid >= SMP2P_MAX_ENTRY) {
++		return v;
++	}
++	bzero(e[o->valid].name, sizeof(e[o->valid].name));
++	strlcpy(e[o->valid].name, name, sizeof(e[o->valid].name));
++	e[o->valid].value = value;
++	mb();
++	o->valid++;
++	mb();
++	return &e[o->valid - 1].value;
++}
++
++static bool
++smp2p_out_init(void)
++{
++	sp_out = (struct smp2p_hdr *)spes_smem_alloc(part, ITEM_SMP2P_OUT,
++	    sizeof(struct smp2p_hdr) + SMP2P_MAX_ENTRY * sizeof(struct smp2p_entry));
++	if (sp_out == NULL) {
++		return false;
++	}
++	if (sp_out->version == 0) {
++		sp_out->magic = SMP2P_MAGIC;
++		sp_out->local_pid = 0;
++		sp_out->remote_pid = ADSP_PID;
++		sp_out->total = SMP2P_MAX_ENTRY;
++		sp_out->valid = 0;
++		sp_out->features[0] = 1;            /* SSR_ACK */
++		mb();
++		sp_out->version = 1;
++	}
++	stop_entry = smp2p_add(sp_out, "master-kernel", 0);    /* bit0 = stop request */
++	smp2p_add(sp_out, "sleepstate", 1);                    /* bit0 = apps awake */
++	spes_apcs_kick(ADSP_SMP2P_BIT);
++	return stop_entry != NULL;
++}
++
++static void
++crash_reason(void)
++{
++	uint32_t len = 0;
++	const char *why = (const char *)spes_smem_get(spes_smem_partition(SMEM_GLOBAL_HOST, SMEM_GLOBAL_HOST),
++	    ITEM_ADSP_CRASH, &len);
++	char msg[160];
++
++	if (why == NULL || len == 0 || why[0] == 0) {
++		LOG("crash reason (%u): %s", ITEM_ADSP_CRASH, why == NULL ? "item absent" : "empty");
++		return;
++	}
++	strlcpy(msg, why, MIN((size_t)len + 1, sizeof(msg)));
++	LOG("crash reason (%u): %s", ITEM_ADSP_CRASH, msg);
++}
++
++/* ---------------------------------------------------------------- PAS load */
++
++static bool
++phdr_loadable(const struct elf32_phdr *p)
++{
++	return p->p_type == PT_LOAD && p->p_memsz != 0 && (p->p_flags & MDT_TYPE_MASK) != MDT_TYPE_HASH;
++}
++
++static bool
++adsp_load(void)
++{
++	int64_t mdt_size = spes_part_fw_size("image/adsp.mdt");
++	uint8_t *mdt = NULL, *meta;
++	uint64_t meta_pa = 0, st, res = 0;
++	uint32_t min_addr = 0xFFFFFFFFu, max_addr = 0, hash_idx = 0xFFFFFFFFu;
++	bool relocate = false, ok = false;
++	char name[32];
++
++	if (mdt_size <= 0 || mdt_size > 0x100000 || (mdt = (uint8_t *)IOMalloc((vm_size_t)mdt_size)) == NULL ||
++	    !spes_part_fw_read("image/adsp.mdt", 0, mdt, (uint64_t)mdt_size)) {
++		LOG("image/adsp.mdt: not readable (%lld bytes)", mdt_size);
++		goto out;
++	}
++	{
++		struct elf32_ehdr *eh = (struct elf32_ehdr *)mdt;
++		if ((uint64_t)mdt_size < sizeof(*eh) || memcmp(eh->e_ident, "\177ELF", 4) != 0 ||
++		    eh->e_phoff + (uint64_t)eh->e_phnum * sizeof(struct elf32_phdr) > (uint64_t)mdt_size) {
++			LOG("adsp.mdt: bad ELF header");
++			goto out;
++		}
++		struct elf32_phdr *ph = (struct elf32_phdr *)(mdt + eh->e_phoff);
++		for (uint32_t i = 0; i < eh->e_phnum; i++) {
++			if ((ph[i].p_flags & MDT_TYPE_MASK) == MDT_TYPE_HASH) {
++				hash_idx = i;
++			}
++			if (!phdr_loadable(&ph[i])) {
++				continue;
++			}
++			relocate = relocate || (ph[i].p_flags & MDT_RELOCATABLE) != 0;
++			min_addr = MIN(min_addr, ph[i].p_paddr);
++			max_addr = MAX(max_addr, ph[i].p_paddr + ph[i].p_memsz);
++		}
++		LOG("phdrs=%u hash=%u region %08x..%08x relocate=%u", eh->e_phnum, hash_idx, min_addr, max_addr, relocate);
++		/* never write outside the DT carveout */
++		if (hash_idx == 0xFFFFFFFFu || min_addr < ADSP_CARVE_PA || max_addr > ADSP_CARVE_PA + ADSP_CARVE_SIZE) {
++			LOG("no hash segment, or segments outside the carveout %08x+%x", ADSP_CARVE_PA, ADSP_CARVE_SIZE);
++			goto out;
++		}
++
++		/* metadata = ELF header + phdrs + hash segment, physically contiguous below 4 GiB */
++		uint64_t hsz = eh->e_phoff + (uint64_t)eh->e_phnum * sizeof(struct elf32_phdr);
++		uint64_t meta_size = hsz + ph[hash_idx].p_filesz;
++		meta = (uint8_t *)spes_pool_alloc(meta_size, &meta_pa);
++		if (meta == NULL) {
++			LOG("no pool memory for %llu bytes of metadata", meta_size);
++			goto out;
++		}
++		memcpy(meta, mdt, hsz);
++		if (ph[hash_idx].p_offset + ph[hash_idx].p_filesz <= (uint64_t)mdt_size) {
++			memcpy(meta + hsz, mdt + ph[hash_idx].p_offset, ph[hash_idx].p_filesz);
++		} else {
++			snprintf(name, sizeof(name), "image/adsp.b%02u", hash_idx);
++			if (spes_part_fw_size(name) != (int64_t)ph[hash_idx].p_filesz ||
++			    !spes_part_fw_read(name, 0, meta + hsz, ph[hash_idx].p_filesz)) {
++				LOG("%s: hash segment not readable", name);
++				goto out;
++			}
++		}
++		mb();
++
++		st = spes_scm(SCM_FN(SCM_SVC_PIL, PIL_INIT_IMAGE), 2 | (SCM_ARG_RW << 6), ADSP_PAS_ID, meta_pa, 0, &res);
++		LOG("PAS init_image: ret=%llx res=%llx (meta %llu bytes @%llx)", st, res, meta_size, meta_pa);
++		if (st != 0 || res != 0) {
++			goto out;
++		}
++		if (relocate) {
++			st = spes_scm(SCM_FN(SCM_SVC_PIL, PIL_MEM_SETUP), 3, ADSP_PAS_ID, min_addr,
++			    ((uint64_t)(max_addr - min_addr) + 0xfff) & ~0xfffull, &res);
++			LOG("PAS mem_setup: ret=%llx res=%llx", st, res);
++		}
++
++		/* the carveout, write-combined, only while copying */
++		IOMemoryDescriptor *md = IOMemoryDescriptor::withPhysicalAddress(min_addr, max_addr - min_addr, kIODirectionInOut);
++		IOMemoryMap *map = md != NULL ? md->map(kIOMapWriteCombineCache) : NULL;
++		OSSafeReleaseNULL(md);
++		if (map == NULL) {
++			LOG("cannot map the carveout");
++			goto shutdown;
++		}
++		uint8_t *carve = (uint8_t *)map->getVirtualAddress();
++		bool loaded = true;
++		for (uint32_t i = 0; i < eh->e_phnum && loaded; i++) {
++			if (!phdr_loadable(&ph[i])) {
++				continue;
++			}
++			uint8_t *dst = carve + (ph[i].p_paddr - min_addr);
++			if (ph[i].p_filesz != 0) {
++				snprintf(name, sizeof(name), "image/adsp.b%02u", i);
++				if (spes_part_fw_size(name) != (int64_t)ph[i].p_filesz || !spes_part_fw_read(name, 0, dst, ph[i].p_filesz)) {
++					LOG("%s: not readable (%lld of %u bytes)", name, spes_part_fw_size(name), ph[i].p_filesz);
++					loaded = false;
++					break;
++				}
++			}
++			if (ph[i].p_memsz > ph[i].p_filesz) {
++				bzero(dst + ph[i].p_filesz, ph[i].p_memsz - ph[i].p_filesz);
++			}
++		}
++		mb();
++		map->release();
++		if (!loaded) {
++			goto shutdown;
++		}
++		LOG("segments loaded");
++
++		st = spes_scm(SCM_FN(SCM_SVC_PIL, PIL_AUTH_RESET), 1, ADSP_PAS_ID, 0, 0, &res);
++		LOG("PAS auth_and_reset: ret=%llx res=%llx", st, res);
++		ok = st == 0 && res == 0;
++		if (ok) {
++			goto out;
++		}
++	}
++shutdown:
++	st = spes_scm(SCM_FN(SCM_SVC_PIL, PIL_SHUTDOWN), 1, ADSP_PAS_ID, 0, 0, &res);
++	LOG("PAS shutdown after failure: ret=%llx res=%llx", st, res);
++out:
++	if (mdt != NULL) {
++		IOFree(mdt, (vm_size_t)mdt_size);
++	}
++	return ok;
++}
++
++/* Wait for "slave-kernel" READY (bit 1) or FATAL (bit 0) in the ADSP's item 443. */
++static uint32_t
++wait_ready(unsigned limit_ms)
++{
++	uint32_t last = 0xFFFFFFFFu, sz = 0;
++	bool negotiated = false;
++
++	while (ms() < limit_ms) {
++		if (sp_in == NULL) {
++			sp_in = (struct smp2p_hdr *)spes_smem_get(part, ITEM_SMP2P_IN, &sz);
++			if (sp_in == NULL) {
++				IOSleep(10);
++				continue;
++			}
++			LOG("t=%u.%03u adsp SMP2P item %u appeared (%u bytes)", T, ITEM_SMP2P_IN, sz);
++		}
++		if (!negotiated && sp_in->version == sp_out->version) {
++			sp_out->features[0] &= sp_in->features[0];
++			negotiated = true;
++			spes_apcs_kick(ADSP_SMP2P_BIT);
++		}
++		if (adsp_state == NULL) {
++			adsp_state = smp2p_find(sp_in, "slave-kernel");
++			if (adsp_state == NULL) {
++				IOSleep(10);
++			}
++			continue;
++		}
++		if (*adsp_state != last) {
++			last = *adsp_state;
++			LOG("t=%u.%03u slave-kernel %08x%s%s%s%s", T, last, (last & 1) ? " FATAL" : "", (last & 2) ? " READY" : "",
++			    (last & 4) ? " handover" : "", (last & 8) ? " stop-ack" : "");
++			if (last & 3) {
++				break;
++			}
++		}
++		IOSleep(10);
++	}
++	return adsp_state != NULL ? *adsp_state : 0;
++}
++
++/* ---------------------------------------------------------------- GLINK (lpass edge) */
++
++#define ITEM_GLINK_DESC     478
++#define ITEM_GLINK_FIFO_TX  479
++#define ITEM_GLINK_FIFO_RX  480
++#define GLINK_TX_SIZE       0x4000
++
++enum {
++	CMD_VERSION = 0, CMD_VERSION_ACK = 1, CMD_OPEN = 2, CMD_CLOSE = 3, CMD_OPEN_ACK = 4, CMD_INTENT = 5,
++	CMD_RX_DONE = 6, CMD_RX_INTENT_REQ = 7, CMD_RX_INTENT_REQ_ACK = 8, CMD_TX_DATA = 9, CMD_CLOSE_ACK = 11,
++	CMD_TX_DATA_CONT = 12, CMD_READ_NOTIF = 13, CMD_RX_DONE_W_REUSE = 14, CMD_SIGNALS = 15,
++};
++
++#define MAX_CHANS           8
++#define OUR_INTENTS         8
++#define OUR_INTENT_SIZE     0x4400
++#define MAX_RINTENTS        256
++#define TXQ_LEN             32
++
++struct glink_msg { uint16_t cmd, p1; uint32_t p2; } __attribute__((packed));
++struct glink_data_hdr { struct glink_msg m; uint32_t chunk, left; } __attribute__((packed));
++
++typedef void (*glink_rx_t)(const uint8_t *data, uint32_t len);
++
++struct rintent { uint32_t id, size; bool used; };
++struct chan {
++	char       name[32];
++	glink_rx_t rx;                          /* NULL: not ours, only acked */
++	uint16_t   lcid;
++	uint32_t   rcid;
++	bool       remote_open, open_sent, open_acked, intents_sent, intent_req_sent;
++	struct rintent ri[MAX_RINTENTS];
++	uint32_t   ri_count;
++	uint8_t   *asm_buf;                     /* reassembly, OUR_INTENT_SIZE */
++	uint32_t   asm_len;
++	void      *txq[TXQ_LEN];
++	uint32_t   txq_len[TXQ_LEN];
++	uint32_t   txq_head, txq_tail, txq_drops;
++	uint32_t   rx_pkts, tx_pkts, ri_lost, intent_reqs;
++};
++
++static volatile uint32_t *g_desc;               /* [0] tx tail [1] tx head [2] rx tail [3] rx head */
++static uint8_t *g_tx, *g_rx;
++static uint32_t g_rx_len, g_features = 1, g_next_intent = 1, g_chans;
++static struct chan *g_ch;                       /* MAX_CHANS */
++static uint32_t g_rx_msgs, g_tx_msgs;
++static bool g_dead;
++
++static uint32_t
++rx_avail(void)
++{
++	uint32_t h = g_desc[3], t = g_desc[2];
++	return h >= t ? h - t : g_rx_len - t + h;
++}
++
++static void
++rx_peek(uint32_t off, void *dst, uint32_t n)
++{
++	uint32_t t = g_desc[2] + off;
++	if (t >= g_rx_len) {
++		t -= g_rx_len;
++	}
++	uint32_t n1 = MIN(n, g_rx_len - t);
++	memcpy(dst, g_rx + t, n1);
++	if (n > n1) {
++		memcpy((uint8_t *)dst + n1, g_rx, n - n1);
++	}
++}
++
++static void
++rx_advance(uint32_t n)
++{
++	uint32_t t = g_desc[2] + n;
++	if (t >= g_rx_len) {
++		t -= g_rx_len;
++	}
++	mb();
++	g_desc[2] = t;
++}
++
++static uint32_t
++tx_put(uint32_t head, const void *src, uint32_t n)
++{
++	uint32_t n1 = MIN(n, GLINK_TX_SIZE - head);
++	memcpy(g_tx + head, src, n1);
++	if (n > n1) {
++		memcpy(g_tx, (const uint8_t *)src + n1, n - n1);
++	}
++	head += n;
++	return head >= GLINK_TX_SIZE ? head - GLINK_TX_SIZE : head;
++}
++
++static bool
++tx_write(const void *hdr, uint32_t hlen, const void *data, uint32_t dlen)
++{
++	uint32_t head = 0, tail, avail, n;
++
++	for (n = 0; n < 1000; n++) {
++		head = g_desc[1];
++		tail = g_desc[0];
++		avail = tail <= head ? GLINK_TX_SIZE - head + tail : tail - head;
++		avail = avail < 8 ? 0 : avail - 8;
++		if (avail >= ((hlen + dlen + 7) & ~7u)) {
++			break;
++		}
++		IODelay(100);
++	}
++	if (n == 1000) {
++		LOG("glink TX FIFO full");
++		return false;
++	}
++	head = tx_put(head, hdr, hlen);
++	if (dlen != 0) {
++		head = tx_put(head, data, dlen);
++	}
++	head = (head + 7) & ~7u;
++	if (head >= GLINK_TX_SIZE) {
++		head -= GLINK_TX_SIZE;
++	}
++	mb();
++	g_desc[1] = head;
++	mb();
++	spes_apcs_kick(ADSP_GLINK_BIT);
++	g_tx_msgs++;
++	return true;
++}
++
++static void
++send_cmd(uint16_t cmd, uint16_t p1, uint32_t p2)
++{
++	struct glink_msg m = { cmd, p1, p2 };
++	tx_write(&m, sizeof(m), NULL, 0);
++}
++
++static struct chan *
++by_name(const char *name)
++{
++	for (uint32_t i = 0; i < g_chans; i++) {
++		if (strcmp(g_ch[i].name, name) == 0) {
++			return &g_ch[i];
++		}
++	}
++	return NULL;
++}
++
++static struct chan *
++by_rcid(uint32_t rcid)
++{
++	for (uint32_t i = 0; i < g_chans; i++) {
++		if (g_ch[i].remote_open && g_ch[i].rcid == rcid) {
++			return &g_ch[i];
++		}
++	}
++	return NULL;
++}
++
++static struct chan *
++add_chan(const char *name)
++{
++	if (g_chans == MAX_CHANS) {
++		return NULL;
++	}
++	struct chan *c = &g_ch[g_chans];
++	bzero(c, sizeof(*c));
++	strlcpy(c->name, name, sizeof(c->name));
++	c->lcid = (uint16_t)(g_chans + 1);
++	g_chans++;
++	return c;
++}
++
++static void
++glink_register(const char *name, glink_rx_t rx)
++{
++	struct chan *c = by_name(name);
++	if (c == NULL) {
++		c = add_chan(name);
++	}
++	if (c != NULL) {
++		c->rx = rx;
++		c->asm_buf = (uint8_t *)IOMallocZero(OUR_INTENT_SIZE);
++	}
++}
++
++static void
++send_open(struct chan *c)
++{
++	struct { struct glink_msg m; char name[32]; } req;
++	uint32_t len = (uint32_t)strlen(c->name) + 1;
++
++	bzero(&req, sizeof(req));
++	req.m.cmd = CMD_OPEN;
++	req.m.p1 = c->lcid;
++	req.m.p2 = len;
++	memcpy(req.name, c->name, len);
++	tx_write(&req, (8 + len + 7) & ~7u, NULL, 0);
++	c->open_sent = true;
++	LOG("t=%u.%03u glink OPEN \"%s\" lcid %u", T, c->name, c->lcid);
++}
++
++static void
++advertise_intents(struct chan *c, uint32_t count, uint32_t size)
++{
++	struct { struct glink_msg m; uint32_t pair[2 * OUR_INTENTS]; } m;
++
++	count = MIN(count, (uint32_t)OUR_INTENTS);
++	m.m.cmd = CMD_INTENT;
++	m.m.p1 = c->lcid;
++	m.m.p2 = count;
++	for (uint32_t i = 0; i < count; i++) {
++		m.pair[2 * i] = size;
++		m.pair[2 * i + 1] = g_next_intent++;
++	}
++	tx_write(&m, sizeof(struct glink_msg) + 8 * count, NULL, 0);
++}
++
++static bool
++chan_up(const struct chan *c)
++{
++	return c->remote_open && c->open_acked;
++}
++
++static bool
++glink_chan_up(const char *name)
++{
++	struct chan *c = by_name(name);
++	return c != NULL && chan_up(c);
++}
++
++static bool
++try_send(struct chan *c, const void *data, uint32_t len)
++{
++	uint32_t i;
++
++	for (i = 0; i < c->ri_count; i++) {
++		if (!c->ri[i].used && c->ri[i].size >= len) {
++			break;
++		}
++	}
++	if (i == c->ri_count) {
++		if (!c->intent_req_sent) {
++			send_cmd(CMD_RX_INTENT_REQ, c->lcid, len);
++			c->intent_req_sent = true;
++			c->intent_reqs++;
++		}
++		return false;
++	}
++	struct glink_data_hdr h = { { CMD_TX_DATA, c->lcid, c->ri[i].id }, len, 0 };
++	c->ri[i].used = true;
++	c->tx_pkts++;
++	return tx_write(&h, sizeof(h), data, len);
++}
++
++static void
++pump(struct chan *c)
++{
++	while (chan_up(c) && c->txq_head != c->txq_tail &&
++	    try_send(c, c->txq[c->txq_head % TXQ_LEN], c->txq_len[c->txq_head % TXQ_LEN])) {
++		IOFree(c->txq[c->txq_head % TXQ_LEN], c->txq_len[c->txq_head % TXQ_LEN]);
++		c->txq_head++;
++	}
++}
++
++/* queue a packet: it goes out when the channel is up and the ADSP has an intent for it */
++static bool
++glink_send(const char *name, const void *data, uint32_t len)
++{
++	struct chan *c = by_name(name);
++	void *copy;
++
++	if (c == NULL || c->txq_tail - c->txq_head >= TXQ_LEN || len == 0 || (copy = IOMalloc(len)) == NULL) {
++		if (c != NULL) {
++			c->txq_drops++;
++		}
++		return false;
++	}
++	memcpy(copy, data, len);
++	c->txq[c->txq_tail % TXQ_LEN] = copy;
++	c->txq_len[c->txq_tail % TXQ_LEN] = len;
++	c->txq_tail++;
++	pump(c);
++	return true;
++}
++
++static bool
++rx_one(void)
++{
++	struct glink_msg m;
++	uint32_t avail = rx_avail(), n;
++	struct chan *c;
++
++	if (avail < sizeof(m)) {
++		return false;
++	}
++	rx_peek(0, &m, sizeof(m));
++	g_rx_msgs++;
++
++	switch (m.cmd) {
++	case CMD_VERSION:
++		LOG("t=%u.%03u glink VERSION %u features %x", T, m.p1, m.p2);
++		rx_advance(8);
++		if (m.p1 != 0) {
++			g_features &= m.p2;
++			send_cmd(CMD_VERSION_ACK, 1, g_features);
++		}
++		break;
++	case CMD_VERSION_ACK:
++		LOG("t=%u.%03u glink VERSION_ACK %u features %x", T, m.p1, m.p2);
++		rx_advance(8);
++		if (m.p1 != 0 && m.p2 != g_features) {
++			g_features &= m.p2;
++			send_cmd(CMD_VERSION, 1, g_features);
++		}
++		break;
++	case CMD_OPEN: {
++		char name[33];
++		n = (8 + m.p2 + 7) & ~7u;
++		if (avail < n) {
++			return false;
++		}
++		bzero(name, sizeof(name));
++		rx_peek(8, name, MIN(m.p2, 32u));
++		rx_advance(n);
++		c = by_name(name);
++		if (c == NULL) {
++			c = add_chan(name);
++		}
++		LOG("t=%u.%03u glink ADSP OPEN \"%s\" rcid %u%s", T, name, m.p1, (c != NULL && c->rx != NULL) ? "" : " (no client)");
++		if (c != NULL) {
++			c->rcid = m.p1;
++			c->remote_open = true;
++			send_cmd(CMD_OPEN_ACK, (uint16_t)c->rcid, 0);
++			if (c->rx != NULL && !c->open_sent) {
++				send_open(c);
++			}
++		}
++		break;
++	}
++	case CMD_OPEN_ACK:
++		rx_advance(8);
++		for (uint32_t i = 0; i < g_chans; i++) {
++			if (g_ch[i].lcid == m.p1) {
++				g_ch[i].open_acked = true;
++				LOG("t=%u.%03u glink OPEN_ACK \"%s\"", T, g_ch[i].name);
++			}
++		}
++		break;
++	case CMD_CLOSE:
++		rx_advance(8);
++		c = by_rcid(m.p1);
++		LOG("t=%u.%03u glink ADSP CLOSE rcid %u \"%s\"", T, m.p1, c != NULL ? c->name : "?");
++		send_cmd(CMD_CLOSE_ACK, (uint16_t)m.p1, 0);
++		if (c != NULL) {
++			c->remote_open = false;
++			c->ri_count = 0;
++		}
++		break;
++	case CMD_INTENT:
++		n = (8 + 8 * m.p2 + 7) & ~7u;
++		if (avail < n) {
++			return false;
++		}
++		c = by_rcid(m.p1);
++		for (uint32_t i = 0; c != NULL && i < m.p2; i++) {
++			uint32_t pair[2];
++			rx_peek(8 + 8 * i, pair, 8);
++			if (c->ri_count < MAX_RINTENTS) {
++				c->ri[c->ri_count].size = pair[0];
++				c->ri[c->ri_count].id = pair[1];
++				c->ri[c->ri_count].used = false;
++				c->ri_count++;
++			} else {
++				c->ri_lost++;
++			}
++		}
++		rx_advance(n);
++		if (c != NULL) {
++			c->intent_req_sent = false;
++			pump(c);
++		}
++		break;
++	case CMD_RX_DONE:
++	case CMD_RX_DONE_W_REUSE:
++		rx_advance(8);
++		c = by_rcid(m.p1);
++		for (uint32_t i = 0; c != NULL && i < c->ri_count; i++) {
++			if (c->ri[i].id == m.p2) {
++				if (m.cmd == CMD_RX_DONE_W_REUSE) {
++					c->ri[i].used = false;
++				} else {
++					c->ri[i] = c->ri[--c->ri_count];
++				}
++				break;
++			}
++		}
++		if (c != NULL) {
++			pump(c);
++		}
++		break;
++	case CMD_RX_INTENT_REQ:
++		rx_advance(8);
++		c = by_rcid(m.p1);
++		LOG("t=%u.%03u glink \"%s\" wants an intent of %u bytes", T, c != NULL ? c->name : "?", m.p2);
++		if (c != NULL) {
++			advertise_intents(c, 1, MAX(m.p2, (uint32_t)OUR_INTENT_SIZE));
++			send_cmd(CMD_RX_INTENT_REQ_ACK, c->lcid, 1);
++		}
++		break;
++	case CMD_RX_INTENT_REQ_ACK:
++		rx_advance(8);
++		c = by_rcid(m.p1);
++		if (c != NULL && m.p2 == 0) {
++			c->intent_req_sent = false;
++		}
++		break;
++	case CMD_CLOSE_ACK:
++	case CMD_SIGNALS:
++		rx_advance(8);
++		break;
++	case CMD_READ_NOTIF:
++		rx_advance(8);
++		spes_apcs_kick(ADSP_GLINK_BIT);
++		break;
++	case CMD_TX_DATA:
++	case CMD_TX_DATA_CONT: {
++		uint32_t hdr[2];
++		if (avail < 16) {
++			return false;
++		}
++		rx_peek(8, hdr, 8);                     /* chunk_size, left_size */
++		n = (16 + hdr[0] + 7) & ~7u;
++		if (avail < n) {
++			return false;
++		}
++		c = by_rcid(m.p1);
++		if (c != NULL && c->asm_buf != NULL) {
++			if (m.cmd == CMD_TX_DATA) {
++				c->asm_len = 0;
++			}
++			if (c->asm_len + hdr[0] <= OUR_INTENT_SIZE) {
++				rx_peek(16, c->asm_buf + c->asm_len, hdr[0]);
++				c->asm_len += hdr[0];
++			}
++		}
++		rx_advance(n);
++		if (hdr[1] == 0 && c != NULL) {
++			c->rx_pkts++;
++			if (c->rx != NULL) {
++				c->rx(c->asm_buf, c->asm_len);
++			}
++			if (g_features & 1) {
++				send_cmd(CMD_RX_DONE_W_REUSE, c->lcid, m.p2);
++			} else {
++				send_cmd(CMD_RX_DONE, c->lcid, m.p2);
++				advertise_intents(c, 1, OUR_INTENT_SIZE);
++			}
++		}
++		break;
++	}
++	default:
++		LOG("t=%u.%03u glink unknown cmd %u (%x %x), RX stopped", T, m.cmd, m.p1, m.p2);
++		g_dead = true;
++		return false;
++	}
++	return true;
++}
++
++static bool
++glink_init(void)
++{
++	bool existed = spes_smem_get(part, ITEM_GLINK_DESC, NULL) != NULL;
++
++	g_ch = (struct chan *)IOMallocZero(MAX_CHANS * sizeof(struct chan));
++	g_desc = (volatile uint32_t *)spes_smem_alloc(part, ITEM_GLINK_DESC, 32);
++	g_tx = (uint8_t *)spes_smem_alloc(part, ITEM_GLINK_FIFO_TX, GLINK_TX_SIZE);
++	if (g_ch == NULL || g_desc == NULL || g_tx == NULL) {
++		LOG("glink: no memory (desc %p tx %p)", g_desc, g_tx);
++		g_dead = true;
++		return false;
++	}
++	LOG("glink desc %s", existed ? "existed" : "ours");
++	g_desc[2] = 0;                              /* rx tail */
++	g_desc[1] = 0;                              /* tx head */
++	mb();
++	send_cmd(CMD_VERSION, 1, g_features);
++	return true;
++}
++
++static bool
++glink_poll(void)
++{
++	uint32_t rx0 = g_rx_msgs, tx0 = g_tx_msgs, sz = 0, i;
++
++	if (g_dead || g_desc == NULL) {
++		return false;
++	}
++	if (g_rx == NULL) {
++		g_rx = (uint8_t *)spes_smem_get(part, ITEM_GLINK_FIFO_RX, &sz);
++		if (g_rx == NULL) {
++			return false;
++		}
++		g_rx_len = sz;
++		LOG("t=%u.%03u ADSP RX FIFO, %u bytes", T, sz);
++	}
++	for (i = 0; i < 64 && !g_dead && rx_one(); i++) {
++	}
++	for (i = 0; i < g_chans; i++) {
++		struct chan *c = &g_ch[i];
++		if (c->rx == NULL) {
++			continue;
++		}
++		/* the ADSP opens its channels first; if it has not after 8 s, open from our side */
++		if (!c->open_sent && ms() >= 8000) {
++			send_open(c);
++		}
++		if (chan_up(c) && !c->intents_sent) {
++			advertise_intents(c, OUR_INTENTS, OUR_INTENT_SIZE);
++			c->intents_sent = true;
++			LOG("t=%u.%03u \"%s\" open both ways", T, c->name);
++		}
++		pump(c);
++	}
++	return g_rx_msgs != rx0 || g_tx_msgs != tx0;
++}
++
++static void
++glink_summary(void)
++{
++	LOG("glink: rx %u msgs, tx %u%s", g_rx_msgs, g_tx_msgs, g_dead ? " (DEAD)" : "");
++	for (uint32_t i = 0; i < g_chans; i++) {
++		struct chan *c = &g_ch[i];
++		LOG(" chan \"%s\" lcid %u rcid %u %s%s rx %u tx %u, remote intents %u, txq %u drops %u", c->name, c->lcid, c->rcid,
++		    chan_up(c) ? "UP" : "down", c->rx == NULL ? " (no client)" : "", c->rx_pkts, c->tx_pkts, c->ri_count,
++		    c->txq_tail - c->txq_head, c->txq_drops);
++	}
++}
++
++/* ---------------------------------------------------------------- QRTR + pd-mapper */
++
++#define QCHAN               "IPCRTR"
++#define QRTR_NODE_APPS      1
++#define QRTR_PORT_CTRL      0xFFFFFFFEu
++enum {
++	QRTR_TYPE_DATA = 1, QRTR_TYPE_HELLO = 2, QRTR_TYPE_BYE = 3, QRTR_TYPE_NEW_SERVER = 4, QRTR_TYPE_DEL_SERVER = 5,
++	QRTR_TYPE_DEL_CLIENT = 6, QRTR_TYPE_RESUME_TX = 7, QRTR_TYPE_EXIT = 8, QRTR_TYPE_PING = 9,
++	QRTR_TYPE_NEW_LOOKUP = 10, QRTR_TYPE_DEL_LOOKUP = 11,
++};
++#define SVC_PDM             0x40
++#define PORT_PDM            0x4001
++#define QMI_REQ             0
++#define QMI_RESP            2
++
++struct qrtr_v1 { uint32_t version, type, src_node, src_port, confirm_rx, size, dst_node, dst_port; } __attribute__((packed));
++struct qrtr_v2 { uint8_t version, type, flags, optlen; uint32_t size; uint16_t src_node, src_port, dst_node, dst_port; } __attribute__((packed));
++struct qrtr_ctrl { uint32_t cmd, a, b, c, d; } __attribute__((packed));
++
++static uint32_t q_ver = 1, q_node = 0xFFFFFFFFu;
++static bool q_hello_rx, q_hello_sent, q_announced;
++static uint32_t q_services, q_lookups, q_pdreqs, q_other, q_resumes;
++
++static void
++qrtr_send(uint32_t type, uint32_t src_port, uint32_t dst_node, uint32_t dst_port, const void *payload, uint32_t len)
++{
++	uint8_t buf[sizeof(struct qrtr_v1) + 512];
++	uint32_t n;
++
++	if (len > 512) {
++		return;
++	}
++	bzero(buf, sizeof(buf));
++	if (q_ver == 2) {
++		struct qrtr_v2 *h = (struct qrtr_v2 *)buf;
++		h->version = 2;
++		h->type = (uint8_t)type;
++		h->flags = type == QRTR_TYPE_DATA ? 1 : 0;
++		h->size = len;
++		h->src_node = QRTR_NODE_APPS;
++		h->src_port = (uint16_t)src_port;
++		h->dst_node = (uint16_t)dst_node;
++		h->dst_port = (uint16_t)dst_port;
++		n = sizeof(*h);
++	} else {
++		struct qrtr_v1 *h = (struct qrtr_v1 *)buf;
++		h->version = 1;
++		h->type = type;
++		h->src_node = QRTR_NODE_APPS;
++		h->src_port = src_port;
++		h->confirm_rx = type == QRTR_TYPE_DATA ? 1 : 0;
++		h->size = len;
++		h->dst_node = dst_node;
++		h->dst_port = dst_port;
++		n = sizeof(*h);
++	}
++	memcpy(buf + n, payload, len);
++	glink_send(QCHAN, buf, (n + len + 3) & ~3u);
++}
++
++static void
++send_ctrl(uint32_t type, uint32_t dst_node, uint32_t dst_port, uint32_t a, uint32_t b, uint32_t c, uint32_t d)
++{
++	struct qrtr_ctrl m = { type, a, b, c, d };
++	qrtr_send(type, QRTR_PORT_CTRL, dst_node, dst_port, &m, sizeof(m));
++}
++
++static const struct { const char *svc, *domain; } pd_map[] = {
++	{ "tms/servreg", "msm/adsp/root_pd" },
++	{ "tms/servreg", "msm/adsp/sensor_pd" },
++	{ "tms/servreg", "msm/adsp/audio_pd" },
++	{ "avs/audio", "msm/adsp/audio_pd" },
++};
++
++static const uint8_t *
++qm_find(const uint8_t *d, uint32_t len, uint8_t type, uint16_t *tlen)
++{
++	uint32_t o = 7;
++
++	while (o + 3 <= len) {
++		uint16_t l = *(const uint16_t *)(d + o + 1);
++		if (o + 3 + l > len) {
++			break;
++		}
++		if (d[o] == type) {
++			*tlen = l;
++			return d + o + 3;
++		}
++		o += 3 + l;
++	}
++	return NULL;
++}
++
++static uint32_t
++qm_tlv(uint8_t *m, uint32_t n, uint8_t type, const void *v, uint16_t len)
++{
++	m[n] = type;
++	*(uint16_t *)(m + n + 1) = len;
++	memcpy(m + n + 3, v, len);
++	return n + 3 + len;
++}
++
++static void
++pdm_rx(uint32_t node, uint32_t port, uint16_t txn, uint16_t msg, const uint8_t *d, uint32_t len)
++{
++	uint8_t m[400], list[300];
++	char name[80];
++	uint16_t r[2] = { 0, 0 }, v, l = 0;
++	const uint8_t *s;
++	uint32_t n = 7, ln = 1, cnt = 0, inst = 74, zero = 0;
++
++	m[0] = QMI_RESP;
++	*(uint16_t *)(m + 1) = txn;
++	*(uint16_t *)(m + 3) = msg;
++	name[0] = 0;
++	s = qm_find(d, len, 1, &l);
++	if (s != NULL) {
++		l = (uint16_t)MIN((size_t)l, sizeof(name) - 1);
++		memcpy(name, s, l);
++		name[l] = 0;
++	}
++	n = qm_tlv(m, n, 2, r, 4);
++	if (msg == 0x21) {                          /* GET_DOMAIN_LIST */
++		for (unsigned i = 0; i < sizeof(pd_map) / sizeof(pd_map[0]); i++) {
++			if (strcmp(pd_map[i].svc, name) != 0) {
++				continue;
++			}
++			uint32_t dl = (uint32_t)strlen(pd_map[i].domain);
++			list[ln++] = (uint8_t)dl;
++			memcpy(list + ln, pd_map[i].domain, dl);
++			ln += dl;
++			memcpy(list + ln, &inst, 4);
++			ln += 4;
++			list[ln++] = 0;                 /* service_data_valid */
++			memcpy(list + ln, &zero, 4);
++			ln += 4;
++			cnt++;
++		}
++		list[0] = (uint8_t)cnt;
++		v = (uint16_t)cnt;
++		n = qm_tlv(m, n, 0x10, &v, 2);          /* total_domains */
++		v = 1;
++		n = qm_tlv(m, n, 0x11, &v, 2);          /* db_rev_count */
++		if (cnt != 0) {
++			n = qm_tlv(m, n, 0x12, list, (uint16_t)ln);
++		}
++	}
++	*(uint16_t *)(m + 5) = (uint16_t)(n - 7);
++	qrtr_send(QRTR_TYPE_DATA, PORT_PDM, node, port, m, n);
++	q_pdreqs++;
++	LOG("t=%u.%03u pd-mapper: msg %x \"%s\" -> %u domain(s)", T, msg, name, cnt);
++}
++
++static void
++qrtr_rx(const uint8_t *p, uint32_t len)
++{
++	uint32_t type, src_node, src_port, dst_port, size, hlen, confirm;
++
++	if (len >= sizeof(struct qrtr_v1) && *(const uint32_t *)p == 1) {
++		const struct qrtr_v1 *h = (const struct qrtr_v1 *)p;
++		type = h->type; src_node = h->src_node; src_port = h->src_port; dst_port = h->dst_port;
++		size = h->size; hlen = sizeof(*h); confirm = h->confirm_rx;
++		q_ver = 1;
++	} else if (len >= sizeof(struct qrtr_v2) && p[0] == 2) {
++		const struct qrtr_v2 *h = (const struct qrtr_v2 *)p;
++		type = h->type; src_node = h->src_node; src_port = h->src_port; dst_port = h->dst_port;
++		size = h->size; hlen = sizeof(*h) + h->optlen * 4; confirm = h->flags & 1;
++		src_port = src_port == 0xFFFE ? QRTR_PORT_CTRL : src_port;
++		dst_port = dst_port == 0xFFFE ? QRTR_PORT_CTRL : dst_port;
++		q_ver = 2;
++	} else {
++		LOG("t=%u.%03u qrtr: bad packet, %u bytes", T, len);
++		return;
++	}
++	if (hlen + size > len) {
++		LOG("t=%u.%03u qrtr: truncated (%u + %u > %u)", T, hlen, size, len);
++		return;
++	}
++	struct qrtr_ctrl c;
++	bzero(&c, sizeof(c));
++	memcpy(&c, p + hlen, MIN((uint32_t)sizeof(c), size));
++
++	switch (type) {
++	case QRTR_TYPE_HELLO:
++		q_node = src_node;
++		q_hello_rx = true;
++		q_hello_sent = false;                   /* (re)answer with our HELLO */
++		LOG("t=%u.%03u qrtr v%u HELLO from node %u", T, q_ver, src_node);
++		break;
++	case QRTR_TYPE_NEW_SERVER:
++		if (c.a == 0 && c.b == 0) {
++			break;
++		}
++		q_services++;
++		LOG("t=%u.%03u ADSP service %x v%u inst %x node %u port %x", T, c.a, c.b & 0xFF, c.b >> 8, c.c, c.d);
++		break;
++	case QRTR_TYPE_NEW_LOOKUP:
++		q_lookups++;
++		if (c.a == 0 || c.a == SVC_PDM) {
++			send_ctrl(QRTR_TYPE_NEW_SERVER, src_node, src_port, SVC_PDM, 0x101, QRTR_NODE_APPS, PORT_PDM);
++		}
++		send_ctrl(QRTR_TYPE_NEW_SERVER, src_node, src_port, 0, 0, 0, 0);
++		break;
++	case QRTR_TYPE_DATA:
++		if (confirm) {
++			struct qrtr_ctrl r = { QRTR_TYPE_RESUME_TX, QRTR_NODE_APPS, dst_port, 0, 0 };
++			qrtr_send(QRTR_TYPE_RESUME_TX, dst_port, src_node, src_port, &r, sizeof(r));
++		}
++		if (dst_port == PORT_PDM && size >= 7 && p[hlen] == QMI_REQ) {
++			pdm_rx(src_node, src_port, *(const uint16_t *)(p + hlen + 1), *(const uint16_t *)(p + hlen + 3), p + hlen, size);
++		} else if (q_other++ < 16) {
++			LOG("t=%u.%03u qrtr DATA %u:%x -> port %x, %u B", T, src_node, src_port, dst_port, size);
++		}
++		break;
++	case QRTR_TYPE_RESUME_TX:
++		q_resumes++;
++		break;
++	default:
++		if (q_other++ < 16) {
++			LOG("t=%u.%03u qrtr type %u from %u:%x", T, type, src_node, src_port);
++		}
++		break;
++	}
++}
++
++static void
++qrtr_poll(void)
++{
++	if (!glink_chan_up(QCHAN)) {
++		return;
++	}
++	if (!q_hello_sent) {
++		send_ctrl(QRTR_TYPE_HELLO, q_node, QRTR_PORT_CTRL, 0, 0, 0, 0);
++		q_hello_sent = true;
++		LOG("t=%u.%03u sent qrtr HELLO to node %x", T, q_node);
++	}
++	if (q_hello_rx && !q_announced) {
++		send_ctrl(QRTR_TYPE_NEW_SERVER, q_node, QRTR_PORT_CTRL, SVC_PDM, 0x101, QRTR_NODE_APPS, PORT_PDM);
++		q_announced = true;
++		LOG("t=%u.%03u announced pd-mapper 0x40", T);
++	}
++}
++
++/* ---------------------------------------------------------------- GPR (AudioReach) */
++
++#define GCHAN               "adsp_apps"
++#define GPR_DOMAIN_ADSP     2
++#define GPR_DOMAIN_APPS     3
++#define GPR_HDR_WORDS       6
++#define GPR_OUR_PORT        3                   /* spf_core: gpr service reg = <3> */
++#define APM_MODULE_IID      1
++#define GPR_BASIC_RSP_RESULT        0x02001005u
++#define APM_CMD_GET_SPF_STATE       0x01001021u
++#define APM_CMD_RSP_GET_SPF_STATE   0x02001007u
++
++struct gpr_hdr {
++	uint32_t word0;                         /* version:4 hdr_size:4 (words) pkt_size:24 (bytes) */
++	uint8_t  dest_domain, src_domain;
++	uint16_t rsvd;
++	uint32_t src_port, dest_port, token, opcode;
++} __attribute__((packed));
++
++static uint32_t gpr_token = 0x100, spf_state = 0xFFFFFFFFu, gpr_asks, gpr_rxn;
++static unsigned gpr_last_ask, spf_ready_ms;
++
++static void
++gpr_send(uint32_t dest_port, uint32_t opcode, const void *payload, uint32_t len)
++{
++	uint8_t buf[sizeof(struct gpr_hdr) + 256];
++	struct gpr_hdr *h = (struct gpr_hdr *)buf;
++
++	if (len > 256) {
++		return;
++	}
++	bzero(buf, sizeof(buf));
++	h->word0 = (GPR_HDR_WORDS << 4) | ((uint32_t)(sizeof(struct gpr_hdr) + len) << 8);
++	h->dest_domain = GPR_DOMAIN_ADSP;
++	h->src_domain = GPR_DOMAIN_APPS;
++	h->src_port = GPR_OUR_PORT;
++	h->dest_port = dest_port;
++	h->token = gpr_token++;
++	h->opcode = opcode;
++	memcpy(buf + sizeof(struct gpr_hdr), payload, len);
++	glink_send(GCHAN, buf, (uint32_t)sizeof(struct gpr_hdr) + len);
++}
++
++static void
++gpr_rx(const uint8_t *data, uint32_t len)
++{
++	const struct gpr_hdr *h = (const struct gpr_hdr *)data;
++
++	gpr_rxn++;
++	if (len < sizeof(struct gpr_hdr)) {
++		LOG("t=%u.%03u gpr: short packet %u B", T, len);
++		return;
++	}
++	uint32_t hlen = ((h->word0 >> 4) & 0xF) * 4;
++	uint32_t p0 = len >= hlen + 4 ? *(const uint32_t *)(data + hlen) : 0;
++	uint32_t p1 = len >= hlen + 8 ? *(const uint32_t *)(data + hlen + 4) : 0;
++
++	if (h->opcode == APM_CMD_RSP_GET_SPF_STATE && len >= hlen + 4) {
++		if (p0 != spf_state) {
++			LOG("t=%u.%03u *** APM SPF state = %u%s (after %u asks) ***", T, p0, p0 == 1 ? " READY" : "", gpr_asks);
++		}
++		spf_state = p0;
++		if (spf_state == 1 && spf_ready_ms == 0) {
++			spf_ready_ms = ms();
++		}
++		return;
++	}
++	if (h->opcode == GPR_BASIC_RSP_RESULT && p0 == APM_CMD_GET_SPF_STATE && h->dest_port == GPR_OUR_PORT) {
++		return;                                 /* "not ready yet" */
++	}
++	if (gpr_rxn <= 32) {
++		LOG("t=%u.%03u gpr rx %u B: port %x->%x token %x opcode %08x payload %08x %08x", T, len, h->src_port,
++		    h->dest_port, h->token, h->opcode, p0, p1);
++	}
++}
++
++static void
++gpr_poll(void)
++{
++	if (!glink_chan_up(GCHAN) || spf_state == 1 || gpr_asks >= 120) {
++		return;
++	}
++	if (gpr_asks == 0 || ms() - gpr_last_ask >= 1000) {
++		gpr_last_ask = ms();
++		gpr_asks++;
++		gpr_send(APM_MODULE_IID, APM_CMD_GET_SPF_STATE, NULL, 0);
++	}
++}
++
++/* ---------------------------------------------------------------- thread */
++
++static void
++spes_audio_thread(void *arg __unused, wait_result_t wr __unused)
++{
++	uint32_t st;
++	unsigned last_status = 0;
++
++	if (!spes_soc_map()) {
++		LOG("no SoC mappings (see SpesModem)");
++		goto out;
++	}
++	part = spes_smem_partition(0, ADSP_PID);
++	LOG("apps<->adsp SMEM partition %p", part);
++	if (part == NULL) {
++		goto out;
++	}
++	crash_reason();
++	if (spes_smem_get(part, ITEM_SMP2P_IN, NULL) != NULL || spes_smem_get(part, ITEM_GLINK_FIFO_RX, NULL) != NULL) {
++		LOG("ADSP state from an earlier run is in SMEM (item %u or %u): not booting it again", ITEM_SMP2P_IN,
++		    ITEM_GLINK_FIFO_RX);
++		goto out;
++	}
++	if (!smp2p_out_init()) {
++		LOG("SMP2P item %u: no SMEM", ITEM_SMP2P_OUT);
++		goto out;
++	}
++	*stop_entry = 0;
++	spes_apcs_kick(ADSP_SMP2P_BIT);
++	t0 = mach_absolute_time();
++	if (!adsp_load()) {
++		goto out;
++	}
++	t0 = mach_absolute_time();
++	st = wait_ready(20000);
++	if ((st & 3) != 2) {
++		LOG("ADSP did not report READY (slave-kernel %08x)", st);
++		crash_reason();
++		goto out;
++	}
++	if (!glink_init()) {
++		goto out;
++	}
++	glink_register(QCHAN, qrtr_rx);
++	glink_register(GCHAN, gpr_rx);
++	for (;;) {
++		bool busy = glink_poll();
++		qrtr_poll();
++		gpr_poll();
++		if (*adsp_state & 1) {
++			LOG("t=%u.%03u *** ADSP FATAL (slave-kernel %08x) ***", T, *adsp_state);
++			crash_reason();
++			break;
++		}
++		if (ms() - last_status >= 60000) {
++			last_status = ms();
++			LOG("t=%u.%03u status: slave-kernel %08x, qrtr node %x hello %u, %u services, %u lookups, pd-mapper %u, "
++			    "SPF %d", T, *adsp_state, q_node, q_hello_rx, q_services, q_lookups, q_pdreqs, (int)spf_state);
++			glink_summary();
++		}
++		if (busy) {
++			IODelay(200);
++		} else {
++			IOSleep(2);
++		}
++	}
++out:
++	thread_terminate(current_thread());
++}
++
++extern "C" void
++spes_audio_init(void)
++{
++	static bool started;
++	uint32_t on = 0;
++	thread_t thread;
++
++	if (started || !PE_parse_boot_argn("adsp", &on, sizeof(on)) || on == 0) {
++		return;
++	}
++	started = true;
++	if (kernel_thread_start(spes_audio_thread, NULL, &thread) == KERN_SUCCESS) {
++		thread_deallocate(thread);
++	}
++}
++
++#else
++extern "C" void spes_audio_init(void) {}
++#endif
