@@ -39,7 +39,24 @@
   Wi-Fi boots. Matches Topaz's "no app extensions registered, PosterBoard
   finds no wallpaper provider". HackiOS has wallpapers; its inject_media.c
   keeps mediaserverd alive for HEIC decode (our mediaserverd does not crash,
-  so not the gap). Next: inspect poster extensions/registration in our root.
+  so not the gap).
+- Root inspection (read-only mount of research/spes-phone-root-eagl-20261024.img,
+  then detached): poster extensions ARE on disk (WallpaperKit
+  CollectionsPoster.appex, Gradient/Emoji/Pride/Unity/Extragalactic posters,
+  PaperBoard.app LegacyPoster.appex, PhotosPosterProvider, WeatherPoster,
+  AegirPoster). The LaunchServices database
+  private/var/mobile/Containers/Data/InternalDaemon/E440478E-.../Library/Caches/
+  com.apple.LaunchServices-4035-v2.csstore (3637248 B) knows apps (mobilesafari
+  x5) but has 0 poster strings and only one registered .appex
+  (AuthenticationServicesUI helper): app extensions in general are missing.
+  HackiOS rebuilds this database every boot (its /private/var is a fresh
+  memory filesystem); ours persists on userdata, so a database built once
+  without extensions is reused forever (Topaz: same symptom).
+- Proposed fix (needs user approval: userdata root write via fresh snapshot +
+  offline edit + verified block delta, tools/apply-ios-root-delta.py):
+  delete that csstore so lsd rebuilds it at the next boot. If extensions are
+  still missing after a fresh rebuild, the cause is in registration itself
+  (pkd/AMFI), to be read from the next log.
 - Sound: still to do after Wi-Fi (user reminder).
 
 # Audio/Wi-Fi now owned here — status and plan, 2026-10-25
