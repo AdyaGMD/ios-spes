@@ -1,0 +1,311 @@
+Direct MDP scanout of full-screen surfaces, ported from MakrSas/ios-topaz 0092/0093/0114
+(same SM6225 display controller). Gated on VIG0 scanning our boot framebuffer;
+boot-arg sweetfb_direct=0 turns it off.
+
+--- a/iokit/Kernel/arm/SweetSurface.h
++++ b/iokit/Kernel/arm/SweetSurface.h
+@@ -45,6 +45,7 @@
+ 	OSDictionary             *values;       /* IOSurfaceSetValue & co. */
+ 	uint32_t                  purgeable;    /* IOSurfaceSetPurgeable state */
+ 	uint32_t                  drawn;        /* the GPU's last submission naming the pixels (0: none; RedwoodGPU.cpp) */
++	uint64_t                  scanoutPhys;  /* contiguous below 4 GiB: the MDP can scan it directly (0: no) */
+ 
+ 	bool init() APPLE_KEXT_OVERRIDE { return OSObject::init(); }
+ 	void free() APPLE_KEXT_OVERRIDE;
+@@ -67,6 +68,9 @@
+ /* Send right for the surface in task (IOSurfaceLookupFromMachPort). */
+ mach_port_name_t sweet_surface_port_in_task(SweetSurface *surface, task_t task);
+ 
++/* Screen size (logical) whose BGRA surfaces get contiguous memory for direct scanout; 0 = off. */
++void sweet_scanout_set_geometry(uint32_t width, uint32_t height);
++
+ /* Whether the GPU is done with the surface's pixels, waiting up to that long (RedwoodGPU.cpp). */
+ bool SweetSurfaceDrawn(SweetSurface *surface, uint64_t milliseconds);
+ 
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -84,6 +84,42 @@
+ static uint64_t      sweet_surface_wired;       /* bytes of buffer surfaces */
+ #define SWEET_SURFACE_WIRED_MAX         (1536ull << 20)
+ 
++/*
++ * Direct MDP scanout (Topaz 0092/0093, same SM6225 display controller): screen-sized BGRA
++ * surfaces get physically contiguous RAM below 4 GiB, so the framebuffer can point the
++ * display pipe at a finished frame instead of copying it. At most SWEET_SCANOUT_MAX at once
++ * (CoreAnimation rotates a few; snapshots of the screen are made too); others fall back.
++ */
++#define SWEET_SCANOUT_MAX               10
++static uint32_t      sweet_scanout_w, sweet_scanout_h;  /* set by SweetFramebuffer; 0 = off */
++static SInt32        sweet_scanout_live;
++
++void
++sweet_scanout_set_geometry(uint32_t width, uint32_t height)
++{
++	sweet_scanout_w = width;
++	sweet_scanout_h = height;
++}
++
++static bool
++sweet_scanout_eligible(const SweetSurface *s)
++{
++	return sweet_scanout_w != 0 && s->width == sweet_scanout_w && s->height == sweet_scanout_h &&
++	       s->bytesPerElement == 4 && s->planeCount == 0 && s->offset == 0 &&
++	       s->elementWidth == 1 && s->elementHeight == 1 &&
++	       (s->pixelFormat == 0x42475241 /* 'BGRA' */ || s->pixelFormat == 0);
++}
++
++/* The display pipe does not snoop the processor's caches: write the lines back. */
++static void
++sweet_clean_to_memory(uintptr_t start, uint64_t size)
++{
++	for (uintptr_t line = start & ~(uintptr_t)63; line < start + size; line += 64) {
++		__asm__ volatile ("dc cvac, %0" : : "r" (line));
++	}
++	__asm__ volatile ("dsb sy" ::: "memory");
++}
++
+ OSDefineMetaClassAndStructors(SweetSurface, OSObject);
+ 
+ void
+@@ -91,6 +127,9 @@
+ {
+ 	if (OSDynamicCast(IOBufferMemoryDescriptor, memory) != NULL) {
+ 		OSAddAtomic64(-(SInt64)allocSize, (volatile SInt64 *)&sweet_surface_wired);
++	}
++	if (scanoutPhys != 0) {
++		OSDecrementAtomic(&sweet_scanout_live);
+ 	}
+ 	OSSafeReleaseNULL(kernelMap);
+ 	OSSafeReleaseNULL(values);
+@@ -815,16 +854,42 @@
+ 		    s->width, s->height, s->allocSize, ret);
+ 	} else if (ret == kIOReturnSuccess) {
+ 		IOBufferMemoryDescriptor *mem = NULL;
++		uint64_t scanPhys = 0;
+ 		if ((uint64_t)OSAddAtomic64(s->allocSize, (volatile SInt64 *)&sweet_surface_wired) +
+ 		    s->allocSize <= SWEET_SURFACE_WIRED_MAX) {
+-			mem = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+-			    kIODirectionInOut | kIOMemoryKernelUserShared, s->allocSize, page_size);
++			if (sweet_scanout_eligible(s) &&
++			    OSIncrementAtomic(&sweet_scanout_live) < SWEET_SCANOUT_MAX) {
++				/* Real RAM, contiguous and below 4 GiB: the display pipe fetches it by physical address. */
++				mem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
++				    kIODirectionInOut | kIOMemoryKernelUserShared | kIOMemoryPhysicallyContiguous,
++				    s->allocSize, 0x00000000fffff000ull);
++				IOByteCount run = 0;
++				scanPhys = mem != NULL ? mem->getPhysicalSegment(0, &run, kIOMemoryMapperNone) : 0;
++				if (mem != NULL && (scanPhys == 0 || run < s->allocSize || scanPhys + s->allocSize > (1ull << 32))) {
++					OSSafeReleaseNULL(mem);
++					scanPhys = 0;
++				}
++				if (mem == NULL) {
++					OSDecrementAtomic(&sweet_scanout_live);
++				}
++			} else if (sweet_scanout_eligible(s)) {
++				OSDecrementAtomic(&sweet_scanout_live);
++			}
++			if (mem == NULL) {
++				mem = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
++				    kIODirectionInOut | kIOMemoryKernelUserShared, s->allocSize, page_size);
++			}
+ 		}
+ 		if (mem == NULL) {
+ 			OSAddAtomic64(-(SInt64)s->allocSize, (volatile SInt64 *)&sweet_surface_wired);
+ 			ret = kIOReturnNoMemory;
+ 		} else {
+ 			bzero(mem->getBytesNoCopy(), s->allocSize);
++			if (scanPhys != 0) {
++				/* no dirty zeroes left in the cache to be written over GPU frames later */
++				sweet_clean_to_memory((uintptr_t)mem->getBytesNoCopy(), s->allocSize);
++				s->scanoutPhys = scanPhys;
++			}
+ 			s->memory = mem;
+ 			s->mapCache = kIOMapDefaultCache;
+ 			if (!sweet_surface_publish(s)) {
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -42,7 +42,16 @@
+ extern "C" uint32_t redwood_gpu_completed(void);
+ extern "C" void redwood_gpu_ring(uint32_t *rptr, uint32_t *tail);
+ extern "C" void spes_modem_init(void);  /* iokit/Kernel/arm/SpesModem.cpp (boot-arg modem=1) */
++extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+ 
++/* SM6225 MDSS (DT qcom,mdss_mdp mdp_phys 0x5e00000), as Topaz drives it: SSPP VIG0, CTL0. */
++#define SWEET_MDP_VIG0          0x05e05000
++#define SWEET_MDP_CTL0          0x05e02000
++#define SWEET_SSPP_SRC0_ADDR    0x14
++#define SWEET_SSPP_SRC_YSTRIDE0 0x24
++#define SWEET_CTL_FLUSH         0x18
++#define SWEET_CTL_FLUSH_VIG0    0x20001 /* VIG0 + CTL: latched at the next vsync */
++
+ #if defined(SWEET)
+ #include <IOKit/IOService.h>
+ #include <IOKit/IOUserClient.h>
+@@ -129,6 +138,16 @@
+ 	bool          fPowerOff;      /* RequestPowerChange(0) */
+ 	uint32_t      fFadeStep;      /* fade-out steps done while off */
+ 	uint32_t      fMissed;        /* frames held back because the GPU was not done with them */
++	/* Direct scanout (Topaz 0092/0093): the display pipe fetches a finished surface itself. */
++	volatile uint32_t *fVig0;
++	volatile uint32_t *fCtl0;
++	bool          fDirect;        /* VIG0 was found scanning our boot framebuffer */
++	uint32_t      fBootSrc, fBootStride;
++	uint64_t      fScanPhys;      /* what VIG0 fetches now */
++	SweetSurface *fScanned[2];    /* the surface on screen and the one before (the MDP may still read it) */
++	uint32_t      fDirectFrames, fCopiedFrames;
++	void          scanFrom(uint64_t pa, uint32_t stride, SweetSurface *s);
++	bool          directPresent(const uint8_t *rec, SweetSurface **surfaces);
+ 
+ 	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
+ 	void addClient(IOMobileFramebufferUserClient *client);
+@@ -195,13 +214,36 @@
+ 		fLogicalW = SWEET_FB_LOGICAL_W;
+ 		fLogicalH = SWEET_FB_LOGICAL_H;
+ 	}
+-	fOffX = (int32_t)(fLogicalW - fWidth) / 2;
++	/* x rounded down to 4 pixels: the panel window must start 16-byte aligned for the MDP fetch (Topaz 0114) */
++	fOffX = ((int32_t)(fLogicalW - fWidth) / 2) & ~3;
+ 	fOffY = (int32_t)(fLogicalH - fHeight) / 2;
+ 	fLock = IOLockAlloc();
+ 	fClients = OSArray::withCapacity(4);
+ 	fSurface = sweet_surface_create_physical(fPhys, fWidth, fHeight, fRowBytes, SWEET_FB_FORMAT_BGRA);
+ 	fPixels = fSurface != NULL ? fSurface->kernelAddress() : 0;
+ 	fWorkLoop = IOWorkLoop::workLoop();
++	{
++		int direct = 1;
++		PE_parse_boot_argn("sweetfb_direct", &direct, sizeof(direct));
++		fVig0 = (volatile uint32_t *)ml_io_map(SWEET_MDP_VIG0, 0x1000);
++		fCtl0 = (volatile uint32_t *)ml_io_map(SWEET_MDP_CTL0, 0x1000);
++		if (fVig0 != NULL && fCtl0 != NULL) {
++			fBootSrc = fVig0[SWEET_SSPP_SRC0_ADDR / 4];
++			fBootStride = fVig0[SWEET_SSPP_SRC_YSTRIDE0 / 4];
++			fScanPhys = fBootSrc;
++			/*
++			 * Only when VIG0 is what scans our panel memory, by its physical address (no
++			 * display SMMU in between): then pointing it elsewhere moves the picture.
++			 */
++			fDirect = direct != 0 && (fPhys >> 32) == 0 && fBootSrc == (uint32_t)fPhys &&
++			    (fBootStride & 0xffff) == fRowBytes;
++		}
++		IOLog("SWEET FB: MDP VIG0 src %#x stride %#x (panel %#llx, %u bytes a row): direct scanout %s\n",
++		    fBootSrc, fBootStride, fPhys, fRowBytes, fDirect ? "on" : "off");
++		if (fDirect) {
++			sweet_scanout_set_geometry(fLogicalW, fLogicalH);
++		}
++	}
+ 	if (fLock == NULL || fClients == NULL || fPixels == 0 || fWorkLoop == NULL) {
+ 		IOLog("SWEET FB: setup failed\n");
+ 		OSSafeReleaseNULL(fSurface);    /* stays published: also held by the table */
+@@ -329,6 +371,9 @@
+ 		client->notify(SWEET_FB_NOTIFY_VSYNC, values, 6);
+ 	}
+ 	if (fb->fPowerOff) {
++		if (fb->fDirect && fb->fScanPhys != fb->fBootSrc) {
++			fb->scanFrom(fb->fBootSrc, fb->fBootStride, NULL);    /* the fade draws in panel memory */
++		}
+ 		/* Fade out: halve every channel each vsync, then black, then idle. */
+ 		uint32_t step = fb->fFadeStep;
+ 		if (step <= 6) {
+@@ -504,6 +549,10 @@
+ 	/* Serialize panel writes with power-off fading, never with the GPU wait. */
+ 	IOLockLock(fLock);
+ 	if (fPowerOff) { IOLockUnlock(fLock); return true; }
++	if (fDirect && directPresent(rec, surfaces)) {
++		IOLockUnlock(fLock);
++		return true;
++	}
+ 
+ 	for (uint32_t layer = 0; layer < SWEET_FB_LAYERS; layer++) {
+ 		uint32_t id = get32(rec, 0x54 + 4 * layer);
+@@ -577,12 +626,80 @@
+ 				    (size_t)w * 4);
+ 			}
+ 		}
++	}
++	if (fDirect && fScanPhys != fBootSrc) {
++		scanFrom(fBootSrc, fBootStride, NULL);  /* copied into panel memory: show that again */
+ 	}
++	if (fDirect && ++fCopiedFrames <= 4) {
++		IOLog("SWEET FB: frame copied by the processor (%u shown directly so far)\n", fDirectFrames);
++	}
+ 	IOLockUnlock(fLock);
+ 	return true;
+ }
+ 
++/* With fLock held. VIG0 fetches from pa at the next vsync; s (retained here) stays alive two flips. */
++void
++AppleCLCD::scanFrom(uint64_t pa, uint32_t stride, SweetSurface *s)
++{
++	fVig0[SWEET_SSPP_SRC0_ADDR / 4] = (uint32_t)pa;
++	fVig0[SWEET_SSPP_SRC_YSTRIDE0 / 4] = stride;
++	__asm__ volatile ("dsb sy" ::: "memory");
++	fCtl0[SWEET_CTL_FLUSH / 4] = SWEET_CTL_FLUSH_VIG0;
++	__asm__ volatile ("dsb sy" ::: "memory");
++	fScanPhys = pa;
++	if (s != NULL) {
++		s->retain();
++	}
++	OSSafeReleaseNULL(fScanned[1]);
++	fScanned[1] = fScanned[0];
++	fScanned[0] = s;
++}
++
++/*
++ * With fLock held, the GPU done with every layer. A frame that is one full-screen surface in
++ * contiguous memory is shown by pointing the display pipe at its panel window (Topaz 0092):
++ * no copy by the processor. Anything else (several layers, other sizes) is copied as before.
++ */
+ bool
++AppleCLCD::directPresent(const uint8_t *rec, SweetSurface **surfaces)
++{
++	uint32_t mask = get32(rec, 0x104), layer = SWEET_FB_LAYERS, n = 0;
++
++	for (uint32_t i = 0; i < SWEET_FB_LAYERS; i++) {
++		if ((mask & (1u << i)) && get32(rec, 0x54 + 4 * i) != 0) {
++			layer = i;
++			n++;
++		}
++	}
++	if (n != 1 || surfaces[layer] == NULL) {
++		return false;
++	}
++	SweetSurface *s = surfaces[layer];
++	const uint8_t *a = rec + 0x64 + 16 * layer;
++	if (s->scanoutPhys == 0 || s->bytesPerElement != 4 || s->width != fLogicalW || s->height != fLogicalH ||
++	    get32(a, 0) != 0 || get32(a, 4) != 0) {
++		return false;
++	}
++	uint64_t window = (uint64_t)s->offset + (uint64_t)fOffY * s->bytesPerRow + (uint64_t)fOffX * 4;
++	uint64_t pa = s->scanoutPhys + window;
++	uintptr_t va = s->kernelAddress();
++	if (va == 0 || (pa & 0xf) != 0 || pa + (uint64_t)fHeight * s->bytesPerRow > (1ull << 32)) {
++		return false;
++	}
++	/* The MDP does not snoop CPU caches (CoreAnimation may have written some pixels itself). */
++	for (uintptr_t line = (va + window) & ~(uintptr_t)63; line < va + window + (uint64_t)fHeight * s->bytesPerRow; line += 64) {
++		__asm__ volatile ("dc cvac, %0" : : "r" (line));
++	}
++	__asm__ volatile ("dsb sy" ::: "memory");
++	scanFrom(pa, s->bytesPerRow, s);
++	if (++fDirectFrames <= 4 || (fDirectFrames % 600) == 0) {
++		IOLog("SWEET FB: frame %u shown directly from surface %u at %#llx (%u copied so far)\n",
++		    fDirectFrames, s->id, pa, fCopiedFrames);
++	}
++	return true;
++}
++
++bool
+ IOMobileFramebufferUserClient::initWithTask(task_t owningTask, void *securityID, UInt32 type)
+ {
+ 	if (!IOUserClient::initWithTask(owningTask, securityID, type)) {
+--- a/iokit/Kernel/arm/hid/SweetHID.cpp
++++ b/iokit/Kernel/arm/hid/SweetHID.cpp
+@@ -436,7 +436,7 @@
+ 	PE_parse_boot_argn("sweetfb_native", &native, sizeof(native));
+ 	fLogicalW = native ? 1080 : 1125;
+ 	fLogicalH = native ? 2400 : 2436;
+-	fOffX = (fLogicalW - 1080) / 2;
++	fOffX = ((fLogicalW - 1080) / 2) & ~3;   /* as SweetFramebuffer.cpp: 16-byte aligned panel window */
+ 	fOffY = (fLogicalH - 2400) / 2;
+ 	/* The digitizer covers the main display (backboardd maps it 1:1). */
+ 	setProperty("DisplayIntegrated", kOSBooleanTrue);
