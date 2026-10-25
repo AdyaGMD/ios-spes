@@ -25,7 +25,8 @@
   9287a28fdd14f470107c221de06f9ad84db9d45e02b0fae73100b718b2b48373;
   shim/out/spes-ios-graphics-all21.img (+ sweetmgreset=1, sweetscan/sweetnull
   incl. PosterBoard) SHA256
-  12b4c9d6375b44ebf2dffd76c28138ee53fa181b52f6f305cf1290d37156c505. Not booted.
+  12b4c9d6375b44ebf2dffd76c28138ee53fa181b52f6f305cf1290d37156c505.
+  Temp-booted 2026-10-25 (hash verified): the MG cache move runs on this boot.
   Check: "SWEET MG:" line; WebKit asked fmt BGRA (not w30r); Safari pages.
 
 # all19 result: WebKit tiles are empty; PosterBoard still traps; GPIO35 on 0xd00000; all20 built, 2026-10-25
