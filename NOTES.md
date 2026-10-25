@@ -1,3 +1,28 @@
+# Charging plan (not started), 2026-10-25
+
+- Exists: SweetBattery (0062), an IOPMPowerSource (status bar shows a green
+  battery) reading a PMIC gauge over SPMI (sweet lineage); spes's gauge is not
+  there. spes (live DT, SE1 = the amp bus, which works since all15):
+  max77729 @0x66 (Maxim PMIC + charger + fuel gauge + USB-C/PD; reg 0 = 0x15)
+  and sc8551 charge pump @0x65 (reg 0 = 0x29); DT battery params under
+  max77729@66/max77729-fuelgauge (capacity ~1989 mAh x2 cells table, float
+  4450 mV). The max77729's charger and gauge answer at their own I2C
+  addresses (Linux max77729 MFD: charger and fuelgauge sub-devices; probe
+  0x69 and 0x36 read-only first to confirm).
+- Topaz (same SE1 approach, other chips): 0091 sweet_i2c1.c polled I2C +
+  SweetBattery reads gauge/charger status read-only; 0148 charger limits
+  (input limit from BC1.2, 2 A, 4.40 V, software JEITA, watchdog off) with
+  sweetchg=0 to leave it alone.
+- Steps:
+  1. Share the SE1 I2C code (spes_amp.c amp_read) as a small bus driver;
+     probe the max77729's gauge/charger addresses read-only; log SOC,
+     VCELL, current, charger state with and without the cable.
+  2. SweetBattery on spes: percentage, voltage, current, IsCharging and
+     ExternalConnected from those reads (status bar, Settings > Battery).
+  3. Only if it does not charge (or charges slowly) on its own: conservative
+     charger settings from the stock DT (float 4450 mV, chg_ocp etc.), with
+     an off switch; never the sc8551 fast path without its own study.
+
 # Bluetooth plan (not started), 2026-10-25
 
 - Hardware (live DT): bt_wcn3990 (qca,wcn3990; the WCN3988's BT core), HCI
