@@ -1,3 +1,27 @@
+# all6nocpu also reset: DSI buffer address truncated (0121); all7 built, 2026-10-25
+
+- User on all6nocpu (sweetpanel=1, spescpufreq=0): "same crash". So 0120
+  is not the cause. Phone did not come back on adb/fastboot; its log is
+  not pulled yet.
+- Cause (from code, strong but unproven): 0111 allocated the DSI command
+  buffer with inTaskWithPhysicalMask(.., 0xfffff000), but all XNU RAM is
+  above 4 GiB on spes, and the 32-bit DMA register got (uint32_t)phys:
+  the controller fetched an unrelated low page on the first brightness
+  command (CoreBrightness, early userspace) -> reset without panic.
+- Commit 0121 (spes-dsi-buffer-low): buffer = last page of black scanout
+  slot 11 (0x9bfff000), ml_io_map_wcomb, word stores; address logged in
+  "SWEET FB: DSI0 ctrl ...: panel commands on ..., buffer 0x9bfff000".
+  Slot 11 is never handed out (slot_take skips it). Syntax check OK.
+- CI 40191330388 SUCCESS: kernel xnu/out-0125 SHA256
+  45d50e0056551392d850f35df4ef7f1be6acb0686fd86134f74f1581560c0cf0;
+  image shim/out/spes-ios-graphics-all7.img (modem=1 wifi=1 adsp=1
+  sweetpanel=1 spescpufreq=0 + wlan_mac) SHA256
+  5b4c85894ab7ee1bf3386ea6bde5d4d265279b1f3e30072526d82f87e9a2ed06. Not booted.
+- Fallbacks if all7 still resets: all6safe (out-0124, no sweetpanel,
+  spescpufreq=0; differs from all6nocpu only by sweetpanel) SHA256
+  6ed1b8e66adc62b919319b920c513a230ff945ebb1762fe155304e25818b55fd.
+  CPU clocks (0120) still untested alone: all6nopanel.
+
 # all6 result: early reset (no panic flushed); bisect images built, 2026-10-25
 
 - User: "it rebooted so ig it crashed" (template report unfilled). Log
