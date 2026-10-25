@@ -1,3 +1,24 @@
+# all9 result: UI stays up at speed; fades show console text; 0124, all10 built, 2026-10-25
+
+- User on all9: "works again"; brightness slider does nothing; the
+  power-button fade out/in shows the boot console frame instead of the UI;
+  WebKit still black. Log research/spes-all9-boot.txt (544766 B, flush #27).
+- So 0122's DSI buffer move fixed direct pool scanout with sweetpanel=1.
+- Observed: "frame copied by the processor" around every display on/off
+  but zero "SWEET FB: swap ... layer" lines (all4 had 16): those frames had
+  no layer, copied nothing, yet the copy path did scanFrom(fBootSrc) and
+  showed panel memory = boot console text.
+- Commit 0124 (spes-empty-frame-keeps-scanout): panel memory is shown only
+  when a layer was copied into it or is the panel surface. Syntax OK.
+- CI 40195787941 SUCCESS: kernel xnu/out-0128 SHA256
+  0f866bb5780e0ad68a9a0282615b7f1a48b0d898b3d029af9ca0a7ab126e5b48;
+  image shim/out/spes-ios-graphics-all10.img (sweetpanel=1 spescpufreq=0)
+  SHA256 9e5cf9fe1fc8eb31786818246b43d0a89d1e19b67ada844ac3ba273b2b7298a8. Not booted.
+- Open: brightness slider (CoreBrightness + backlight-control stalls
+  backboardd, 0123 keeps it off); WebKit black with sRGB (cause unknown;
+  maybe MobileGestalt cache, or not the gamut at all); CPU clocks 0120
+  untested alone (all6nopanel); sound stream path.
+
 # all8 result: UI then console text, frozen; backboardd stalls with backlight-control; 0123, all9 built, 2026-10-25
 
 - User on all8: "the ui appeared, then the logs show again and it doesn't
