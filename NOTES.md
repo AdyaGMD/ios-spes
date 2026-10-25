@@ -1,3 +1,12 @@
+# all28 result: FIRST SOUND from the speaker, 2026-10-25
+
+- User (all28 temp-boot): "sound works": the stage 3 boot tone is audible
+  through the aw87559 amps (0150, gain 6 = 9 dB, SYSCTRL 0x78). Whole chain
+  works: ADSP APR (ASM/ADM/AFE) -> codec DMA 0xB032 -> RX macro RX2 ->
+  WCD937x AUX -> aw87559. Log not pulled yet.
+- Next for sound: /dev/redwood-audio + RedwoodAudio.driver HAL plug-in so
+  iOS (mediaserverd, video) can play; root write, ask the user first.
+
 # Wallpaper cause found: AMFI request 0x60 unanswered, no extension points; 0151, all29 building, 2026-10-25
 
 - Snapshot research/spes-phone-root-20261025c.img (after all27; device and
