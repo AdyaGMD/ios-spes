@@ -1,0 +1,88 @@
+Video and sound fixes from all29: DisplayPipePlaneBaseAlignment as a dictionary; /dev/redwood-audio
+created once devfs exists.
+
+all29: mediaserverd died whenever a video played: "-[__NSCFNumber objectForKey:]" in
+FigGetAlignmentForIOSurfaceOutputToDisplayService (VideoToolbox), which reads
+PlaneBaseAlignmentLinear out of AppleCLCD's DisplayPipePlaneBaseAlignment; we published a number.
+And SpesAudio logged "/dev/redwood-audio: not created" at spes_audio_init (no devfs yet), so the
+RedwoodAudio plug-in found no device ("No such file or directory"). The audio thread now retries
+every 100 ms (up to 60 s) before it boots the ADSP.
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -382,7 +382,19 @@
+ 	/* For EAGL (HackiOS eagl.c display_waits()): swaps wait for the GPU, so frames need not be finished first. */
+ 	setProperty("RedwoodWaitsForGPU", kOSBooleanTrue);
+ 	setProperty("external", false);
+-	setProperty("DisplayPipePlaneBaseAlignment", 64ULL, 32);
++	/*
++	 * A dictionary, as on the iPhone: VideoToolbox (FigGetAlignmentForIOSurfaceOutputToDisplayService)
++	 * reads PlaneBaseAlignmentLinear from it with CFDictionaryGetValue; the plain number we had
++	 * made mediaserverd die on "-[__NSCFNumber objectForKey:]" as soon as a video played (all29).
++	 */
++	OSDictionary *align = OSDictionary::withCapacity(1);
++	OSNumber *linear = OSNumber::withNumber(64ULL, 32);
++	if (align != NULL && linear != NULL) {
++		align->setObject("PlaneBaseAlignmentLinear", linear);
++		setProperty("DisplayPipePlaneBaseAlignment", align);
++	}
++	OSSafeReleaseNULL(linear);
++	OSSafeReleaseNULL(align);
+ 	registerService();
+ 	uint32_t accelOn = 1;
+ 	(void)PE_parse_boot_argn("sweetaccel", &accelOn, sizeof(accelOn));
+--- a/iokit/Kernel/arm/SpesAudio.cpp
++++ b/iokit/Kernel/arm/SpesAudio.cpp
+@@ -2005,14 +2005,34 @@
+ 	.d_strategy = eno_strat, .d_reserved_1 = eno_getc, .d_reserved_2 = eno_putc, .d_type = 0,
+ };
+ 
+-/* At spes_audio_init: the plug-in opens the node once, when mediaserverd loads it, maybe before the DSP is up. */
++/*
++ * The plug-in opens the node once, when mediaserverd loads it, maybe before the DSP is up. At
++ * spes_audio_init devfs is not there yet ("not created", all29: the plug-in found no device), so
++ * the audio thread tries again every 100 ms until it is, long before launchd starts mediaserverd.
++ */
++static int ra_major = -1;
++static bool ra_node;
++
+ static void
+ audio_dev_init(void)
+ {
+-	int major = cdevsw_add(-1, &ra_cdevsw);
+-	void *node = major < 0 ? NULL :
+-	    devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "redwood-audio");
+-	LOG("/dev/redwood-audio: %s", node != NULL ? "ready (frames dropped until the stream is open)" : "not created");
++	static unsigned tries;
++	if (ra_node) {
++		return;
++	}
++	if (ra_major < 0) {
++		ra_major = cdevsw_add(-1, &ra_cdevsw);
++		if (ra_major < 0) {
++			ra_node = true;         /* no major: nothing to try again */
++			LOG("/dev/redwood-audio: no major");
++			return;
++		}
++	}
++	tries++;
++	ra_node = devfs_make_node(makedev(ra_major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "redwood-audio") != NULL;
++	if (ra_node) {
++		LOG("/dev/redwood-audio: ready after %u tries (frames dropped until the stream is open)", tries);
++	}
+ }
+ 
+ static void
+@@ -2146,6 +2166,12 @@
+ 		    ITEM_GLINK_FIFO_RX);
+ 		goto out;
+ 	}
++	for (unsigned i = 0; i < 600 && !ra_node; i++) {        /* up to 60 s for devfs */
++		audio_dev_init();
++		if (!ra_node) {
++			IOSleep(100);
++		}
++	}
+ 	if (!smp2p_out_init()) {
+ 		LOG("SMP2P item %u: no SMEM", ITEM_SMP2P_OUT);
+ 		goto out;
