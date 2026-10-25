@@ -1,3 +1,33 @@
+# all20 result: both amps answer; WebKit asks for w30r/b3a8; MobileGestalt cache reset (0141), all21 built, 2026-10-25
+
+- Log research/spes-all20-boot.txt (638432 B, flush #17); user report
+  template unfilled.
+- Sound (observed): "GPIO35 taken to be on 0xd00000 with its neighbours",
+  "0x5b after reset: reg 0 id 0x5a", "0x58 after reset: reg 0 id 0x5a":
+  both aw87559 answer. Amp side ready for the codec work (port plan above).
+- Safari (observed): com.apple.WebKit.GPU asks fmt 0x77333072 'w30r' and
+  0x62336138 'b3a8' (MobileSafari asks w30r too for some); the kernel hands
+  BGRA and WebKit draws nothing. So HasExtendedColorDisplay is still true.
+  Only libMobileGestalt references "artwork-display-gamut" (shared cache);
+  our ColorModes match HackiOS (Colorimetry 1, EOTF 1, Depth 8). The root
+  image has systemgroup.com.apple.mobilegestaltcache/Library (ACL'd,
+  unreadable from macOS without root; not escalated).
+- PosterBoard did not crash this boot (no STR text); the picker is still
+  empty. It may also follow the extended-colour answer.
+- Lesson: "{ printf; diff ...; } > patch && git add" stops at diff's exit
+  1 (files differ): the earlier "silent commit failure" (0134) too. Commit in
+  its own command.
+- Commit b306cf2, patch 0141: one move-aside helper for LS and MG;
+  sweetmgreset=1 renames
+  /private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache/Library/Caches/com.apple.MobileGestalt.plist
+  to .bak before launchd (never over a .bak); sweetmgrestore=1 puts it back.
+- CI 40212906723 SUCCESS: kernel xnu/out-0141 SHA256
+  9287a28fdd14f470107c221de06f9ad84db9d45e02b0fae73100b718b2b48373;
+  shim/out/spes-ios-graphics-all21.img (+ sweetmgreset=1, sweetscan/sweetnull
+  incl. PosterBoard) SHA256
+  12b4c9d6375b44ebf2dffd76c28138ee53fa181b52f6f305cf1290d37156c505. Not booted.
+  Check: "SWEET MG:" line; WebKit asked fmt BGRA (not w30r); Safari pages.
+
 # all19 result: WebKit tiles are empty; PosterBoard still traps; GPIO35 on 0xd00000; all20 built, 2026-10-25
 
 - User on all19: no wallpaper; picker opens with none, only "add new"
