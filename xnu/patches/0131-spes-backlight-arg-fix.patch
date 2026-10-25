@@ -1,0 +1,17 @@
+backlight-control on AppleCLCD only with sweetbacklight=1.
+
+0123 took any nonzero value, so sweetbacklight=2 put it on AppleCLCD as well as on the new
+service: backboardd matched AppleCLCD and stalled as in all8 (all13bl: 39 frames all boot).
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -329,7 +329,8 @@
+ 				 * level (all8): opt-in with sweetbacklight=1 until we know what it waits for.
+ 				 */
+ 				int backlight = 0;
+-				if (PE_parse_boot_argn("sweetbacklight", &backlight, sizeof(backlight)) && backlight) {
++				/* 1 only: sweetbacklight=2 is the separate service (all13bl had both and stalled) */
++				if (PE_parse_boot_argn("sweetbacklight", &backlight, sizeof(backlight)) && backlight == 1) {
+ 					setProperty("backlight-control", kOSBooleanTrue);
+ 				}
+ 				/* the bootloader's level is unknown: start from the one the fades assume */
