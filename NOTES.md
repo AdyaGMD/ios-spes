@@ -1,3 +1,28 @@
+# Extension registration fix attempt (0147) + sound stage 3 (0148); all26 building, 2026-10-25
+
+- Extensions (read-only on the 25b-derived clone): the registered appex
+  (AuthenticationServicesUI's helper) uses an ExtensionKit point (one of the
+  6 /System/Library/ExtensionKit/ExtensionPoints/*.appexpt); all PlugInKit
+  NSExtensions (posterkit.provider, App Store, ...) are missing. Info.plists
+  alike (XPC!, _CodeSignature, UIRequiredDeviceCapabilities [arm64] on all
+  367 appexes). Our sandbox stand-in (0050) failed ops 4 (container path),
+  5/6 (sandbox extension issue/consume) and 0x43 with ENOENT; HackiOS's
+  kern_minimac.c allows everything and answers op 4 from the process's
+  CFFIXED_USER_HOME (pkd needs it to run an extension).
+- Commit 953dfd7, patch 0147: sweet_amfi.c sandbox = HackiOS's behaviour;
+  vfs_syscalls.c sweetlsreset=2 moves the stores to .bak2 (first .bak kept),
+  for one more ~15 min rebuild under the new sandbox answers.
+- Commit 00a6d9a, patch 0148 (spescodec=3, after stages 1-2): SpesModem
+  exports spes_smmu_identity; SID 0x1C1 identity; 64 KB pool buffer (<4 GiB,
+  MODEM_POOL 0xE0000000) with 16 periods of 1 kHz -20 dBFS; ASM map (msw 1),
+  AFE codec DMA config RX_CDC_DMA_RX_1 0xb032 (2 x 16 bit, 48 kHz, mask 3)
+  + start, ADM open (topology none) + matrix route, ASM open write v3 /
+  media fmt / run, Topaz ports_and_pa (SWR data ports + WCD937x AUX PA),
+  3 s of writes counting ASM_DATA_EVENT_WRITE_DONE_V2 / underflows, then
+  close all. Amps stay off (silent). apr_send_to(service, port, token).
+- CI 40237564509 for all26 = spescodec=3 + sweetlsreset=2 (first boot takes
+  ~15 min: the rebuild) + AppleARMBacklight default (0146).
+
 # all25 result: BRIGHTNESS WORKS; codec stage 2 clean; wallpaper: almost no app extensions registered, 2026-10-25
 
 - User on all25: brightness works, UI as fast as before, wallpaper still
