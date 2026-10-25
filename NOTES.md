@@ -1,3 +1,38 @@
+# Audio/Wi-Fi now owned here — status and plan, 2026-10-25
+
+- README updated (commit 171b509): GPU-accelerated UI ~20 fps, graphics patch
+  map, known problems (Settings freeze, wallpaper, icons unrechecked, no
+  Wi-Fi/sound).
+- State found: the other agent's audio/Wi-Fi work is read-only inventory
+  (docs/SPES-AUDIO-WIFI.md: ADSP PAS 1, Bolero + WCD937x SoundWire, 2x Awinic
+  aw87559 amps at I2C 0x5b/0x58 with resets GPIO35/106, stock speaker path via
+  RX_CDC_DMA_RX_0; WLAN qcom,icnss, MSA 0x51900000, SID 0x1a0) plus 0103
+  (opt-in ADSP SMEM survey, WLFW memory ownership checks). Nothing booted.
+- Patch 0099 (SpesModem.cpp, 6224 lines: PAS modem boot, modem_a firmware
+  read-only, GLINK/QRTR, WLFW, BDF, WMI, HTT, scan/join API) was only ever
+  CI-compiled ("verified" in the 2026-10-21 notes meant compiled);
+  spes-wifi-probe.img was never booted. It is off unless modem=1 (wifi=1 adds
+  WLAN). There is NO Apple80211/en0 layer, so iOS wifid/Settings cannot use it.
+- Topaz (same SM6225) has the full working chain: 0113-0126 modem/WLFW/
+  WLAN bring-up, 0129-0130 station + WPA2 4-way in kernel + PMK from wifid,
+  0900 en0 + Apple80211 for wifid (README: lists networks, joins WPA2,
+  reconnects). Audio: 0144 ADSP PAS/SMP2P/GLINK lpass/QRTR/pd-mapper, 0145
+  RPM L14 + codec (PRM, TX clocks, SoundWire, WCD937x AUX, sia8159 amp),
+  0146 stream to /dev/topaz-audio, 0935 /dev/redwood-audio alias for
+  HackiOS's RedwoodAudio.driver, userland/audio/audio_plugin.c. Caveat:
+  Topaz's ADSP speaks GPR/AudioReach; spes stock exposes apr_audio_svc (APR),
+  and spes amps are aw87559, not sia8159.
+- Plan: (1) Wi-Fi: boot 0099 as is (modem=1 wifi=1) and read how far it gets;
+  fix against Topaz 0113-0130; then port Topaz 0900 (en0 + Apple80211) so
+  wifid drives it. (2) Audio: ADSP boot + transport from Topaz 0144 (same
+  SoC), protocol per what the spes ADSP answers (APR vs GPR), codec route
+  from Xiaomi bengal/wcd937x sources, aw87559 amps last and at low volume.
+- tools/build-spes-ios-graphics.sh: new SWEET_EXTRA_ARGS for diagnostic
+  boot-args. Built shim/out/spes-ios-graphics-wifi.img = scanout kernel
+  out-0114 + "modem=1 wifi=1", SHA256
+  d5b4c606838555a00a3de987289fec10b1a61d71868cba021ad59d94d925f727. Not
+  booted. Modem firmware is read from modem_a only; no partition writes.
+
 # Hardware result — scanout image: ~20 fps, freeze in Settings > General, 2026-10-25
 
 - User on spes-ios-graphics-scanout.img (0108+0109, kernel out-0114): "works,

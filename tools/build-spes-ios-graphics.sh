@@ -11,12 +11,14 @@ cd "$(dirname "$0")/.."
 cpus=${SWEET_CPUS:-6}
 fb_hz=${SWEET_FB_HZ:-60}
 gpu_mhz=${SPES_GPU_MHZ:-300}
+# Extra boot-args for diagnostic images, e.g. SWEET_EXTRA_ARGS='modem=1 wifi=1'.
+extra=${SWEET_EXTRA_ARGS:-}
 mkdir -p shim/out
 python3 tools/mkadt.py shim/out/spes-ios-graphics.adt --device spes --memory-dtb "$fdt"
 # The development kernel uses OSX platform policy; allow iOS executables.
 # ignition_level=1 uses the cache merged into our single HFS root.
 python3 tools/mkpayload.py "$kernel" shim/out/spes-ios-graphics.adt shim/out/spes-ios-graphics-fixed.payload \
-    --cmdline "debug=0xc serial=3 cpus=$cpus keepsyms=1 -enable_kprintf_spam -noprogress rd=ufsroot0 ufsroot=userdata unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt_test=no_user_checkin wdt=-1 ufsrw=1 rootrw=1 sweetlog=1 ufslogsecs=10 sweettouch=1 sweettouchdelay=5 sweettouchdiag=3 sweetkeys=0 sweethw=0 sweetfb_stayon=1 sweetfb_noconsole=1 sweetfb_hz=$fb_hz spesgpu=1 spesgpuprobe=1 spesgpu_mhz=$gpu_mhz glsync=1"
+    --cmdline "debug=0xc serial=3 cpus=$cpus keepsyms=1 -enable_kprintf_spam -noprogress rd=ufsroot0 ufsroot=userdata unentitled_ios_sim_launch=1 ignition_level=1 launchd_unsecure_cache=1 wdt_test=no_user_checkin wdt=-1 ufsrw=1 rootrw=1 sweetlog=1 ufslogsecs=10 sweettouch=1 sweettouchdelay=5 sweettouchdiag=3 sweetkeys=0 sweethw=0 sweetfb_stayon=1 sweetfb_noconsole=1 sweetfb_hz=$fb_hz spesgpu=1 spesgpuprobe=1 spesgpu_mhz=$gpu_mhz glsync=1${extra:+ $extra}"
 BOOT_HEADER_VERSION=3 shim/build.sh out/spes-ios-graphics-fixed.payload
 cp shim/out/shim-boot.img shim/out/spes-ios-graphics.img
 shasum -a 256 shim/out/spes-ios-graphics.img > shim/out/spes-ios-graphics.img.sha256
