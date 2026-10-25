@@ -1,3 +1,30 @@
+# all15 result: I2C bus works (chargers answer); lsd rebuild hangs SpringBoard; restore image all16, 2026-10-25
+
+- User on all15: Apple logo for 5+ minutes, SpringBoard never loaded. Log
+  research/spes-all15-boot.txt (228947 B, flush #68).
+- Sound (observed): GPIO4/5 cfg 0x207, both pads high; 0x66 max77729 reg 0
+  = 0x15, 0x65 sc8551 reg 0 = 0x29: the SE1 bus and our GENI code work.
+  0x64 aw2016, 0x58, 0x5b NACK: those chips are held off (amp reset GPIOs
+  35/106 low; aw2016 maybe its own enable). Next: drive the reset GPIOs
+  high (needs the khaje tile of GPIO 35 and 106).
+- Wallpaper (observed): "SWEET LS: .. -> .bak: moved aside" for both
+  stores. SpringBoard main thread in every sample (4 over ~9 min):
+  _LSContextInitCommon <- LaunchServices::Database::Context::_get <-
+  -[LSApplicationRecord initWithBundleIdentifier:..] <- CCSModuleRepository
+  (Control Center modules): waiting on lsd, which never finished. backboardd
+  drew 5 frames. So a from-scratch rebuild does not complete here (why:
+  unknown; sample lsd next time). Every later boot would hang the same way.
+- Commit 8651506, patch 0134: sweetlsrestore=1 renames the .bak stores back
+  over lsd's partial ones; sweetlsreset never moves a store when a .bak
+  exists. (The commit inside the earlier chained command failed silently
+  and the wait loop spun on an empty run id; recommitted separately.)
+- CI 40205385622 SUCCESS: kernel xnu/out-0134 SHA256
+  605243fcab4229a1e08fe907d45bef43c78ce0340aebb25683a879a69022d9e3;
+  shim/out/spes-ios-graphics-all16.img (sweetpanel=1 spesamp=1
+  sweetlsrestore=1) SHA256
+  386e90503440c198ca499ba289a8d2120e841242d93eadb0cc612d3d38609aee. Not booted.
+  DO NOT boot all15 again. Boot all16 to restore the database.
+
 # Sound bus diagnosis (0132) + wallpaper LaunchServices reset (0133); all15 built, 2026-10-25
 
 - User: sound next (find what powers the amp bus), then wallpaper in the same
