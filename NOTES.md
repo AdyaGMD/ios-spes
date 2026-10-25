@@ -1,3 +1,23 @@
+# all29 temp-booted: amps + AMFI 0x60 + stream + RedwoodAudio.driver installed, 2026-10-25
+
+- all28 log research/spes-all28-boot.txt: "SPES AMP: 0x58 on: writes 0/0,
+  sysctrl 0x78 gain 0x6 sysst 0" (0x5b alike); tone 141/140 periods.
+- User APPROVED (chat): install RedwoodAudio.driver, boot latest CI build.
+  Snapshot research/spes-phone-root-20261025d.img (SHA256 cde7cdd9...,
+  device = host). Clone research/spes-phone-root-audio-hal.img +
+  /System/Library/Audio/Plug-Ins/HAL/RedwoodAudio.driver (RedwoodAudio
+  fef0d61d..., Info.plist 8737f502..., _CodeSignature). Delta
+  research/spes-audio-hal-delta: 14 MiB, verified, applied with readback
+  (install.log). Rollback: tools/apply-ios-root-delta.py
+  research/spes-audio-hal-delta --rollback --apply (from OrangeFox).
+- CI 40242842562 SUCCESS: kernel xnu/out-0152 SHA256
+  11c1f23b64bfdc7d6b75b62ec65e39bf4cd0420f5f2a5d203989975304f5a3da;
+  shim/out/spes-ios-graphics-all29.img (spesamp=2 spescodec=4
+  sweetlsreset=3, sweetnull adds mediaserverd) SHA256
+  555d45816d1f0ea860411bbf1d088d549f65d3370b3c854eed506cf676df1928.
+  Temp-booted (hash verified). LS rebuild: ~15 min to home screen.
+  Next images must drop sweetlsreset.
+
 # Sound stage 5: /dev/redwood-audio stream (0152) + RedwoodAudio.driver built; all29 CI building, 2026-10-25
 
 - Commit da7a9f8, patch 0152 (SpesAudio.cpp), after Topaz 0146 (user: "use
