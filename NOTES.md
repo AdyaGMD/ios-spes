@@ -24,7 +24,8 @@
   Topaz. CI40179046544 SUCCESS: kernel xnu/out-0120 SHA256
   ab68f11916624ce7cd2471fe79c385d9b31d27836d8cf46128c985e783033b44;
   image shim/out/spes-ios-graphics-all2.img (same args as all1) SHA256
-  509baf9da1627b0b5e3d0b8a07949a8281ef9ad6cbda920874b7e4b9d9fe7742. Not booted.
+  509baf9da1627b0b5e3d0b8a07949a8281ef9ad6cbda920874b7e4b9d9fe7742. Temp-booted 2026-10-25 send0.407s/boot0.287s/total0.699s (from
+  OrangeFox; product spes).
 
 # 60 fps work: direct scanout never engaged; scanout pool (0116); no WC cache pushes, 2026-10-25
 
