@@ -1,0 +1,29 @@
+Safari diagnostics 3: the format WebKit asked for, and its whole surface request.
+
+all19: com.apple.WebKit.GPU unlocks its tiles with 0 of 1024 sampled pixels set, and backboardd
+looks them up: the tiles are shown, empty. The create log printed the format after ten-bit
+requests became BGRA; this logs what was asked and the first 12 WebKit/Safari requests whole.
+
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -981,6 +981,20 @@
+ 		IOLog("SWEET SURF: %s create id %u %ux%u fmt 0x%x bpe %u bpr %u planes %u size %u keys %u -> 0x%x\n",
+ 		    name, s->id, s->width, s->height, s->pixelFormat, s->bytesPerElement,
+ 		    s->bytesPerRow, s->planeCount, s->allocSize, props->getCount(), ret);
++		/*
++		 * WebKit's GPU process leaves its tiles empty (all19: 0 of 1024 sampled pixels at every
++		 * unlock). What it asked for, before ten-bit formats became BGRA, and the whole request.
++		 */
++		static uint32_t web_props;
++		uint32_t asked = sweet_dict_u32(props, "IOSurfacePixelFormat", 0);
++		if (web && (asked != s->pixelFormat || web_props < 12)) {
++			OSSerialize *ser = web_props < 12 ? OSSerialize::withCapacity(512) : NULL;
++			web_props++;
++			IOLog("SWEET SURF: %s asked fmt 0x%x (%c%c%c%c) for id %u%s%.400s\n", name, asked,
++			    (char)(asked >> 24), (char)(asked >> 16), (char)(asked >> 8), (char)asked, s->id,
++			    ser != NULL && props->serialize(ser) ? ": " : "", ser != NULL ? ser->text() : "");
++			OSSafeReleaseNULL(ser);
++		}
+ 	}
+ 	props->release();
+ 	if (ret != kIOReturnSuccess) {

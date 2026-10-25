@@ -1,0 +1,46 @@
+Amplifier probe: a reset pin that reads 0 on every tile takes its neighbours' tile.
+
+all19: GPIO 32, 33, 36 read only on 0xd00000; GPIO35 read 0 everywhere (its real config).
+
+--- a/bsd/dev/spes_amp.c
++++ b/bsd/dev/spes_amp.c
+@@ -119,15 +119,37 @@
+ 	}
+ 	printf("SPES AMP: GPIO%u cfg on tiles 0x500000/0x900000/0xd00000: %#x %#x %#x -> %s\n", pin,
+ 	    seen[0], seen[1], seen[2], hits == 1 ? "one tile, driven" : "ambiguous, left alone");
+-	if (hits != 1) {
+-		/* neighbours usually share a tile: show theirs (all17ls: GPIO35 read 0 on every tile) */
++	if (hits == 0) {
++		/*
++		 * A pin whose config really is 0 reads the same as an absent one. Neighbours usually
++		 * share a tile: all19 showed GPIO 32, 33 and 36 only on 0xd00000, so GPIO 35 is there.
++		 * The tile is taken when every neighbour seen lives on that one tile alone.
++		 */
++		uint32_t owner = 0;
++		bool clash = false;
+ 		for (uint32_t n = pin > 3 ? pin - 3 : 0; n <= pin + 3; n++) {
+ 			uint32_t v[3];
++			unsigned on = 0, at = 0;
+ 			for (unsigned i = 0; i < 3; i++) {
+ 				v[i] = amp_pin_peek(amp_tiles[i], n);
++				if (v[i] != 0 && v[i] != 0xffffffffu) {
++					on++;
++					at = i;
++				}
+ 			}
+ 			printf("SPES AMP:   GPIO%u: %#x %#x %#x\n", n, v[0], v[1], v[2]);
++			if (on == 1) {
++				clash |= owner != 0 && owner != amp_tiles[at];
++				owner = amp_tiles[at];
++			} else if (on > 1) {
++				clash = true;
++			}
+ 		}
++		if (owner != 0 && !clash) {
++			printf("SPES AMP: GPIO%u taken to be on %#x with its neighbours\n", pin, owner);
++			found = owner;
++			hits = 1;
++		}
+ 	}
+ 	return hits == 1 ? ml_io_map(found + pin * 0x1000u, 0x1000u) : 0;
+ }
