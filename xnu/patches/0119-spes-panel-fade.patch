@@ -1,0 +1,72 @@
+Backlight fade on lock and wake, and a brightness log (with sweetpanel=1).
+
+Display off ramps DCS 0x51 from the current level to 1 in 16 steps (~260 ms,
+squared curve) before the black frame and sleep-in; display on ramps from 1
+back to the kept level. The first 12 IOMFBBrightnessLevel requests are
+logged so a boot shows whether the slider reaches the panel.
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -163,6 +163,7 @@
+ 	bool          dsiSend(const uint8_t hdr[4], const uint8_t *payload, uint32_t len);
+ 	void          setPanelLevel(uint32_t level);
+ 	void          setPanelOn(bool on);
++	void          rampPanelLevel(uint32_t from, uint32_t to);
+ 	IOReturn setProperties(OSObject *properties) APPLE_KEXT_OVERRIDE;
+ 
+ 	bool start(IOService *provider) APPLE_KEXT_OVERRIDE;
+@@ -851,6 +852,23 @@
+ 	}
+ }
+ 
++/*
++ * The backlight fade iOS shows on lock and wake: 16 DCS levels about 16 ms apart,
++ * on a squared curve so the dim end does not jump.
++ */
++void
++AppleCLCD::rampPanelLevel(uint32_t from, uint32_t to)
++{
++	const uint32_t steps = 16;
++	for (uint32_t i = 1; i <= steps; i++) {
++		uint32_t f = from > to ? steps - i : i;    /* 0..steps, toward the brighter end */
++		uint32_t lo = from < to ? from : to, hi = from < to ? to : from;
++		uint32_t level = lo + (uint32_t)(((uint64_t)(hi - lo) * f * f) / (steps * steps));
++		setPanelLevel(level < 1 ? 1 : level);
++		IOSleep(16);
++	}
++}
++
+ /*
+  * Panel power as the Linux panel drivers do it (Topaz 0143): off = brightness 0, DCS 0x28
+  * display off, 0x10 sleep in; on = 0x11 sleep out, 120 ms, 0x29 display on, brightness back.
+@@ -872,7 +890,7 @@
+ 	done &= dsiSend(second, NULL, 0);
+ 	IOLockUnlock(fDsiLock);
+ 	if (on) {
+-		setPanelLevel(fPanelLevel);
++		rampPanelLevel(1, fPanelLevel);
+ 	} else {
+ 		IOSleep(120);
+ 	}
+@@ -896,6 +914,10 @@
+ 	setProperty("IOMFBBrightnessLevel", v, 32);
+ 	uint64_t level = (v * 0x7ffull) / (500ull << 16);
+ 	level = level > 0x7ff ? 0x7ff : (level < 1 ? 1 : level);
++	static uint32_t asked;
++	if (asked++ < 12) {
++		IOLog("SWEET FB: brightness %llu.%02llu nits -> level %#llx\n", v >> 16, ((v & 0xffff) * 100) >> 16, level);
++	}
+ 	IOLockLock(fLock);
+ 	fPanelLevel = (uint32_t)level;
+ 	bool off = fPowerOff;
+@@ -1066,6 +1088,10 @@
+ 				IOLog("SWEET FB: display off ignored (sweetfb_stayon)\n");
+ 				break;
+ 			}
++			if (off && !fFB->fPowerOff && fFB->fDsi != NULL) {
++				/* fade the backlight out while the last frame is still on screen */
++				fFB->rampPanelLevel(fFB->fPanelLevel, 1);
++			}
+ 			IOLockLock(fFB->fLock);
+ 			bool changed = off != fFB->fPowerOff;
+ 			if (changed) {
