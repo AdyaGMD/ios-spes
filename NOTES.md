@@ -12,7 +12,11 @@
   395bc91b0c78362b7b1d11dbeb0605c1c564bd2301550c0cb0f816cf52b483cd (= device);
   it contains the launchd.plist change. Wallpaper clone converted again (48
   HEIC -> PNG); delta research/spes-wallpaper-png-delta 77 MiB, all 77
-  before-blocks verified against the phone. NOT applied: needs approval.
+  before-blocks verified against the phone. User approved ("install the
+  wallpaper PNG delta, then temp-boot all25"): applied with readback
+  (research/spes-wallpaper-png-delta/install.log). Rollback:
+  tools/apply-ios-root-delta.py research/spes-wallpaper-png-delta --rollback --apply.
+- all25 temp-booted 2026-10-25 (hash verified), first boot with PNG wallpapers.
 - iOSPlus10 (akshaynexus, OnePlus 10, Adreno 730), raised on reddit as
   "GPU not working, port metal2vulkan": their notes (2026-10-25) say their UI
   is still CPU-rendered; Turnip probe passes, the metal2vulkan device opens,
