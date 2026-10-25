@@ -1,0 +1,339 @@
+Sound stage 1 (spescodec=1): codec power, LPASS votes and clocks, macros, SoundWire bring-up.
+
+The RPM link the GPU probe opens is kept and shared (spes_rpm_kvp(); no second GLINK handshake,
+which crashed the RPM on topaz) for L14, the WCD937x buck. SpesAudio then asks the AFE for the
+LPASS core HW votes (blocks 3 and 4) and clocks 0x30c/0x30d at 19.2 MHz as HackiOS redwood_mic.c
+does, and only when all four are given clocks the macros, starts both SoundWire masters with the
+WCD937x reset (GPIO92) low, releases it and logs the slaves (Topaz 0145 codec_bringup, same SoC
+and codec). Registers are mapped a 16 KB page at a time.
+
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -15,6 +15,7 @@
+ #include <kern/thread.h>
+ #include <kern/sched_prim.h>
+ #include <machine/machine_routines.h>
++#include <libkern/OSAtomic.h>
+ #include <pexpert/pexpert.h>
+ #include <pexpert/device_tree.h>
+ #include <arm/caches_internal.h>
+@@ -812,7 +813,71 @@
+ 	}
+ 	return false;
+ }
++
++/*
++ * The RPM link stays open after the GPU probe's votes; other drivers (the audio codec's L14)
++ * send their requests over it. A second GLINK handshake on a link already used since boot
++ * crashed the RPM on topaz, so there is never another one: spes_rpm_kvp() waits for this one.
++ */
++static struct {
++	vm_offset_t ram, apcs;
++	uint32_t tx_off, tx_size, rx_off, rx_size, msg_id;
++	volatile bool up;
++	volatile uint32_t busy;
++} srpm;
+ 
++int spes_rpm_kvp(uint32_t set, uint32_t type, uint32_t id, uint32_t key, uint32_t value);
++
++/* One key/value request; 0 when the RPM acked it, -1 on no link or no ack. */
++int
++spes_rpm_kvp(uint32_t set, uint32_t type, uint32_t id, uint32_t key, uint32_t value)
++{
++	for (unsigned waited = 0; !srpm.up && waited < 30000; waited += 100) {
++		touch_wait(100);
++	}
++	if (!srpm.up) {
++		printf("SPES RPM: no link for request %#x/%u (the GPU probe opens it)\n", type, id);
++		return -1;
++	}
++	while (!OSCompareAndSwap(0, 1, &srpm.busy)) {
++		touch_wait(1);
++	}
++	struct {
++		struct glink_msg gmsg;
++		uint32_t chunk_size, left_size;
++		uint32_t service_type, request_len, msg_id, set, resource_type, resource_id, data_len;
++		uint32_t kvp_key, kvp_size, kvp_val;
++	} __attribute__((packed)) req;
++	memset(&req, 0, sizeof(req));
++	req.gmsg.cmd = 9;                       /* GLINK_CMD_TX_DATA */
++	req.gmsg.param1 = 1;                    /* lcid of rpm_requests */
++	req.chunk_size = 40;
++	req.service_type = 0x00716572u;         /* "req" */
++	req.request_len = 32u;
++	req.msg_id = ++srpm.msg_id;
++	req.set = set;
++	req.resource_type = type;
++	req.resource_id = id;
++	req.data_len = 12u;
++	req.kvp_key = key;
++	req.kvp_size = 4u;
++	req.kvp_val = value;
++	spes_rpm_pipe_write(srpm.ram, srpm.tx_off, srpm.tx_size, &req, sizeof(req), srpm.apcs);
++	struct glink_msg rmsg;
++	uint8_t ack[64];
++	uint32_t len = 0;
++	int ret = -1;
++	for (int i = 0; i < 100 && ret != 0; i++) {
++		if (spes_rpm_wait_msg(srpm.ram, srpm.rx_off, srpm.rx_size, &rmsg, ack, sizeof(ack), &len, 50) &&
++		    rmsg.cmd == 9) {
++			ret = 0;
++		}
++	}
++	OSCompareAndSwap(1, 0, &srpm.busy);
++	printf("SPES RPM: request set %u %#x/%u %#x=%u: %s\n", set, type, id, key, value, ret == 0 ? "acked" : "NO ACK");
++	return ret;
++}
++
+ static uint64_t
+ spes_smc(uint64_t a[8])
+ {
+@@ -1187,6 +1252,14 @@
+ 		return;
+ 	}
+ 	printf("SPES RPM: 13. rwmx vote confirmed!\n");
++	srpm.ram = ram;
++	srpm.apcs = apcs;
++	srpm.tx_off = tx_off;
++	srpm.tx_size = tx_size;
++	srpm.rx_off = rx_off;
++	srpm.rx_size = rx_size;
++	srpm.msg_id = 2;
++	srpm.up = true;
+ 	touch_wait(200);
+ 
+ 	/* Step 6: Uncollapse CX GDSC */
+--- a/iokit/Kernel/arm/SpesAudio.cpp
++++ b/iokit/Kernel/arm/SpesAudio.cpp
+@@ -36,6 +36,8 @@
+ extern "C" void    *spes_pool_alloc(uint64_t size, uint64_t *pa);
+ extern "C" int64_t  spes_part_fw_size(const char *path);
+ extern "C" bool     spes_part_fw_read(const char *path, uint64_t off, void *dst, uint64_t n);
++extern "C" int      spes_rpm_kvp(uint32_t set, uint32_t type, uint32_t id, uint32_t key, uint32_t value);
++extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
+ 
+ #define ADSP_PID            2                   /* SMEM host / SMP2P / GLINK remote pid */
+ #define ADSP_PAS_ID         1
+@@ -1228,7 +1230,16 @@
+ #define AVCS_GET_VERSIONS_RSP           0x00012906u
+ #define AVCS_CMD_ADSP_EVENT_GET_STATE   0x0001290cu
+ #define AVCS_CMDRSP_ADSP_EVENT_GET_STATE 0x0001290du
++
++#define APR_SVC_AFE                     4
++#define AFE_SVC_CMD_SET_PARAM           0x000100f3u
++#define AFE_MODULE_CLOCK_SET            0x0001028fu
++#define AFE_PARAM_ID_CLOCK_SET          0x00010290u
++#define AFE_CMD_REMOTE_LPASS_CORE_HW_VOTE_REQUEST       0x000100f4u
++#define AFE_CMD_RSP_REMOTE_LPASS_CORE_HW_VOTE_REQUEST   0x000100f5u
+ 
++static uint32_t codec_votes, codec_clocks, codec_fails;
++
+ struct apr_hdr {
+ 	uint16_t field, size;
+ 	uint8_t  from_service, from_domain;
+@@ -1291,6 +1302,21 @@
+ 			    w[0] == 1 ? " READY" : "", apr_asks);
+ 		}
+ 		apr_state = w[0];
++		return;
++	}
++	if (h.opcode == AFE_CMD_RSP_REMOTE_LPASS_CORE_HW_VOTE_REQUEST) {
++		codec_votes++;
++		LOG("t=%u.%03u codec: LPASS core HW vote given, handle %u", T, w[0]);
++		return;
++	}
++	if (h.opcode == APR_BASIC_RSP_RESULT &&
++	    (w[0] == AFE_SVC_CMD_SET_PARAM || w[0] == AFE_CMD_REMOTE_LPASS_CORE_HW_VOTE_REQUEST)) {
++		if (w[0] == AFE_SVC_CMD_SET_PARAM && w[1] == 0) {
++			codec_clocks++;
++		} else if (w[1] != 0) {
++			codec_fails++;
++		}
++		LOG("t=%u.%03u codec: AFE %08x -> status %#x", T, w[0], w[1]);
+ 		return;
+ 	}
+ 	if (h.opcode == AVCS_GET_VERSIONS_RSP) {
+@@ -1322,7 +1348,174 @@
+ 	} else if (!apr_versions_asked) {
+ 		apr_versions_asked = true;
+ 		apr_send(APR_SVC_ADSP_CORE, AVCS_GET_VERSIONS, NULL, 0);
++	}
++}
++
++/* ---------------------------------------------------------------- codec, stage 1 (spes) */
++
++/*
++ * spescodec=1: the WCD937x codec's power, the LPASS's votes and clocks, then the digital codec's
++ * macros and both SoundWire masters with the codec coming out of reset (Topaz 0145
++ * codec_bringup(), same SM6225 and WCD937x; spes's speaker is on the codec's AUX output too).
++ * Topaz asked AudioReach's PRM; spes's DSP speaks APR, so the votes and clocks are asked of the
++ * AFE as HackiOS's redwood_mic.c does: blocks 3 ("LPASS_HW_MACRO") and 4 ("LPASS_HW_DCODEC"), clocks
++ * 0x30c (TX core) and 0x30d (TX NPL) at 19.2 MHz. An access to a macro without them may hang the
++ * bus, so no register is touched unless all four were given. Registers are mapped a 16 KB page
++ * at a time: io_map's region is 8 MB (all18 ran out). Stops after logging the SoundWire slaves.
++ */
++#define CDC_RX_MACRO        0x0A600000u
++#define CDC_RX_SWR          0x0A610000u
++#define CDC_TX_MACRO        0x0A620000u
++#define CDC_VA_MACRO        0x0A730000u
++#define CDC_VA_SWR          0x0A740000u
++#define CDC_LPI_TLMM        0x0A7C0000u
++#define CDC_GPIO92          0x0055C000u         /* WCD937x reset, TLMM WEST (spes DT msm_cdc_pinctrl@92) */
++
++static struct { uint32_t base; vm_offset_t va; } cdc_pages[24];
++static unsigned cdc_step, cdc_at;
++
++static volatile uint32_t *
++cdc_reg(uint32_t pa)
++{
++	uint32_t base = pa & ~0x3fffu;
++	for (unsigned i = 0; i < sizeof(cdc_pages) / sizeof(cdc_pages[0]); i++) {
++		if (cdc_pages[i].va != 0 && cdc_pages[i].base == base) {
++			return (volatile uint32_t *)(cdc_pages[i].va + (pa - base));
++		}
++		if (cdc_pages[i].va == 0) {
++			cdc_pages[i].va = ml_io_map(base, 0x4000);
++			cdc_pages[i].base = base;
++			return cdc_pages[i].va != 0 ? (volatile uint32_t *)(cdc_pages[i].va + (pa - base)) : NULL;
++		}
++	}
++	return NULL;
++}
++
++static void
++cdc_w(uint32_t pa, uint32_t v)
++{
++	volatile uint32_t *r = cdc_reg(pa);
++	if (r != NULL) {
++		mb();
++		*r = v;
++		mb();
++	}
++}
++
++static uint32_t
++cdc_r(uint32_t pa)
++{
++	volatile uint32_t *r = cdc_reg(pa);
++	return r != NULL ? *r : 0xdeadbeefu;
++}
++
++static void
++cdc_swr_master_init(uint32_t m)
++{
++	cdc_w(m + 0x008, 1); cdc_w(m + 0x008, 1); cdc_w(m + 0x1044, 1); IOSleep(2);
++	cdc_w(m + 0x101C, 0x2F0008); cdc_w(m + 0x500, 1);
++	uint32_t cfg = cdc_r(m + 0x1048);
++	cdc_w(m + 0x1048, (cfg & ~0x3E0000u) | (0x1Fu << 17));
++	cdc_w(m + 0x314, 3); cdc_w(m + 0x1044, 2);
++	cdc_w(m + 0x04, 2); cdc_w(m + 0x208, 0xFFFFFFFF); cdc_w(m + 0x204, 0x1FDFD); cdc_w(m + 0x210, 0x1FDFD);
++	cdc_w(m + 0x04, 3); cdc_w(m + 0x314, 0x80000003);
++}
++
++static void
++cdc_vote(uint32_t block, const char *client)
++{
++	struct { uint32_t block; char client[8]; } __attribute__((packed)) req = { block, { 0 } };
++	strlcpy(req.client, client, sizeof(req.client));
++	apr_send(APR_SVC_AFE, AFE_CMD_REMOTE_LPASS_CORE_HW_VOTE_REQUEST, &req, sizeof(req));
++}
++
++static void
++cdc_clock(uint32_t id)
++{
++	/* AFE_SVC_CMD_SET_PARAM in band: {payload size, 0, 0, 0}, {module, param, size}, afe_clock_set */
++	struct {
++		uint32_t size, addr_lsw, addr_msw, handle;
++		uint32_t module, param;
++		uint16_t psize, reserved;
++		uint32_t version, id, hz;
++		uint16_t attribute, root;
++		uint32_t enable;
++	} __attribute__((packed)) p;
++	bzero(&p, sizeof(p));
++	p.size = (uint32_t)sizeof(p) - 16;
++	p.module = AFE_MODULE_CLOCK_SET;
++	p.param = AFE_PARAM_ID_CLOCK_SET;
++	p.psize = 20;
++	p.version = 1;
++	p.id = id;
++	p.hz = 19200000;
++	p.attribute = 1;                /* couple no */
++	p.enable = 1;
++	apr_send(APR_SVC_AFE, AFE_SVC_CMD_SET_PARAM, &p, sizeof(p));
++}
++
++static void
++codec_poll(void)
++{
++	static int wanted = -1;
++	if (wanted < 0) {
++		wanted = 0;
++		(void)PE_parse_boot_argn("spescodec", &wanted, sizeof(wanted));
+ 	}
++	if (wanted != 1 || apr_state != 1 || !apr_versions_asked || cdc_step >= 3) {
++		return;
++	}
++	if (cdc_step == 0) {
++		int rpm = 0;
++		for (uint32_t set = 0; set <= 1; set++) {       /* "ldoa" 14: "uv" 1.8 V, "swen" 1 (WCD937x VDD_BUCK) */
++			rpm |= spes_rpm_kvp(set, 0x616F646Cu, 14, 0x00007675u, 1800000);
++			rpm |= spes_rpm_kvp(set, 0x616F646Cu, 14, 0x6E657773u, 1);
++		}
++		LOG("t=%u.%03u codec: L14 %s", T, rpm == 0 ? "on" : "NOT acked (continuing: may already be on)");
++		cdc_vote(3, "LPASS_HW_MACRO");
++		cdc_vote(4, "LPASS_HW_DCODEC");
++		cdc_clock(0x30c);
++		cdc_clock(0x30d);
++		cdc_step = 1;
++		cdc_at = ms();
++		return;
++	}
++	if (cdc_step == 1) {
++		if (codec_votes >= 2 && codec_clocks >= 2) {
++			cdc_step = 2;
++		} else if (codec_fails != 0 || ms() - cdc_at > 3000) {
++			LOG("t=%u.%03u codec: votes %u/2, clocks %u/2, failures %u: stopping before any register", T,
++			    codec_votes, codec_clocks, codec_fails);
++			cdc_step = 3;
++		}
++		return;
++	}
++	/* 2: LPI pins, macros, both SoundWire masters around the codec's reset (Topaz steps 2-6) */
++	static const uint32_t pins[6] = { 0xD04, 0xD06, 0xD06, 0xD04, 0xD06, 0xD06 };
++	for (uint32_t i = 0; i < 6; i++) {
++		cdc_w(CDC_LPI_TLMM + 0x1000 * i, pins[i]);
++	}
++	cdc_w(0x0A95A000, 0x3F3F);
++	cdc_w(CDC_VA_MACRO, 1); cdc_w(CDC_VA_MACRO + 4, 3); cdc_w(CDC_VA_MACRO + 4, 1); cdc_w(CDC_VA_MACRO + 0x80, 2);
++	cdc_w(CDC_VA_MACRO + 8, 2); cdc_w(CDC_VA_MACRO + 8, 3); cdc_w(CDC_VA_MACRO + 8, 1);
++	cdc_w(CDC_RX_MACRO + 0x100, 3); cdc_w(CDC_RX_MACRO + 0x104, 3); cdc_w(CDC_RX_MACRO + 0x104, 1);
++	cdc_w(CDC_RX_MACRO + 0x108, 2); cdc_w(CDC_RX_MACRO + 0x108, 3); cdc_w(CDC_RX_MACRO + 0x108, 1);
++	cdc_w(0x0A6A9098, 3); IOSleep(1); cdc_w(0x0A6A9098, 1);
++	cdc_w(CDC_TX_MACRO, 1); cdc_w(CDC_TX_MACRO + 4, 3); cdc_w(CDC_TX_MACRO + 4, 1);
++	cdc_w(CDC_TX_MACRO + 8, 2); cdc_w(CDC_TX_MACRO + 8, 3); cdc_w(CDC_TX_MACRO + 8, 1);
++	cdc_w(0x0A7EC100, 3); IOSleep(1); cdc_w(0x0A7EC100, 1);
++	LOG("t=%u.%03u codec: macros clocked (rx %08x tx %08x va %08x)", T, cdc_r(CDC_RX_MACRO + 0x100),
++	    cdc_r(CDC_TX_MACRO), cdc_r(CDC_VA_MACRO));
++	cdc_w(CDC_GPIO92 + 4, 0);               /* reset low (latch first), then output */
++	cdc_w(CDC_GPIO92, 0x200);
++	cdc_swr_master_init(CDC_RX_SWR);
++	cdc_swr_master_init(CDC_VA_SWR);
++	IOSleep(20);
++	cdc_w(CDC_GPIO92 + 4, 2);               /* reset high: the WCD937x comes up on both buses */
++	IOSleep(300);
++	LOG("t=%u.%03u codec: SoundWire slaves rx %08x va %08x, ids %08x %08x", T, cdc_r(CDC_RX_SWR + 0x1090),
++	    cdc_r(CDC_VA_SWR + 0x1090), cdc_r(CDC_RX_SWR + 0x538), cdc_r(CDC_VA_SWR + 0x538));
++	cdc_step = 3;
+ }
+ 
+ /* ---------------------------------------------------------------- thread */
+@@ -1376,6 +1569,7 @@
+ 		qrtr_poll();
+ 		gpr_poll();
+ 		apr_poll();
++		codec_poll();
+ 		if (*adsp_state & 1) {
+ 			LOG("t=%u.%03u *** ADSP FATAL (slave-kernel %08x) ***", T, *adsp_state);
+ 			crash_reason();
