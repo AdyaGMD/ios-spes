@@ -1,0 +1,208 @@
+Direct scanout actually engages: screen surfaces from a fixed scanout pool below 4 GiB
+(0x90000000, unused RAM on spes) instead of contiguous kernel RAM below 4 GiB, which spes
+never has (no frame had been shown directly). Black display-off frame from the pool too.
+
+--- a/iokit/Kernel/arm/SweetSurface.h
++++ b/iokit/Kernel/arm/SweetSurface.h
+@@ -46,6 +46,7 @@
+ 	uint32_t                  purgeable;    /* IOSurfaceSetPurgeable state */
+ 	uint32_t                  drawn;        /* the GPU's last submission naming the pixels (0: none; RedwoodGPU.cpp) */
+ 	uint64_t                  scanoutPhys;  /* contiguous below 4 GiB: the MDP can scan it directly (0: no) */
++	int                       scanoutSlot;  /* its slot of the scanout pool, or -1 */
+ 
+ 	bool init() APPLE_KEXT_OVERRIDE { return OSObject::init(); }
+ 	void free() APPLE_KEXT_OVERRIDE;
+@@ -68,6 +69,17 @@
+ /* Send right for the surface in task (IOSurfaceLookupFromMachPort). */
+ mach_port_name_t sweet_surface_port_in_task(SweetSurface *surface, task_t task);
+ 
++/*
++ * Scanout pool: RAM below 4 GiB that XNU does not use on spes (all of XNU's RAM is above 4 GiB,
++ * and the display pipe's source address is 32 bits). Live DT: 0x80000000-0xc0000000 is RAM with
++ * no reservation; the shim's load area ends near 0x86000000, SpesModem's pool is at 0xe0000000.
++ * Slots 0..10 hold screen-sized surfaces, slot 11 the framebuffer's black frame.
++ */
++#define SWEET_SCANOUT_BASE      0x90000000ull
++#define SWEET_SCANOUT_SLOT      0x01000000ull   /* 16 MB, a 1125x2436 BGRA surface fits */
++#define SWEET_SCANOUT_SLOTS     12
++#define SWEET_SCANOUT_BLACK     11
++
+ /* Screen size (logical) whose BGRA surfaces get contiguous memory for direct scanout; 0 = off. */
+ void sweet_scanout_set_geometry(uint32_t width, uint32_t height);
+ 
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -86,13 +86,36 @@
+ 
+ /*
+  * Direct MDP scanout (Topaz 0092/0093, same SM6225 display controller): screen-sized BGRA
+- * surfaces get physically contiguous RAM below 4 GiB, so the framebuffer can point the
+- * display pipe at a finished frame instead of copying it. At most SWEET_SCANOUT_MAX at once
+- * (CoreAnimation rotates a few; snapshots of the screen are made too); others fall back.
++ * surfaces get a slot of the scanout pool (SweetSurface.h), so the framebuffer can point the
++ * display pipe at a finished frame instead of copying it. 0109 asked for contiguous kernel RAM
++ * below 4 GiB instead, which never exists on spes: no frame was ever shown directly.
++ * Mapped write-combined like the panel framebuffer (Normal memory: no Device alignment faults).
+  */
+-#define SWEET_SCANOUT_MAX               10
+ static uint32_t      sweet_scanout_w, sweet_scanout_h;  /* set by SweetFramebuffer; 0 = off */
+-static SInt32        sweet_scanout_live;
++static uint32_t      sweet_scanout_used;                /* bit per slot, under sweet_surface_lock */
++
++static int
++sweet_scanout_slot_take(void)
++{
++	int slot = -1;
++	IOLockLock(sweet_surface_lock);
++	for (int i = 0; i < SWEET_SCANOUT_SLOTS && slot < 0; i++) {
++		if (i != SWEET_SCANOUT_BLACK && !(sweet_scanout_used & (1u << i))) {
++			sweet_scanout_used |= 1u << i;
++			slot = i;
++		}
++	}
++	IOLockUnlock(sweet_surface_lock);
++	return slot;
++}
++
++static void
++sweet_scanout_slot_give(int slot)
++{
++	IOLockLock(sweet_surface_lock);
++	sweet_scanout_used &= ~(1u << slot);
++	IOLockUnlock(sweet_surface_lock);
++}
+ 
+ void
+ sweet_scanout_set_geometry(uint32_t width, uint32_t height)
+@@ -128,8 +151,8 @@
+ 	if (OSDynamicCast(IOBufferMemoryDescriptor, memory) != NULL) {
+ 		OSAddAtomic64(-(SInt64)allocSize, (volatile SInt64 *)&sweet_surface_wired);
+ 	}
+-	if (scanoutPhys != 0) {
+-		OSDecrementAtomic(&sweet_scanout_live);
++	if (scanoutPhys != 0 && scanoutSlot >= 0) {
++		sweet_scanout_slot_give(scanoutSlot);
+ 	}
+ 	OSSafeReleaseNULL(kernelMap);
+ 	OSSafeReleaseNULL(values);
+@@ -304,6 +327,7 @@
+ 		return NULL;
+ 	}
+ 	s->externalBase = 0;
++	s->scanoutSlot = -1;
+ 	s->state = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+ 	    kIODirectionInOut | kIOMemoryKernelUserShared, page_size, page_size);
+ 	if (s->state == NULL) {
+@@ -854,42 +878,47 @@
+ 		    s->width, s->height, s->allocSize, ret);
+ 	} else if (ret == kIOReturnSuccess) {
+ 		IOBufferMemoryDescriptor *mem = NULL;
+-		uint64_t scanPhys = 0;
+-		if ((uint64_t)OSAddAtomic64(s->allocSize, (volatile SInt64 *)&sweet_surface_wired) +
+-		    s->allocSize <= SWEET_SURFACE_WIRED_MAX) {
+-			if (sweet_scanout_eligible(s) &&
+-			    OSIncrementAtomic(&sweet_scanout_live) < SWEET_SCANOUT_MAX) {
+-				/* Real RAM, contiguous and below 4 GiB: the display pipe fetches it by physical address. */
+-				mem = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+-				    kIODirectionInOut | kIOMemoryKernelUserShared | kIOMemoryPhysicallyContiguous,
+-				    s->allocSize, 0x00000000fffff000ull);
+-				IOByteCount run = 0;
+-				scanPhys = mem != NULL ? mem->getPhysicalSegment(0, &run, kIOMemoryMapperNone) : 0;
+-				if (mem != NULL && (scanPhys == 0 || run < s->allocSize || scanPhys + s->allocSize > (1ull << 32))) {
+-					OSSafeReleaseNULL(mem);
+-					scanPhys = 0;
++		int slot = (sweet_scanout_eligible(s) && s->allocSize <= SWEET_SCANOUT_SLOT) ? sweet_scanout_slot_take() : -1;
++		IOMemoryDescriptor *scan = NULL;
++		if (slot >= 0) {
++			uint64_t pa = SWEET_SCANOUT_BASE + (uint64_t)slot * SWEET_SCANOUT_SLOT;
++			scan = IOMemoryDescriptor::withPhysicalAddress(pa, s->allocSize, kIODirectionInOut);
++			if (scan == NULL) {
++				sweet_scanout_slot_give(slot);
++				slot = -1;
++			} else {
++				s->memory = scan;
++				s->mapCache = kIOMapWriteCombineCache;
++				s->scanoutPhys = pa;
++				s->scanoutSlot = slot;
++				uintptr_t va = s->kernelAddress();
++				if (va != 0) {
++					bzero((void *)va, s->allocSize);
++					sweet_clean_to_memory(va, s->allocSize);
+ 				}
+-				if (mem == NULL) {
+-					OSDecrementAtomic(&sweet_scanout_live);
++				if (!sweet_surface_publish(s)) {
++					ret = kIOReturnNoResources;
+ 				}
+-			} else if (sweet_scanout_eligible(s)) {
+-				OSDecrementAtomic(&sweet_scanout_live);
+-			}
+-			if (mem == NULL) {
+-				mem = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
+-				    kIODirectionInOut | kIOMemoryKernelUserShared, s->allocSize, page_size);
+ 			}
+ 		}
+-		if (mem == NULL) {
++		static uint32_t scan_logged;
++		if (sweet_scanout_eligible(s) && scan_logged < 12) {
++			scan_logged++;
++			IOLog("SWEET SURF: screen surface %ux%u size %u: %s\n", s->width, s->height, s->allocSize,
++			    slot >= 0 ? "scanout slot" : "no scanout slot free (copied by the processor)");
++		}
++		if (scan == NULL && (uint64_t)OSAddAtomic64(s->allocSize, (volatile SInt64 *)&sweet_surface_wired) +
++		    s->allocSize <= SWEET_SURFACE_WIRED_MAX) {
++			mem = IOBufferMemoryDescriptor::inTaskWithOptions(kernel_task,
++			    kIODirectionInOut | kIOMemoryKernelUserShared, s->allocSize, page_size);
++		}
++		if (scan != NULL) {
++			/* (published above) */
++		} else if (mem == NULL) {
+ 			OSAddAtomic64(-(SInt64)s->allocSize, (volatile SInt64 *)&sweet_surface_wired);
+ 			ret = kIOReturnNoMemory;
+ 		} else {
+ 			bzero(mem->getBytesNoCopy(), s->allocSize);
+-			if (scanPhys != 0) {
+-				/* no dirty zeroes left in the cache to be written over GPU frames later */
+-				sweet_clean_to_memory((uintptr_t)mem->getBytesNoCopy(), s->allocSize);
+-				s->scanoutPhys = scanPhys;
+-			}
+ 			s->memory = mem;
+ 			s->mapCache = kIOMapDefaultCache;
+ 			if (!sweet_surface_publish(s)) {
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -146,7 +146,7 @@
+ 	uint64_t      fScanPhys;      /* what VIG0 fetches now */
+ 	SweetSurface *fScanned[2];    /* the surface on screen and the one before (the MDP may still read it) */
+ 	uint32_t      fDirectFrames, fCopiedFrames;
+-	IOBufferMemoryDescriptor *fBlack;       /* a black panel frame in contiguous RAM: display off is a flip */
++	IOMemoryMap  *fBlack;           /* a black panel frame in the scanout pool: display off is a flip */
+ 	uint64_t      fBlackPhys;
+ 	void          scanFrom(uint64_t pa, uint32_t stride, SweetSurface *s);
+ 	bool          directPresent(const uint8_t *rec, SweetSurface **surfaces);
+@@ -262,18 +262,14 @@
+ 			 * Display off used to blacken panel memory with the processor while the pipe scanned
+ 			 * it: the dark visibly crept down the screen. A ready black frame is shown instead.
+ 			 */
+-			fBlack = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+-			    kIODirectionInOut | kIOMemoryPhysicallyContiguous, (uint64_t)fRowBytes * fHeight,
+-			    0x00000000fffff000ull);
+-			IOByteCount run = 0;
+-			fBlackPhys = fBlack != NULL ? fBlack->getPhysicalSegment(0, &run, kIOMemoryMapperNone) : 0;
+-			if (fBlack != NULL && (fBlackPhys == 0 || run < (uint64_t)fRowBytes * fHeight ||
+-			    fBlackPhys + (uint64_t)fRowBytes * fHeight > (1ull << 32))) {
+-				OSSafeReleaseNULL(fBlack);
+-				fBlackPhys = 0;
+-			}
++			uint64_t black = SWEET_SCANOUT_BASE + (uint64_t)SWEET_SCANOUT_BLACK * SWEET_SCANOUT_SLOT;
++			IOMemoryDescriptor *md = (uint64_t)fRowBytes * fHeight <= SWEET_SCANOUT_SLOT ?
++			    IOMemoryDescriptor::withPhysicalAddress(black, (uint64_t)fRowBytes * fHeight, kIODirectionInOut) : NULL;
++			fBlack = md != NULL ? md->map(kIOMapWriteCombineCache) : NULL;
++			OSSafeReleaseNULL(md);
++			fBlackPhys = fBlack != NULL ? black : 0;
+ 			if (fBlack != NULL) {
+-				uintptr_t va = (uintptr_t)fBlack->getBytesNoCopy();
++				uintptr_t va = (uintptr_t)fBlack->getVirtualAddress();
+ 				bzero((void *)va, (size_t)fRowBytes * fHeight);
+ 				for (uintptr_t line = va & ~(uintptr_t)63; line < va + (uint64_t)fRowBytes * fHeight; line += 64) {
+ 					__asm__ volatile ("dc cvac, %0" : : "r" (line));
