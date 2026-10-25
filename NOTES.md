@@ -58,8 +58,9 @@
   e62871396b7b25de0e0a9e77346d22d93bcf736f65ada60aebed0f6c5f3cff9c; image
   shim/out/spes-ios-graphics-scanout.img (0108+0109, cpus=6 sweetfb_hz=60
   spesgpu_mhz=300) SHA256
-  d831a9d7d69e4848114d8b354cb3a6909bf5aab05d566eea9eb6aa4fb93d3d48. Not
-  booted. If the screen misbehaves, rebuild with sweetfb_direct=0 (no CI)
+  d831a9d7d69e4848114d8b354cb3a6909bf5aab05d566eea9eb6aa4fb93d3d48.
+  Temp-booted 2026-10-25 send0.407s/boot0.287s/total0.698s (from OrangeFox;
+  product spes). If the screen misbehaves, rebuild with sweetfb_direct=0 (no CI)
   to separate 0109 from 0108; SPES_GPU_MHZ=19 tests GPT's 300 MHz clock.
 - Not ported yet (Topaz): GPU memory pool / SMMU pass-through (0909-0912),
   GPU pool write-combined user mappings (0917), screen surfaces drawn in
