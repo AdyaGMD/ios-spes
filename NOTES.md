@@ -14,6 +14,7 @@
   before any panel command). Test image all7p3 = all7 with P3 restored
   (mkadt MKADT_GAMUT=P3 override): shim/out/spes-ios-graphics-all7p3.img
   SHA256 434f70ed539ca62af7697cfd97d613177defc917da03eea5f1ff3f1cdf9a2b1b.
+  Temp-booted 2026-10-25 (hash verified).
   If UI shows: revert to P3 default and fix WebKit another way.
 
 # all6nocpu also reset: DSI buffer address truncated (0121); all7 built, 2026-10-25
