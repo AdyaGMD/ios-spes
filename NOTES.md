@@ -1,3 +1,66 @@
+# GPU back here — Topaz/HackiOS analysis, 0108 release semantics, 0109 MDP scanout, 2026-10-25
+
+- User (2026-10-25): GPU reassigned back to this session; GPT's parity build
+  (bfae0ec, CI40144833248) felt WORSE than DeepSeek's throttle build, and
+  wallpaper + app icons still do not render. User asked to merge
+  codex/gpu-upstream-parity into spes: it was identical to local spes
+  (bfae0ec); fast-forwarded fork/spes e5f5c6e..bfae0ec. The codex branch
+  is left on GitHub.
+- Mistake fixed: my earlier `git commit` ran after a failed NOTES edit and
+  committed 380 out-* artifacts another actor had staged (22541a3, never
+  pushed). Reset --soft and unstaged; the files stay untracked on disk.
+- Mistake: booting the stale keep image this morning overwrote the log ring,
+  so the parity build's log is lost. Rebuilt that image for a re-test:
+  shim/out/spes-ios-graphics-parity.img (kernel xnu/out-0112, CI40144833248,
+  SHA256 7a81d758b4145d668f9876f863a9a073e726307ef13d822f052837c24a01e77b,
+  cpus=6 sweetfb_hz=60 spesgpu_mhz=300). The log pulled today
+  (research/spes-graphics-parity-boot.txt) is the keep image, not parity.
+- Key fact: Topaz = Redmi Note 12 4G (SM6225, Adreno 610), the same SoC/GPU
+  as spes; its SweetSurface/SweetFramebuffer are our lineage. HackiOS is
+  Adreno 642L. Topaz README: 25-35 fps from contiguous screen surfaces that
+  the MDP scans directly; wallpaper ALSO broken there ("LaunchServices
+  registers apps but no app extensions on this root, so PosterBoard finds
+  no wallpaper provider") = userland/root issue, not GPU. HackiOS shows
+  wallpapers with its own init + curated launchd jobs (iconservicesagent,
+  pkd in its list; ios165/select-system.py keeps /Library wallpapers).
+  On spes iconservicesagent and pkd do start; PosterBoard crashed once
+  (SIGTRAP) in the fence boot; symbolication failed (cache slide unknown,
+  candidate slides gave nonsense) - not pursued.
+- Icons: Topaz 0134 (IOSurfaceAddress = creator's memory; "every icon was a
+  transparent square") and 0139 (publish them) are equivalent to GPT's 0104.
+  Missing were Topaz 0135-0137: we released at BOTH trap 4 and trap 5, but
+  IOSurfaceClientRelease calls 4 then 5 for one release -> two references
+  dropped per release, surfaces in use unmapped. New patch 0108
+  (commit b6ce737): trap 4 detaches, findRef skips detached views, trap 5
+  releases (prefers the detached view) and keeps the read-only state page of
+  the last 256 released views (fZombies); plus 0131: unknown selectors that
+  would answer with a full lock result (0xa68) return kIOReturnUnsupported
+  instead of a zeroed client. CI40146908485 -> xnu/out-0113, image
+  shim/out/spes-ios-graphics-release.img (0108 only).
+- Speed: our present copies 10.4 MB per frame with the CPU into the ABL
+  framebuffer. Topaz 0092/0093/0114 scan full-screen surfaces directly:
+  SSPP VIG0 0x5e05000 (+0x14 SRC0_ADDR, +0x24 YSTRIDE0), CTL0 0x5e02000
+  (+0x18 FLUSH = 0x20001). spes DT qcom,mdss_mdp mdp_phys = 0x5e00000, same
+  as Topaz. New patch 0109 (commit 306bfa6): screen-sized BGRA (or format 0)
+  surfaces, at most 10, allocated contiguous below 4 GiB
+  (inTaskWithPhysicalMask + PhysicallyContiguous; dc cvac after bzero);
+  present() with exactly one full-screen layer from such a surface, GPU done,
+  cleans the 1080x2400 window (dc cvac; our flush_dcache is a DSB-only
+  no-op) and points VIG0 at it; the last two scanned surfaces are retained;
+  any other frame is copied as before and VIG0 is set back to the boot
+  framebuffer. Gate: enabled only if VIG0 SRC0 reads back fPhys and the
+  stride matches at start (log "SWEET FB: MDP VIG0 src ... direct scanout
+  on/off"); boot-arg sweetfb_direct=0 disables. fOffX aligned to 4 px
+  (20 instead of 22) in SweetFramebuffer and SweetHID (Topaz 0114).
+  Compile 0/4 failed (research/scanout-compile.log); series replays; 42/42
+  host tests. CI40147298718 -> image shim/out/spes-ios-graphics-scanout.img
+  (0108+0109). Not booted.
+- Not ported yet (Topaz): GPU memory pool / SMMU pass-through (0909-0912),
+  GPU pool write-combined user mappings (0917), screen surfaces drawn in
+  place without EAGL's mirror (0924/0937, eagl binds contiguous surfaces),
+  frames released after MDP latch (0933), 12 MB contiguous reserve (0949),
+  WrapClientMemory sel 7 (0132; never seen in our logs).
+
 # GPU upstream parity — implementation prepared, 2026-10-24
 
 - User reassigned GPU here and requested thorough comparison with latest Topaz
