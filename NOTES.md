@@ -1,3 +1,30 @@
+# Sound step 1: ADSP boot port (0115), 2026-10-25
+
+- User asked to put the ADSP boot into the same build before booting.
+- 0115 (commit b5acf47): Topaz 0144's TopazAudio.cpp -> SpesAudio.cpp
+  (adsp=1): PAS id 1 init_image(.mdt)/mem_setup/segment copy/auth_and_reset
+  from modem_a image/adsp.mdt + adsp.bNN (in our fw table; no b11 entry),
+  SMP2P out 429 / in 443 (APCS bit 10), GLINK lpass edge (items 478/479/480,
+  APCS bit 8), QRTR on IPCRTR + its own pd-mapper, GPR on adsp_apps (APM
+  GET_SPF_STATE). Refuses to boot if SMEM already holds ADSP state (443 or
+  480) from an earlier run. Constants match the spes inventory except the
+  carveout: 0x53800000 + 0x02e00000 (Topaz 0x2300000). Every GLINK channel
+  the ADSP opens is logged ("(no client)" when unserved): expect
+  apr_audio_svc if spes speaks APR (stock apr_audio_svc) rather than GPR.
+- SpesModem: spes_soc_map() (Topaz's topaz_soc_map split: firmware
+  partition probe, SMEM, pool, APCS, TCSR mutex, made once by whichever DSP
+  asks first; the modem thread now calls it); exports spes_smem_partition/
+  get/alloc, spes_apcs_kick, spes_scm, spes_pool_alloc, spes_part_fw_size/
+  read (offset reads from the fw table extents, no crc for partial reads);
+  a local IOLock soc_lock around pool_alloc and smem_alloc (the TCSR hw mutex
+  does not exclude a second thread of ours); spes_audio_init() called from
+  spes_modem_init before its modem=1 check. Compile 0/2 failed
+  (research/adsp-compile.log); objects: SpesAudio's 9 spes_* imports all
+  defined by SpesModem.
+- CI40175151465 -> image spes-ios-graphics-wifi5.img: modem=1 wifi=1
+  spesvib=1 adsp=1 + wlan_mac (0112 black flip, 0113 Wi-Fi iOS layer, 0114
+  vibration probe, 0115 ADSP).
+
 # Wi-Fi iOS layer (0113), per-phone MAC, vibration probe (0114), 2026-10-25
 
 - 0113 (commit 20ae079) = Topaz 0900 (HackiOS darwin-redwood) on our radio:
