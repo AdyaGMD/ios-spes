@@ -1,0 +1,25 @@
+Amplifier probe: when a reset pin's tile is ambiguous, log its neighbours' configs.
+
+all17ls: GPIO106 is on 0x900000 (0x801) and 0x58 answered 0x5a (aw87559) after the reset
+pulse; GPIO35 read 0 on all three tiles. Neighbouring pins usually share a tile.
+
+--- a/bsd/dev/spes_amp.c
++++ b/bsd/dev/spes_amp.c
+@@ -106,6 +106,17 @@
+ 	}
+ 	printf("SPES AMP: GPIO%u cfg on tiles 0x500000/0x900000/0xd00000: %#x %#x %#x -> %s\n", pin,
+ 	    seen[0], seen[1], seen[2], hits == 1 ? "one tile, driven" : "ambiguous, left alone");
++	if (hits != 1) {
++		/* neighbours usually share a tile: show theirs (all17ls: GPIO35 read 0 on every tile) */
++		for (uint32_t n = pin > 3 ? pin - 3 : 0; n <= pin + 3; n++) {
++			uint32_t v[3];
++			for (unsigned i = 0; i < 3; i++) {
++				vm_offset_t tile = ml_io_map(amp_tiles[i], (n + 1) * 0x1000u);
++				v[i] = tile != 0 ? amp_rd(tile, n * 0x1000u) : 0;
++			}
++			printf("SPES AMP:   GPIO%u: %#x %#x %#x\n", n, v[0], v[1], v[2]);
++		}
++	}
+ 	return hits == 1 ? found : 0;
+ }
+ 
