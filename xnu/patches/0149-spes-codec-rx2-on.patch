@@ -1,0 +1,35 @@
+Sound stage 3: turn RX2's path on after the ports (Topaz tone_test).
+
+all26: every APR step succeeded (map, port 0xb032, ADM COPP 0, stream, route, format, run) but the
+DSP played 1 period of 140 in 3 s: RX2 was still muted (0x04 from stage 2), so the codec never
+pulled the DMA. Volume, 0x518 = 4, 0x500 = 0x24 after the ports; 0x04 again at the end.
+
+--- a/iokit/Kernel/arm/SpesAudio.cpp
++++ b/iokit/Kernel/arm/SpesAudio.cpp
+@@ -1666,8 +1666,16 @@
+ 		cdc_swr_wr(CDC_VA_SWR, 1, 0x346B, 0x4C);
+ 		cdc_swr_wr(CDC_VA_SWR, 1, 0x346C, 0x7F);
+ 		cdc_swr_wr(CDC_VA_SWR, 1, 0x346D, 0x0F);
+-		LOG("t=%u.%03u codec: ports + AUX PA on: rx frame %08x, irq %08x", T, cdc_r(CDC_RX_SWR + 0x105C),
+-		    cdc_r(CDC_RX_SWR + 0x200));
++		/*
++		 * RX2's path on, as Topaz's tone_test() does after the ports: volume, 0x518 = 4, path
++		 * control 0x24. Left muted (0x04, stage 2) the codec never pulled the DMA: the DSP played
++		 * 1 period of 140 in 3 s (all26).
++		 */
++		cdc_w(CDC_RX_MACRO + 0x514, (uint32_t)(int8_t)-30 & 0xFF);
++		cdc_w(CDC_RX_MACRO + 0x518, 0x04);
++		cdc_w(CDC_RX_MACRO + 0x500, 0x24);
++		LOG("t=%u.%03u codec: ports + AUX PA + RX2 on: rx frame %08x, irq %08x, rx2 ctl %02x", T,
++		    cdc_r(CDC_RX_SWR + 0x105C), cdc_r(CDC_RX_SWR + 0x200), cdc_r(CDC_RX_MACRO + 0x500) & 0xFF);
+ 
+ 		/* 3 s of the tone: every period written again as the DSP gives it back */
+ 		s3_done = s3_underflows = s3_errors = s3_returned = 0;
+@@ -1692,6 +1700,7 @@
+ 		}
+ 		LOG("t=%u.%03u codec: 3 s of tone: %u periods done (%u expected at 48 kHz), %u errors, %u underflows", T,
+ 		    s3_done, 3000u * 48 / S3_PERIOD_FRAMES, s3_errors, s3_underflows);
++		cdc_w(CDC_RX_MACRO + 0x500, 0x04);      /* RX2 path off again */
+ 	}
+ 	if (stream_open) {
+ 		s3_call("stream closed", APR_SVC_ASM, S3_STREAM_PORT, 0x00010bcdu, NULL, 0, 0x00010bcdu);
