@@ -1,3 +1,20 @@
+# all27 result: stage 3 tone stream plays fully into the codec (141/140 periods); PosterBoard ran without crashing but wallpapers still empty, 2026-10-25
+
+- User: wallpaper picker still empty. Log research/spes-all27-boot.txt
+  (494574 B, 6863 lines, flush #9).
+- Sound (observed): "ports + AUX PA + RX2 on: rx frame 0005000f, irq
+  80002406, rx2 ctl 24", then "3 s of tone: 141 periods done (140 expected
+  at 48 kHz), 0 errors, 0 underflows". The 0149 RX2 enable works: the
+  DSP -> codec DMA -> RX2 path consumes data at 48 kHz. Nothing audible is
+  expected yet (aw87559 amps not enabled). Next: aw87559 enable at low gain,
+  then /dev/redwood-audio + RedwoodAudio.driver (root write, ask first).
+- Wallpaper (observed): "exec PosterBoard" once (line 2143), no CRASH /
+  EXIT / NSException / STR lines for it this boot (all26's abort came during
+  the LS rebuild boot). Only syncdefaultsd crashes (sig 6, repeating, old).
+  Guess: PosterBoard idles because LS still lists no poster extensions;
+  next check is to snapshot the root and read the rebuilt LS database for
+  PlugInKit poster extensions.
+
 # all26 result: whole APR stream accepted but 1/140 periods (RX2 muted); PosterBoard now aborts (NSException); all27 built, 2026-10-25
 
 - User: wallpapers still empty. Log research/spes-all26-boot.txt (462617 B,
