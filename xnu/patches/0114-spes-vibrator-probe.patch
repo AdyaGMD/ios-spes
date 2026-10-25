@@ -1,0 +1,97 @@
+Vibration motor first look (spesvib=1): raise the lct-pwm-vibrator enable, TLMM GPIO 36, for
+300 ms and restore it, to learn whether the PM6125 LPG PWM is needed too.
+
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -109,6 +109,7 @@
+ bsd/dev/redwood_net.c		standard
+ bsd/dev/redwood_apple80211.c	standard
+ bsd/dev/spes_sta.c		standard
++bsd/dev/spes_vib.c		standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -52,6 +52,7 @@
+ static bool spes_readonly_probe;
+ extern void sweet_sample_start(void);
+ extern void sweet_keys_init(void);
++extern void spes_vib_init(void);       /* bsd/dev/spes_vib.c (spesvib=1) */
+ extern void sweet_touch_init(void);
+ extern void sweet_usb_probe(void);
+ 
+@@ -782,6 +783,7 @@
+ 		(void)PE_parse_boot_argn("sweetkeys", &keys, sizeof(keys));
+ 		if (keys == 1) sweet_keys_init();
+ 		printf("SPES: PMIC keys %s; USB disabled\n", keys == 1 ? "requested" : "disabled");
++		spes_vib_init();
+ 		return 0;
+ 	}
+ 	sweet_keys_init();
+--- /dev/null
++++ b/bsd/dev/spes_vib.c
+@@ -0,0 +1,63 @@
++/*
++ * spes vibration motor, first look (boot-arg spesvib=1; nothing happens without it).
++ *
++ * The live DT has qcom,lct-pwm-vibrator: enable on TLMM GPIO 36 (EAST tile, as Topaz notes for
++ * the same SM6225 pin controller) and a PWM from PM6125's LPG at SPMI SID 1, 0xb300. Linux's
++ * driver sets the PWM and then raises the enable. This probe only raises the enable for 300 ms
++ * and restores the pin: if the motor buzzes, it runs on the enable alone; if not, the LPG PWM
++ * (a PMIC write, not done here) is needed too. The pin's register handling is the touch
++ * driver's (bsd/dev/sweet_touch.c touch_gpio): latch first, then output enable, EGPIO enable
++ * when the pin advertises it.
++ */
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <kern/clock.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++void spes_vib_init(void);
++
++#define VIB_EAST_PA     0x00d00000u     /* TLMM 0x400000 + EAST tile */
++#define VIB_PIN         36u
++#define VIB_CFG         (VIB_PIN * 0x1000u)
++#define VIB_IO          (VIB_CFG + 4u)
++
++static inline uint32_t vib_rd(vm_offset_t b, uint32_t o) { return *(volatile uint32_t *)(b + o); }
++static inline void
++vib_wr(vm_offset_t b, uint32_t o, uint32_t v)
++{
++	__asm__ volatile ("dsb sy" ::: "memory");
++	*(volatile uint32_t *)(b + o) = v;
++	__asm__ volatile ("dsb sy" ::: "memory");
++}
++
++void
++spes_vib_init(void)
++{
++	int on = 0;
++	if (!PE_parse_boot_argn("spesvib", &on, sizeof(on)) || on != 1) {
++		return;
++	}
++	vm_offset_t east = ml_io_map(VIB_EAST_PA, VIB_CFG + 0x1000u);
++	if (east == 0) {
++		printf("SPES VIB: no TLMM mapping\n");
++		return;
++	}
++	uint32_t cfg = vib_rd(east, VIB_CFG), io = vib_rd(east, VIB_IO);
++	printf("SPES VIB: GPIO36 before: cfg %#x io %#x\n", cfg, io);
++	vib_wr(east, VIB_IO, (io & ~2u) | 2u);             /* latch high before enabling the output */
++	uint32_t out = (cfg & ~0x3ffu) | (0u << 2) | (1u << 6) | 0x200u;   /* GPIO function, 4 mA, output */
++	if (cfg & (1u << 11)) {
++		out |= 1u << 12;                            /* EGPIO enable when present (khaje) */
++	}
++	vib_wr(east, VIB_CFG, out);
++	printf("SPES VIB: enable high (cfg %#x io %#x) for 300 ms\n", vib_rd(east, VIB_CFG), vib_rd(east, VIB_IO));
++	delay(300 * 1000);
++	vib_wr(east, VIB_IO, vib_rd(east, VIB_IO) & ~2u);
++	vib_wr(east, VIB_CFG, cfg);
++	vib_wr(east, VIB_IO, io);
++	printf("SPES VIB: enable low, pin restored (cfg %#x io %#x)\n", vib_rd(east, VIB_CFG), vib_rd(east, VIB_IO));
++}
++#endif /* ARM64_BOARD_CONFIG_SWEET */
