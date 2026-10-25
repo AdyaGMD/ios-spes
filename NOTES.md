@@ -1,3 +1,26 @@
+# Audio plan: what HackiOS and Topaz give us, 2026-10-25
+
+- spes (live DT): qcom,msm-audio-apr (APR DSP, as our SpesAudio sees:
+  apr_audio_svc, "SPF -1"), bolero codec with rx-macro@a600000,
+  tx-macro@a620000, va-macro@a730000, SoundWire masters, WCD937x
+  (rx/tx slaves), analog aw87xxx PAs on SE1 (0x58/0x5b, resets 106/35).
+- HackiOS (POCO X5 Pro, APR too): bsd/dev/redwood_sound.c (AFE/ASM/ADM
+  stream over APR, 63 refs), redwood_adsp.c, redwood_audio.c
+  (/dev/redwood-audio), userland audio_plugin.c = RedwoodAudio.driver
+  (CoreAudio output device for mediaserverd). Their amps are digital
+  AW88261 on MI2S TDM: not ours.
+- Topaz (Redmi Note 12 4G, same SM6225, WCD937x too, but AudioReach/SPF
+  DSP firmware): 0145 codec bring-up (RPM L14, LPASS clocks via PRM,
+  SoundWire, WCD937x AUX, sia8159 amp), 0146 AudioReach stream ring,
+  0935 /dev/redwood-audio alias, userland audio_plugin.c (HackiOS's).
+  README: sound works on topaz since 2026-10-22.
+- Plan: (1) aw87xxx resets/ids (0135, in all17ls); (2) codec: Topaz 0145's
+  SoundWire/WCD937x/rx-macro bring-up, clocks through APR AFE instead of
+  PRM; (3) DSP stream: HackiOS redwood_sound.c AFE/ASM/ADM to the RX codec
+  DMA port; (4) /dev/redwood-audio + RedwoodAudio.driver (root write,
+  needs approval). mediaserverd crashes until a HAL device exists (Topaz
+  note b90a150: VirtualAudio plug-in without a default device).
+
 # Wallpaper: why the database lacks posters; diagnostic all17ls + restore all17r, 2026-10-25
 
 - User: "get the wallpaper working before building".
