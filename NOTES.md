@@ -1,3 +1,25 @@
+# all4 result: no black screen, APR handshake works; Wi-Fi settings freeze = surface leak (0118), 2026-10-25
+
+- User on all4: "black screens gone but ig the gpu froze when entering the
+  wifi settings ... the whole screen is frozen except for the loading
+  spinner flickers". Log research/spes-all4-boot.txt (579385 B, flush #25).
+- Observed: no "SPES GPU: submission refused" and no "ring is full" (the
+  dee840d fix holds). APR: "ADSP audio services state = 1 READY (after 2
+  asks)", core versions list 9 services (0x3 0x4 0x7 0x8 0x9 0xa 0xb 0xc
+  0xd). wifid scans and reads SCAN_RESULT (scan 24: 43 networks);
+  CURRENT_NETWORK error 6 (not associated), as expected.
+- Observed: from line 4168 every backboardd 1125x2436 surface create returns
+  0xe00002bd kIOReturnNoMemory (1872 times); the scanout pool was full
+  earlier ("no scanout slot free"). That is the freeze: no new frames,
+  only the small spinner layer updates.
+- Cause (from code): 0108 zombies (last 256 released views) kept
+  ref->surface retained, so each kept its 13.9 MB screen surface alive
+  until SWEET_SURFACE_WIRED_MAX (1.5 GB) was full. Commit b004f1a, patch
+  0118: the zombie releases the surface (state page map keeps the state
+  memory; RedwoodGPU holds its own retain). Local xnu-cc syntax check OK.
+- CI 40188305947 dispatched for 0118. Next: image all5, boot, check that
+  no create fails and the scanout slots come back.
+
 # all3 result: wifid starts; GPU stopped on a refused submission; APR client (0117), 2026-10-25
 
 - User on all3: "fast in the beginning then screen goes black for a few
