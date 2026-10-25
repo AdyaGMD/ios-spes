@@ -1,3 +1,20 @@
+# all16 restored the LaunchServices database; all17 built (amp reset pulse), 2026-10-25
+
+- User on all16: "ios booted the ui showed but no wallpaper". Log
+  research/spes-all16-boot.txt (496478 B): "SWEET LS: ...csstore.bak ->
+  back: restored (0)" for both stores. Back to the pre-all15 state.
+- Wallpaper still open: a from-scratch LaunchServices rebuild hangs (all15).
+  Next idea: a boot with sweetlsreset=1 and lsd/installd in the stack
+  sampler (sweetsample) to see where lsd waits, then restore again.
+- Commit 1bfd469, patch 0135: reads GPIO 35/106 config on tiles 0x500000,
+  0x900000, 0xd00000; drives a pin only when exactly one tile shows a
+  register; pulses the reset (low 2 ms, high, 2 ms) and reads register 0 at
+  0x58/0x5b. Risk noted: an off-tile read could hang the bus (temp boot).
+- CI 40206119836 SUCCESS: kernel xnu/out-0135 SHA256
+  923dee6f24f210fa2abcc3798f9b081c6bf2dacc9893f694fc18a462cbec72e5;
+  shim/out/spes-ios-graphics-all17.img (sweetpanel=1 spesamp=1) SHA256
+  664865d022f1386887a525384faa72eaed2bd32108d1a36e40a33bdef9d83c6b. Not booted.
+
 # all15 result: I2C bus works (chargers answer); lsd rebuild hangs SpringBoard; restore image all16, 2026-10-25
 
 - User on all15: Apple logo for 5+ minutes, SpringBoard never loaded. Log
