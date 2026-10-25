@@ -1,0 +1,191 @@
+Sandbox stand-in answers as HackiOS's: container path from CFFIXED_USER_HOME, everything else allowed.
+
+all25: the rebuilt LaunchServices database holds no PlugInKit extension (only one ExtensionKit
+appex): no wallpaper provider is ever launched. Our stand-in failed sandbox extension issue/consume
+(5/6) and "container expected" (0x43) with ENOENT and container path (4) too; HackiOS's
+kern_minimac.c allows them all and answers 4 from CFFIXED_USER_HOME (pkd will not run an
+extension without a container). sweetlsreset=2 moves the stores to .bak2 for one more rebuild,
+leaving the first backup.
+
+--- a/bsd/kern/sweet_amfi.c
++++ b/bsd/kern/sweet_amfi.c
+@@ -34,6 +34,10 @@
+ #include <sys/systm.h>
+ #include <sys/ubc_internal.h>
+ #include <sys/vnode.h>
++#include <sys/proc_internal.h>
++#include <kern/task.h>
++#include <vm/vm_kern.h>
++#include <vm/vm_map.h>
+ #include <security/mac_policy.h>
+ 
+ /* iokit/Kernel/arm/SweetEntitlements.cpp */
+@@ -284,25 +288,103 @@
+  * use of each operation number is logged.
+  */
+ static uint64_t sweet_sandbox_seen;
++
++/*
++ * Request 4, "container path of a process" (sandbox_container_path_for_pid / _for_audit_token),
++ * as HackiOS's kern_minimac.c answers it: whoever starts a contained program (RunningBoard an
++ * application, pkd an extension) passes the container from containermanagerd as
++ * CFFIXED_USER_HOME, so it is read from the strings exec left at the top of the process's stack.
++ * PlugInKit does not run an extension without one ("plugin has invalid sandbox or container").
++ * A process without the variable gets success and an untouched buffer.
++ */
++#define SWEET_SANDBOX_CONTAINER_VAR     "CFFIXED_USER_HOME="
+ 
+ static int
+-sweet_sandbox_syscall(struct proc *p, int call, __unused user_addr_t arg)
++sweet_sandbox_container_path(user_addr_t arg)
++{
++	struct {
++		int64_t     pid;
++		uint64_t    pidversion;
++		user_addr_t buffer;
++		user_size_t size;
++		uint64_t    check_pidversion;
++	} args;
++	const size_t prefix_len = sizeof(SWEET_SANDBOX_CONTAINER_VAR) - 1;
++	vm_map_copy_t copy = NULL;
++	vm_offset_t strings = 0;
++	int error = copyin(arg, &args, sizeof(args));
++	if (error) {
++		return error;
++	}
++	proc_t p = proc_find((int)args.pid);
++	if (p == PROC_NULL) {
++		return ESRCH;
++	}
++	if (args.check_pidversion && (uint64_t)proc_pidversion(p) != args.pidversion) {
++		proc_rele(p);
++		return ESRCH;
++	}
++	user_addr_t user_stack = p->user_stack;
++	size_t argslen = p->p_argslen;
++	task_t task = proc_task(p);
++	if (user_stack == 0 || argslen == 0 || task == TASK_NULL) {
++		proc_rele(p);
++		return 0;
++	}
++	task_reference(task);
++	proc_rele(p);
++	vm_map_t map = get_task_map_reference(task);
++	task_deallocate(task);
++	if (map == VM_MAP_NULL) {
++		return 0;
++	}
++	vm_size_t strings_size = vm_map_round_page(argslen, vm_map_page_mask(map));
++	if (kmem_alloc(kernel_map, &strings, strings_size, KMA_DATA | KMA_ZERO, VM_KERN_MEMORY_BSD) != KERN_SUCCESS) {
++		vm_map_deallocate(map);
++		return ENOMEM;
++	}
++	if (vm_map_copyin(map, (vm_map_address_t)(user_stack - strings_size), strings_size, FALSE, &copy) != KERN_SUCCESS) {
++		copy = NULL;
++	}
++	vm_map_deallocate(map);
++	if (copy == NULL || vm_map_copy_overwrite(kernel_map, strings, copy, strings_size, FALSE) != KERN_SUCCESS) {
++		if (copy != NULL) {
++			vm_map_copy_discard(copy);
++		}
++		kmem_free(kernel_map, strings, strings_size);
++		return 0;
++	}
++	const char *end = (const char *)(strings + strings_size);
++	size_t len;
++	for (const char *s = end - argslen; s < end; s += len + 1) {
++		len = strnlen(s, end - s);
++		if (len > prefix_len && s + len < end && strncmp(s, SWEET_SANDBOX_CONTAINER_VAR, prefix_len) == 0) {
++			s += prefix_len;
++			len -= prefix_len;
++			error = len < args.size ? copyout(s, args.buffer, len + 1) : ENAMETOOLONG;
++			break;
++		}
++	}
++	kmem_free(kernel_map, strings, strings_size);
++	return error;
++}
++
++/*
++ * Every other request succeeds, as HackiOS's stand-in does. Extension issue/consume (5/6) and
++ * "container expected" (0x43) used to fail with ENOENT, and LaunchServices registered no
++ * PlugInKit extension at all, even on a full rebuild (all25: only one ExtensionKit appex): no
++ * wallpaper provider, no App Store extensions.
++ */
++static int
++sweet_sandbox_syscall(struct proc *p, int call, user_addr_t arg)
+ {
+ 	if (call >= 0 && call < 64 && !(sweet_sandbox_seen & (1ULL << call))) {
+ 		sweet_sandbox_seen |= 1ULL << call;
+ 		char name[32];
+ 		proc_name(proc_pid(p), name, sizeof(name));
+-		printf("SWEET Sandbox: %s op %d\n", name, call);
++		printf("SWEET Sandbox: %s op %d (%s)\n", name, call, call == 4 ? "answered" : "allowed");
+ 	}
+-	switch (call) {
+-	case 4:         /* container path (audit token / pid) */
+-	case 5:         /* extension issue */
+-	case 6:         /* extension consume */
+-	case 0x43:      /* container expected */
+-		return ENOENT;
+-	default:
+-		return 0;
+-	}
++	return call == 4 ? sweet_sandbox_container_path(arg) : 0;
+ }
+ 
+ static const struct mac_policy_ops sweet_amfi_mac_ops = {
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -14599,10 +14599,10 @@
+  * reset would replace the good copy with whatever was rebuilt in between.
+  */
+ static void
+-sweet_move_aside(const char *path, int reset, int restore, const char *tag)
++sweet_move_aside(const char *path, int reset, int restore, const char *tag, const char *suffix)
+ {
+ 	char bak[256];
+-	snprintf(bak, sizeof(bak), "%s.bak", path);
++	snprintf(bak, sizeof(bak), "%s%s", path, restore == 1 ? ".bak" : suffix);
+ 	vnode_t vp = NULLVP;
+ 	bool have_bak = vnode_lookup(bak, 0, &vp, vfs_context_kernel()) == 0;
+ 	if (vp != NULLVP) {
+@@ -14616,11 +14616,11 @@
+ 		printf("SWEET %s: %s.bak -> back: %s (%d)\n", tag, name,
+ 		    err == 0 ? "restored" : err == ENOENT ? "no .bak" : "failed", err);
+ 	} else if (reset == 1 && have_bak) {
+-		printf("SWEET %s: %s: a .bak exists, not moved (it would replace the backup)\n", tag, name);
++		printf("SWEET %s: %s: a %s exists, not moved (it would replace the backup)\n", tag, name, suffix);
+ 	} else if (reset == 1) {
+ 		err = renameat_internal(vfs_context_kernel(), AT_FDCWD, CAST_USER_ADDR_T(path),
+ 		    AT_FDCWD, CAST_USER_ADDR_T(bak), UIO_SYSSPACE, 0);
+-		printf("SWEET %s: %s -> .bak: %s (%d)\n", tag, name,
++		printf("SWEET %s: %s -> %s: %s (%d)\n", tag, name, suffix,
+ 		    err == 0 ? "moved aside, rebuilt on demand" : err == ENOENT ? "not there" : "failed", err);
+ 	}
+ }
+@@ -14638,8 +14638,13 @@
+ 	int reset = 0, restore = 0;
+ 	(void)PE_parse_boot_argn("sweetlsreset", &reset, sizeof(reset));
+ 	(void)PE_parse_boot_argn("sweetlsrestore", &restore, sizeof(restore));
+-	for (unsigned i = 0; i < sizeof(stores) / sizeof(stores[0]) && (reset == 1 || restore == 1); i++) {
+-		sweet_move_aside(stores[i], reset, restore, "LS");
++	for (unsigned i = 0; i < sizeof(stores) / sizeof(stores[0]) && (reset == 1 || reset == 2 || restore == 1); i++) {
++		/*
++		 * sweetlsreset=2 moves the store to .bak2, leaving the first backup (.bak) alone: the
++		 * rebuild of all17ls registered no PlugInKit extension (sandbox answers, fixed in 0147),
++		 * so it has to be rebuilt once more.
++		 */
++		sweet_move_aside(stores[i], reset == 2 ? 1 : reset, restore, "LS", reset == 2 ? ".bak2" : ".bak");
+ 	}
+ 	/*
+ 	 * MobileGestalt's cache (sweetmgreset=1 / sweetmgrestore=1). WebKit's GPU process still asks
+@@ -14652,7 +14657,7 @@
+ 	(void)PE_parse_boot_argn("sweetmgrestore", &mgrestore, sizeof(mgrestore));
+ 	if (mgreset == 1 || mgrestore == 1) {
+ 		sweet_move_aside("/private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache/"
+-		    "Library/Caches/com.apple.MobileGestalt.plist", mgreset, mgrestore, "MG");
++		    "Library/Caches/com.apple.MobileGestalt.plist", mgreset, mgrestore, "MG", ".bak");
+ 	}
+ }
+ #endif
