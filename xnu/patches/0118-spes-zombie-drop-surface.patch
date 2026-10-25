@@ -1,0 +1,24 @@
+A released view (zombie, 0108) let go of its surface object.
+
+The zombie only needs its mapped state page, which holds the state memory
+by itself. Keeping the surface retained kept up to 256 screen surfaces
+(13.9 MB each) alive, filled SWEET_SURFACE_WIRED_MAX and made every new
+backboardd surface fail with kIOReturnNoMemory (all4: the Wi-Fi settings
+freeze, 1872 failed creates).
+
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -1500,9 +1500,13 @@
+ 		 * The pixels are unmapped now; the read-only state page stays mapped a while
+ 		 * (Topaz 0137): another IOSurface object of the task may still read its seed.
+ 		 * The last 256 released views keep their page, the oldest goes first.
++		 * The page's map holds the state memory by itself, so the view lets go of
++		 * the surface: a zombie kept a 13.9 MB screen surface alive, and 256 of
++		 * them filled the wired budget until every new frame failed (all4).
+ 		 */
+ 		OSSafeReleaseNULL(ref->data);
+ 		sweet_surface_put(ref->surface);
++		OSSafeReleaseNULL(ref->surface);
+ 		ref->released = true;
+ 		ref->detached = false;
+ 		if (fZombies->setObject(ref) && fZombies->getCount() > 256) {
