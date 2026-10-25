@@ -1,3 +1,29 @@
+# all26 result: whole APR stream accepted but 1/140 periods (RX2 muted); PosterBoard now aborts (NSException); all27 built, 2026-10-25
+
+- User: wallpapers still empty. Log research/spes-all26-boot.txt (462617 B,
+  flush #90). LS stores moved to .bak2 and rebuilt (UI came up).
+- Stage 3 (observed): "buffer mapped (ASM): ok (handle b0a493e8)", "port
+  0xb032 configured / started: ok", "device path (ADM): ok (COPP 0)",
+  stream opened / routed / format / run: ok, "ports + AUX PA on: rx frame
+  0005000f, irq 80002406", then "3 s of tone: 1 periods done (140 expected),
+  0 errors, 0 underflows"; close/stop/unmap ok. The codec did not pull:
+  RX2 path still muted. Topaz tone_test() after the ports writes RX_MACRO
+  +0x514 vol, +0x518 = 4, +0x500 = 0x24 (RX2 path on), 0x04 at the end.
+  Commit c6c97a3, patch 0149 adds that.
+- Wallpaper (observed): with the 0147 sandbox answers and a fresh rebuild,
+  PosterBoard now ABORTS (sig 6; was trap sig 5 / idle): _abort <-
+  demangling_terminate_handler <- objc_terminate <- std::terminate <-
+  _dispatch_client_callout <- _dispatch_main_queue_drain: uncaught
+  NSException on the main queue; console tee: "|PosterBoard| libc++abi:
+  terminating due to uncaught exception of type NSException". Still no
+  poster extension process launched. Reason text: all27 adds PosterBoard to
+  sweetscan (heap strings at SIGABRT).
+- CI 40240007927 SUCCESS: kernel xnu/out-0149 SHA256
+  4c98d008643cd08d981b631d5fb25697761fff4f47b2150d3c08f380ad2fa55e;
+  shim/out/spes-ios-graphics-all27.img (spescodec=3, sweetscan incl.
+  PosterBoard, no LS reset) SHA256
+  d1560a91004a7438d0143e01fa20e86ee6c3f70928f6dc4b6c14a2cdbd32a9b1. Not booted.
+
 # Extension registration fix attempt (0147) + sound stage 3 (0148); all26 building, 2026-10-25
 
 - Extensions (read-only on the 25b-derived clone): the registered appex
