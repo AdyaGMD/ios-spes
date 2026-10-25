@@ -1,3 +1,17 @@
+# all5 result: no GPU crash/freeze; brightness, sound, WebKit open; 0119 panel fade, 2026-10-25
+
+- User on all5: "gpu didnt crash anymore"; Wi-Fi works; brightness slider
+  does nothing and lock has no smooth fade; still not 60 fps; no sound;
+  WebKit pages are black. Log not pulled yet.
+- Brightness (from code): DCS brightness (0111) is opt-in sweetpanel=1 and
+  all1..all5 never passed it, so setProperties returns Unsupported.
+  Commit 0119: backlight ramp (16 DCS steps, ~260 ms) on display off before
+  the black frame and on display on; logs the first 12 brightness requests.
+  Local syntax check OK. CI 40189822482 dispatched. Next image all6 adds
+  sweetpanel=1 (first boot of the DSI path on spes; watch for "DSI cmd ...
+  not done").
+- WebKit black: not diagnosed; needs the all5 log (WebContent / GPU process).
+
 # all4 result: no black screen, APR handshake works; Wi-Fi settings freeze = surface leak (0118), 2026-10-25
 
 - User on all4: "black screens gone but ig the gpu froze when entering the
