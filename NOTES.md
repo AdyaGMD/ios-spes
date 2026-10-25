@@ -1,3 +1,48 @@
+# Metal study: iOSPlus10's metal2vulkan stack vs spes (read-only study, c0a451f), 2026-10-25
+
+Sources: research/iOSPlus10 docs/metal-design.md, metal-plan.md,
+metal-management.md, gpu-abi.md, gpu-status.md, userland/turnip/mesa-patches.
+- Stack [V their docs]: Metal.framework finds IOAcceleratorES ->
+  MetalPluginName/MetalPluginClassName -> /System/Library/Extensions/
+  NegroniMetal.bundle (NegroniMTLDevice : _MTLDevice) -> ios-flame frontend
+  (NWylynko/ios-flame 745c434, MIT; UniXNU NativeMetal) -> bridge C ABI ->
+  metal2vulkan (steelbrain, Rust, 720ef1ce + 7 patches, GPL-2+/LGPL-3,
+  static) -> Turnip libvulkan_freedreno.dylib (Mesa 25.0.7) -> RedwoodGPU
+  msm DRM ABI -> GPU. Shaders: QuartzCore default.metallib (AIR 2.5) ->
+  SPIR-V -> NIR -> ir3. Per-process control files in /var/db/negronimetal
+  (clients allow-list, off switch, dead-man strikes, pipeline cache).
+- Turnip patch 0001 (their repo): applies after the HackiOS Mesa patches,
+  same Mesa 25.0.7 and redwood-drm layer as our GL build (research/
+  mesa-build): darwin device discovery, IOConnectMapMemory64 maps,
+  VK_EXT_external_memory_host via IOSurface IDs + USERPTR 0x49, no EL0
+  CTR_EL0 read, chained fixups. 0002: host-import cache rules.
+- Our RedwoodGPU (HackiOS, 0100 spes backend) already speaks the msm DRM
+  ABI for freedreno GL [V: kMsmGetParam..kMsmSubmitQueueQuery, 0x7e
+  surface]. Gaps for Turnip/Metal [V in our replayed RedwoodGPU.cpp]:
+  MSM_INFO_SET_IOVA refused (Turnip falls back to kernel IOVAs [I]); no
+  VA_START/VA_SIZE params; no 0x49 USERPTR (needed for
+  external_memory_host, a metal2vulkan requirement); one shared address
+  space (no per-client windows); GPU VA pool only 512 MiB (SPES_GPU_SIZE)
+  for all processes while flame measured 60-130 MB per Metal process.
+- A610 in Turnip [V Mesa 25.0.7 freedreno_devices.py]: GPUId(610) in
+  a6xx_gen1_low (not marked untested): no hw multiview, no sampler minmax,
+  no GMEM fast clear, no FS tex prefetch, 1 CCU, highest_bank_bit 13.
+  Their A730 estimate: QuartzCore fragments 93/95; ours unknown (needs a
+  real A610 Turnip profile, e.g. vkprobe on the phone).
+- Their status [V their docs]: everything up to the plugin builds; as of
+  c0a451f the UI renders through Metal for all processes on the A730;
+  poster extensions still fail under Metal (AegirPoster nil buffer,
+  Pride MPS init nil).
+- Toolchain here: no Rust installed (they pin 1.98.0, aarch64-apple-ios).
+  iOS 16.5 SDK in research/graphics-sdks.
+- Spes path (plan, nothing done): (1) Turnip build for iOS with their
+  0001/0002 on our Mesa tree + vkprobe on the phone (needs only kernel
+  GET_PARAM/GEM/submit, which exist); (2) kernel: 0x49 USERPTR,
+  SET_IOVA + VA window, bigger GPU pool; (3) Rust + metal2vulkan bridge +
+  flame frontend + NegroniMetal plugin; (4) IOAcceleratorES properties
+  behind a boot-arg, allow-list starting with probes. Risk: A610 speed
+  (a fraction of A640/A730) and memory.
+
 # all29 result: WALLPAPERS WORK; video crash and missing audio node found; 0153, all30 CI building, 2026-10-25
 
 - User (all29): wallpapers work (0151 AMFI 0x60 was the cause); the red
