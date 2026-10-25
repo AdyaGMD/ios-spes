@@ -1,3 +1,26 @@
+# all25/all25o built; wallpaper PNG delta verified (awaiting approval); iOSPlus10 Metal note, 2026-10-25
+
+- CI 40219133532 SUCCESS (first download timed out, retried): kernel
+  xnu/out-0145 SHA256
+  b99d0aea28271fd861c51c173e1dae2feb0f1e93d648eab919705e6119f38861.
+  shim/out/spes-ios-graphics-all25.img (spescodec=2 sweetbacklight=2
+  AppleARMBacklight, sweetsample=PosterBoard,SpringBoard, OLED identity) SHA256
+  e314dd4b0c753185e5ad4ea6c376917eef1ef9b6af66bf25cf5893956affe6b1;
+  shim/out/spes-ios-graphics-all25o.img (same, MKADT_OLED=0) SHA256
+  eff5200ba5ba781000722b717be142c91513e786fb1639d19e480f9a5d77a128. Not booted.
+- Fresh root snapshot research/spes-phone-root-20261025b.img SHA256
+  395bc91b0c78362b7b1d11dbeb0605c1c564bd2301550c0cb0f816cf52b483cd (= device);
+  it contains the launchd.plist change. Wallpaper clone converted again (48
+  HEIC -> PNG); delta research/spes-wallpaper-png-delta 77 MiB, all 77
+  before-blocks verified against the phone. NOT applied: needs approval.
+- iOSPlus10 (akshaynexus, OnePlus 10, Adreno 730), raised on reddit as
+  "GPU not working, port metal2vulkan": their notes (2026-10-25) say their UI
+  is still CPU-rendered; Turnip probe passes, the metal2vulkan device opens,
+  Metal plugin not yet run on the phone (blocker: IOSurface host-memory
+  import). Our UI already renders on the GPU (EAGL + Mesa, ~11 ms frames).
+  Metal (for apps that require it) via Turnip on A610 + metal2vulkan is a
+  later, large project.
+
 # ios-sailfish (Pixel 1, iPhone 8 userland): wallpaper and brightness answers, 2026-10-25
 
 - research/ios-sailfish (joranv1/ios-sailfish @6f27e41, same ios-sweet lineage).
