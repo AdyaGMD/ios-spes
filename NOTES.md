@@ -1,3 +1,28 @@
+# Codec port plan (spes = Topaz codec + HackiOS APR), 2026-10-25
+
+- spes live DT: wcd937x-codec supplies cdc-vdd-rxtx/cdc-vddpx = L9 1.8 V
+  (static), cdc-vdd-buck = L14 1.8 V (on demand, as Topaz); reset node
+  msm_cdc_pinctrl@92 = GPIO 92 (as Topaz); sound card bengal-idp-snd-card,
+  speaker routing IN3_AUX <- AUX_OUT ("SpkrMono WSA_IN" <- AUX): the speaker
+  path is WCD937x AUX, exactly Topaz's. Amps aw87559 x2 (0x58 answers 0x5a
+  after GPIO106 pulse; 0x5b on GPIO35, tile 0xd00000 via neighbours).
+- Port from Topaz 0145 (same SoC/codec): RPM client (TopazRpm.cpp, "ldoa"
+  14 uv 1800000 + swen 1, both sets), LPI pins (LPI_TLMM, values
+  0xD04/0xD06...), VA/RX/TX macro clock enables and CGCRs, GPIO92 low while
+  both SoundWire masters init, then high + 300 ms; SMMU identity for audio
+  DMA SID 0x1C1; rx_stock register table; WCD937x init over VA SWR dev 1
+  (0x3103 0xD6 ... AUX DAC); ports_and_pa() after the stream starts.
+- Replace Topaz's PRM votes with APR AFE (HackiOS redwood_sound.c):
+  AFE_SVC_CMD_SET_PARAM(AFE_MODULE_CLOCK_SET 0x1028f, AFE_PARAM_ID_CLOCK_SET
+  0x10290) for clk 0x30C (TX core MCLK) and 0x30D (TX NPL) at 19.2 MHz;
+  the DCODEC HW vote = AFE remote LPASS core HW vote request (opcode to
+  verify against Linux q6afe before use).
+- Stream (HackiOS redwood_sound.c ASM/ADM/AFE): AFE port = RX codec DMA
+  RX_1 (Topaz: AIF2_PB -> RX2 -> INT2 -> AUX; port id to verify), ADM
+  device open + matrix routing, ASM shared-mem map / open write / media fmt
+  / run / write, 48 kHz 16-bit stereo. Then aw87559 on (Linux aw87xxx
+  profile), /dev/redwood-audio + RedwoodAudio.driver (root write: ask).
+
 # all18 panicked: io_map's 8 MB used up by the amp probe; 0138, all19 built, 2026-10-25
 
 - User photo (all18): "panic(cpu 2 ...): kmem_alloc(0xfffffe1001ce41a8,
