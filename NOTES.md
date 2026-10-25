@@ -22,7 +22,17 @@
   4c98d008643cd08d981b631d5fb25697761fff4f47b2150d3c08f380ad2fa55e;
   shim/out/spes-ios-graphics-all27.img (spescodec=3, sweetscan incl.
   PosterBoard, no LS reset) SHA256
-  d1560a91004a7438d0143e01fa20e86ee6c3f70928f6dc4b6c14a2cdbd32a9b1. Not booted.
+  d1560a91004a7438d0143e01fa20e86ee6c3f70928f6dc4b6c14a2cdbd32a9b1.
+  Temp-booted 2026-10-25 (hash verified).
+- iOSPlus10 update (c0a451f; their notes 2026-10-26 03:30): UI now renders
+  through Metal for ALL processes: NegroniMetal -> ios-flame frontend ->
+  metal2vulkan -> Turnip -> RedwoodGPU, A730 at 818 MHz, 4.5-14 ms per
+  command buffer, up to 83 presents/s, 150-160 s without a crash (my earlier
+  "CPU-rendered" reading was from an older commit). They ported our GL path
+  as an A/B. Their open items include poster extensions failing inside Metal
+  (AegirPoster nil buffer, Pride MPS init nil): posters run there. For spes:
+  Metal would need Turnip on A610 (a6xx gen1) + their userland stack; a
+  large, separate project.
 
 # Extension registration fix attempt (0147) + sound stage 3 (0148); all26 building, 2026-10-25
 
