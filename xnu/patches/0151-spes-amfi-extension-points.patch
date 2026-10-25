@@ -1,0 +1,86 @@
+Wallpaper: answer AMFI's "boot-arg state" so ExtensionKit reads the extension points.
+
+Snapshot 20261025c (after the all26 rebuild with 0147): both LaunchServices stores still hold no
+PlugInKit extension at all -- no poster provider, only the six ExtensionKit points; the apps that
+host them (AegirProxyApp, Weather placeholder, PaperBoard) are registered without their PlugIns.
+HackiOS kern_minimac.c names the cause: ExtensionKit asks AMFI request 0x60 and, unless the
+answer says AMFI is not enforcing (bits 0x86), wants extensions.plist.sig verified by AMFI's IOKit
+service; without it no extension point is known and every extension is refused. Our policy was
+called "SWEET AMFI", so __mac_syscall("AMFI", ...) got ENOPOLICY. Rename it and answer 0x60.
+sweetlsreset=3 moves the stores to .bak3 for one more rebuild (.bak and .bak2 kept).
+
+--- a/bsd/kern/sweet_amfi.c
++++ b/bsd/kern/sweet_amfi.c
+@@ -385,10 +385,42 @@
+ 		printf("SWEET Sandbox: %s op %d (%s)\n", name, call, call == 4 ? "answered" : "allowed");
+ 	}
+ 	return call == 4 ? sweet_sandbox_container_path(arg) : 0;
++}
++
++/*
++ * __mac_syscall("AMFI", ...) from libamfi reaches the policy of that name only. Request 0x60
++ * ("query boot-arg state", amfi_interface_query_bootarg_state) gets 64 bits of flags, one per
++ * boot-arg that switches part of AMFI off. ExtensionKit asks, and unless one of the bits 0x86 is
++ * set it has AMFI's IOKit service verify /System/Library/xpc/extensions.plist.sig; there is no
++ * such service, the table of extension points is not read, and LaunchServices refuses every
++ * PlugInKit extension when it registers the apps (both csstores after the all26 rebuild: no
++ * poster provider, only the six ExtensionKit points). HackiOS kern_minimac.c answers 0x86.
++ * Every other request keeps the ENOPOLICY it got while the policy had another name.
++ */
++#define SWEET_AMFI_QUERY_BOOTARG_STATE  0x60
++#define SWEET_AMFI_NOT_ENFORCING        0x86ULL
++
++static int
++sweet_amfi_syscall(struct proc *p, int call, user_addr_t arg)
++{
++	static int logged;
++	if (logged < 16) {
++		logged++;
++		char name[32];
++		proc_name(proc_pid(p), name, sizeof(name));
++		printf("SWEET AMFI: %s request %#x (%s)\n", name, call,
++		    call == SWEET_AMFI_QUERY_BOOTARG_STATE ? "not enforcing" : "no policy");
++	}
++	if (call != SWEET_AMFI_QUERY_BOOTARG_STATE) {
++		return ENOPOLICY;
++	}
++	uint64_t state = SWEET_AMFI_NOT_ENFORCING;
++	return copyout(&state, arg, sizeof(state));
+ }
+ 
+ static const struct mac_policy_ops sweet_amfi_mac_ops = {
+ 	.mpo_vnode_check_signature = sweet_amfi_vnode_check_signature,
++	.mpo_policy_syscall = sweet_amfi_syscall,
+ };
+ 
+ /*
+@@ -442,7 +474,7 @@
+ static mac_policy_handle_t sweet_sandbox_mac_handle;
+ 
+ static struct mac_policy_conf sweet_amfi_mac_conf = {
+-	.mpc_name = "SWEET AMFI",
++	.mpc_name = "AMFI",             /* the name __mac_syscall callers use */
+ 	.mpc_fullname = "SWEET built-in Mobile File Integrity",
+ 	.mpc_ops = &sweet_amfi_mac_ops,
+ };
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -14638,13 +14638,15 @@
+ 	int reset = 0, restore = 0;
+ 	(void)PE_parse_boot_argn("sweetlsreset", &reset, sizeof(reset));
+ 	(void)PE_parse_boot_argn("sweetlsrestore", &restore, sizeof(restore));
+-	for (unsigned i = 0; i < sizeof(stores) / sizeof(stores[0]) && (reset == 1 || reset == 2 || restore == 1); i++) {
++	for (unsigned i = 0; i < sizeof(stores) / sizeof(stores[0]) && (reset >= 1 && reset <= 3 || restore == 1); i++) {
+ 		/*
+ 		 * sweetlsreset=2 moves the store to .bak2, leaving the first backup (.bak) alone: the
+ 		 * rebuild of all17ls registered no PlugInKit extension (sandbox answers, fixed in 0147),
+-		 * so it has to be rebuilt once more.
++		 * so it has to be rebuilt once more. sweetlsreset=3 (.bak3): the all26 rebuild still had
++		 * none (AMFI request 0x60, fixed in 0151).
+ 		 */
+-		sweet_move_aside(stores[i], reset == 2 ? 1 : reset, restore, "LS", reset == 2 ? ".bak2" : ".bak");
++		sweet_move_aside(stores[i], reset >= 2 ? 1 : reset, restore, "LS",
++		    reset == 3 ? ".bak3" : reset == 2 ? ".bak2" : ".bak");
+ 	}
+ 	/*
+ 	 * MobileGestalt's cache (sweetmgreset=1 / sweetmgrestore=1). WebKit's GPU process still asks
