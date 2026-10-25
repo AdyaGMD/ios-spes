@@ -14,7 +14,8 @@
 - CI 40209464026 SUCCESS: kernel xnu/out-0138 SHA256
   5ab84a7e0218e6ca08b35f0c10d39c835bc521ca10fde7f9afdf54f3c089441a;
   shim/out/spes-ios-graphics-all19.img (sweetpanel=1 spesamp=1) SHA256
-  59686a0d26a38db23935d9c9b49b0923665be6440bbdd78c7c6870c65dae0047. Not booted.
+  59686a0d26a38db23935d9c9b49b0923665be6440bbdd78c7c6870c65dae0047.
+  Temp-booted 2026-10-25 (hash verified).
   Same checks as all18 (wallpaper, Safari tiles, GPIO35 neighbours).
 
 # all17ls result: rebuild finished in ~15 min, PosterBoard no longer crashes (no wallpaper yet); amp 0x58 answers 0x5a; all18 built, 2026-10-25
