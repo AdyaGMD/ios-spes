@@ -1,3 +1,28 @@
+# Hardware result — all1: scanout works, Wi-Fi iOS layer up, ADSP firmware lookup bug, 2026-10-25
+
+- User's report for all1 arrived as an unfilled template; results from the log
+  research/spes-all1-boot.txt (451947 B, flush #29).
+- Direct scanout ENGAGES (0116): "screen surface 1125x2436 size 13893632:
+  scanout slot" x6; "frame 1 shown directly from surface 2 at 0x90013fd0"
+  (window = slot + 18 rows * 4544 + 20 px * 4), frames 2/4 likewise;
+  multi-layer frames still copied ("frame copied ... (5 shown directly so
+  far)"). Display on/off logged.
+- Cache pushes per submission now 2.8-6.1 MB (was 5-13 MB), 3.5-7.2 ms;
+  271-362 submissions per 5 s. Frames >= 15 (n=30): median 61.5 ms (was
+  68.9), p90 462.6; flush 25.6, wait 17.1 (constant ~one vsync: likely the
+  swap backpressure waiting for the previous frame to be shown), prep 6.3.
+  Remaining pushes are ordinary cached surfaces the client has mapped
+  ("every submission" rule in RedwoodGPU submit).
+- Wi-Fi: WLAN firmware ready 4407 ms, radio ready, then "SPES WIFI: en0 and
+  the station are up for iOS"; further scans STARTED at 19.1 s and 33.6 s =
+  requests through the new Apple80211 path (wifid). 38 BSSs heard.
+- Vibration probe: GPIO36 cfg 0 io 0 -> cfg 0x240 io 0x3 for 300 ms (pin
+  read back high) -> restored. Whether the motor buzzed: not reported yet.
+- ADSP: SMEM partition found, crash item absent, then "image/adsp.mdt: not
+  readable (-1 bytes)": spes_part_fw_size/read used fw_files (modem's files
+  only). Fixed in 0115 (commit 10f3d69) to use fw_all + fw_all_read like
+  Topaz. CI40179046544 -> image spes-ios-graphics-all2.img.
+
 # 60 fps work: direct scanout never engaged; scanout pool (0116); no WC cache pushes, 2026-10-25
 
 - Finding: both Wi-Fi boots log "direct scanout on" but "frame copied by the
