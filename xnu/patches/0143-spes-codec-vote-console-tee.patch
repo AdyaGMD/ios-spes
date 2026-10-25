@@ -1,0 +1,92 @@
+Codec: only the LPASS audio HW vote (block 4); /dev/console writes of sweetnull processes to the log.
+
+all22: L14 acked, clocks 0x30c/0x30d given, block 4 vote given (handle 23), block 3
+("LPASS_HW_MACRO") refused with status 1, so stage 1 stopped before any register. spes's DT
+has only vote_lpass_audio_hw. And the PosterBoard/pkd jobs now pointed at /dev/console
+(root change) wrote to the muted screen console: cnwrite copies the writes of the processes in
+sweetnull into the persistent log as "|name| text".
+
+--- a/bsd/dev/mem.c
++++ b/bsd/dev/mem.c
+@@ -188,6 +188,14 @@
+ 		t = end + 1;
+ 	}
+ 	return false;
++}
++
++/* The same list for /dev/console (bsd/dev/arm/cons.c cnwrite). */
++bool sweet_console_tee(char *name, size_t len);
++bool
++sweet_console_tee(char *name, size_t len)
++{
++	return sweet_null_tee(name, len);
+ }
+ #endif
+ 
+--- a/bsd/dev/arm/cons.c
++++ b/bsd/dev/arm/cons.c
+@@ -75,6 +75,28 @@
+ int
+ cnwrite(__unused dev_t dev, struct uio *uio, int ioflag)
+ {
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	/*
++	 * A launchd job pointed at /dev/console (tools/patch-launchd-plist.py: PosterBoard, pkd)
++	 * wrote to the screen console, which sweetfb_noconsole mutes, and never reached the
++	 * persistent log. For the processes in boot-arg sweetnull it goes to the log as "|name| text",
++	 * like their /dev/null writes (bsd/dev/mem.c).
++	 */
++	extern bool sweet_console_tee(char *name, size_t len);
++	char name[32];
++	if (sweet_console_tee(name, sizeof(name))) {
++		while (uio_resid(uio) > 0) {
++			char buf[256];
++			int c = (int)MIN(uio_resid(uio), (user_ssize_t)sizeof(buf));
++			int error = uiomove(buf, c, uio);
++			if (error) {
++				return error;
++			}
++			printf("|%s| %.*s%s", name, c, buf, (c > 0 && buf[c - 1] == '\n') ? "" : "\n");
++		}
++		return 0;
++	}
++#endif
+ 	dev = cndev();
+ 	return (*cdevsw[major(dev)].d_write)(dev, uio, ioflag);
+ }
+--- a/iokit/Kernel/arm/SpesAudio.cpp
++++ b/iokit/Kernel/arm/SpesAudio.cpp
+@@ -1358,7 +1358,7 @@
+  * macros and both SoundWire masters with the codec coming out of reset (Topaz 0145
+  * codec_bringup(), same SM6225 and WCD937x; spes's speaker is on the codec's AUX output too).
+  * Topaz asked AudioReach's PRM; spes's DSP speaks APR, so the votes and clocks are asked of the
+- * AFE as HackiOS's redwood_mic.c does: blocks 3 ("LPASS_HW_MACRO") and 4 ("LPASS_HW_DCODEC"), clocks
++ * AFE as HackiOS's redwood_mic.c does: block 4 ("LPASS_HW_DCODEC"; block 3 is refused here), clocks
+  * 0x30c (TX core) and 0x30d (TX NPL) at 19.2 MHz. An access to a macro without them may hang the
+  * bus, so no register is touched unless all four were given. Registers are mapped a 16 KB page
+  * at a time: io_map's region is 8 MB (all18 ran out). Stops after logging the SoundWire slaves.
+@@ -1472,7 +1472,10 @@
+ 			rpm |= spes_rpm_kvp(set, 0x616F646Cu, 14, 0x6E657773u, 1);
+ 		}
+ 		LOG("t=%u.%03u codec: L14 %s", T, rpm == 0 ? "on" : "NOT acked (continuing: may already be on)");
+-		cdc_vote(3, "LPASS_HW_MACRO");
++		/*
++		 * Only the audio HW vote: spes's DT has vote_lpass_audio_hw alone, and the AFE refused
++		 * block 3 ("LPASS_HW_MACRO") with status 1 while it gave block 4 (all22).
++		 */
+ 		cdc_vote(4, "LPASS_HW_DCODEC");
+ 		cdc_clock(0x30c);
+ 		cdc_clock(0x30d);
+@@ -1481,10 +1484,10 @@
+ 		return;
+ 	}
+ 	if (cdc_step == 1) {
+-		if (codec_votes >= 2 && codec_clocks >= 2) {
++		if (codec_votes >= 1 && codec_clocks >= 2) {
+ 			cdc_step = 2;
+ 		} else if (codec_fails != 0 || ms() - cdc_at > 3000) {
+-			LOG("t=%u.%03u codec: votes %u/2, clocks %u/2, failures %u: stopping before any register", T,
++			LOG("t=%u.%03u codec: votes %u/1, clocks %u/2, failures %u: stopping before any register", T,
+ 			    codec_votes, codec_clocks, codec_fails);
+ 			cdc_step = 3;
+ 		}
