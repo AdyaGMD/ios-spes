@@ -1,3 +1,23 @@
+# all25 result: BRIGHTNESS WORKS; codec stage 2 clean; wallpaper: almost no app extensions registered, 2026-10-25
+
+- User on all25: brightness works, UI as fast as before, wallpaper still
+  empty. Log research/spes-all25-boot.txt (670500 B, flush #19).
+- Brightness (observed): "SWEET BL: AppleARMBacklight published";
+  "backboardd sets 3 keys: brightness 216 FadePeriod 0 backlight-level 216",
+  then 198..173 as the slider moves. Commit (this), patch 0146: on by default.
+- Codec stage 2 (observed): SWR irq before/after rx/va 80002006 unchanged (no
+  command errors), slaves still 4/4, RX2 vol reads 0xe2 (-30 dB).
+- Wallpaper (observed): PosterBoard idle in its run loop (GSEventRunModal /
+  UIApplicationMain), no crash; NO poster extension process is ever launched.
+  Rebuilt LS database (from all17ls; hashes differ from .bak, same size) has
+  0 posterkit.provider / CollectionsPoster strings and 9 ".appex" strings
+  (the same AuthenticationServicesUI helper); apps' own appexes (AppStore
+  etc.) are missing too. So LaunchServices registers almost no app
+  extensions even on a full rebuild: the registration (plugin validation:
+  code signature / entitlements / pkd?) rejects them. Next: find where (lsd
+  stack samples during a rebuild, or what makes the one AuthenticationServices
+  helper different). HEIC->PNG stays installed (needed once posters load).
+
 # all25/all25o built; wallpaper PNG delta verified (awaiting approval); iOSPlus10 Metal note, 2026-10-25
 
 - CI 40219133532 SUCCESS (first download timed out, retried): kernel
