@@ -118,7 +118,7 @@ diff --git a/bsd/dev/spes_gpu_backend.h b/bsd/dev/spes_gpu_backend.h
 new file mode 100644
 --- /dev/null
 +++ b/bsd/dev/spes_gpu_backend.h
-@@ -0,0 +1,259 @@
+@@ -0,0 +1,264 @@
 +/* spes backend for the HackiOS RedwoodGPU service.
 + * Included after the verified probe helpers in sweet_touch.c.
 + * The service lock serializes all calls after startup. Never reset a faulted GPU.
@@ -126,15 +126,20 @@ new file mode 100644
 + * waited for when it is full, never the GPU; RedwoodGPU waits on fences.
 + */
 +#define SPES_GPU_BASE 0x20000000ull
-+#define SPES_GPU_SIZE 0x10000000ull
++/* 512 MiB, L2 entries 256-511 of the first GiB: 256 MiB ran out of runs for 13.9 MB screen
++ * surfaces once the faster CPU kept more of them alive (all11: "no addresses left"). */
++#define SPES_GPU_SIZE 0x20000000ull
 +#define SPES_GPU_GRANULE 0x10000ull
++#define SPES_GPU_GRANULES (SPES_GPU_SIZE / SPES_GPU_GRANULE)
++#define SPES_GPU_TABLES (SPES_GPU_SIZE >> 21)
++#define SPES_GPU_BUFFERS 2048u
 +static struct {
 + bool ready, faulted;
 + vm_offset_t gpu, smmu, dma;
 + uint32_t context, tail, fence;
-+ uint64_t *l2, *tables[128];
-+ uint8_t used[4096];
-+ struct { uint64_t base, size, span; bool unmapped; } buffers[1024];
++ uint64_t *l2, *tables[SPES_GPU_TABLES];
++ uint8_t used[SPES_GPU_GRANULES];
++ struct { uint64_t base, size, span; bool unmapped; } buffers[SPES_GPU_BUFFERS];
 + uint32_t submissions;
 +} sg;
 +uint32_t gpu_va, gpu_log;
@@ -176,7 +181,7 @@ new file mode 100644
 +static int spes_gpu_owner(uint64_t address, uint64_t size) {
 + if (!size || address < SPES_GPU_BASE || address >= SPES_GPU_BASE + SPES_GPU_SIZE ||
 +     size > SPES_GPU_BASE + SPES_GPU_SIZE - address) return -1;
-+ for (unsigned i=0;i<1024;++i)
++ for (unsigned i=0;i<SPES_GPU_BUFFERS;++i)
 +  if (sg.buffers[i].base && address >= sg.buffers[i].base &&
 +      address - sg.buffers[i].base < sg.buffers[i].size &&
 +      size <= sg.buffers[i].size - (address - sg.buffers[i].base)) return (int)i;
@@ -185,11 +190,11 @@ new file mode 100644
 +uint64_t redwood_gpu_address(uint64_t size) {
 + if (!redwood_gpu_ready() || !size || size > SPES_GPU_SIZE || (size & 4095)) return 0;
 + uint64_t span=(size+SPES_GPU_GRANULE-1)&~(SPES_GPU_GRANULE-1);
-+ unsigned slot=1024;
-+ for(unsigned i=0;i<1024;++i) if(!sg.buffers[i].base){slot=i;break;}
-+ if(slot==1024)return 0;
++ unsigned slot=SPES_GPU_BUFFERS;
++ for(unsigned i=0;i<SPES_GPU_BUFFERS;++i) if(!sg.buffers[i].base){slot=i;break;}
++ if(slot==SPES_GPU_BUFFERS)return 0;
 + unsigned needed=(unsigned)(span/SPES_GPU_GRANULE), run=0;
-+ for(unsigned i=0;i<4096;++i){
++ for(unsigned i=0;i<SPES_GPU_GRANULES;++i){
 +  run=sg.used[i]?0:run+1;
 +  if(run!=needed)continue;
 +  unsigned first=i+1-needed;
@@ -343,11 +348,11 @@ new file mode 100644
 +    unsigned *most,uint64_t *lost,uint32_t *refused){
 + *used=0;*live=0;*largest=0;*holes=0;*lost=0;*refused=0;
 + uint64_t run=0;
-+ for(unsigned i=0;i<4096;++i){
++ for(unsigned i=0;i<SPES_GPU_GRANULES;++i){
 +  if(sg.used[i]){*used+=SPES_GPU_GRANULE;run=0;}
 +  else{if(!run)++*holes;run+=SPES_GPU_GRANULE;if(run>*largest)*largest=run;}
 + }
-+ for(unsigned i=0;i<1024;++i)if(sg.buffers[i].base)++*live;
++ for(unsigned i=0;i<SPES_GPU_BUFFERS;++i)if(sg.buffers[i].base)++*live;
 + *most=*holes;
 +}
 +void redwood_gpu_worked(uint64_t *us,uint32_t *submissions,uint32_t by[7]){
@@ -370,12 +375,12 @@ new file mode 100644
 +static bool spes_gpu_backend_start(vm_offset_t gpu,vm_offset_t smmu,uint32_t context,
 +    vm_offset_t dma,uint64_t *l2,uint32_t tail){
 + if(sg.ready || sg.faulted)return false;
-+ for(unsigned i=256;i<384;++i)if(l2[i])return false;
++ for(unsigned i=256;i<256+SPES_GPU_TABLES;++i)if(l2[i])return false;
 + sg.gpu=gpu;sg.smmu=smmu;sg.context=context;sg.dma=dma;sg.l2=l2;sg.tail=tail;
 + sg.fence=((volatile uint32_t *)(dma+0xc000))[9];
 + sg.ready=true;
 + RedwoodGPUStart();
-+ printf("SPES GPU: persistent backend ready; queued submissions, 256 MiB VA\n");
++ printf("SPES GPU: persistent backend ready; queued submissions, %llu MiB VA\n", SPES_GPU_SIZE >> 20);
 + return true;
 +}
 diff --git a/iokit/Kernel/arm/RedwoodGPU.cpp b/iokit/Kernel/arm/RedwoodGPU.cpp

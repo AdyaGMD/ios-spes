@@ -1,0 +1,197 @@
+Amplifier probe: I2C reads of register 0 at 0x64 (aw2016 LED), 0x58 and 0x5b (aw87xxx).
+
+all11 found I2C firmware with 32-bit FIFOs on SE1. SE1 is set up as the touch driver sets up
+SE2 and one byte is read from each chip; the amplifier reset GPIOs are left alone.
+
+--- a/bsd/dev/spes_amp.c
++++ b/bsd/dev/spes_amp.c
+@@ -6,7 +6,11 @@
+  * firmware and FIFOs on SE1, as the touch driver does for SE2 (bsd/dev/sweet_touch.c
+  * touch_clocks/touch_se_init): vote the SE1 clock (GCC 0x7900c bit 11, gcc-khaje.c), XO source
+  * on its RCG (0x1f278), wait for the branch, then read the SE's firmware and FIFO registers.
+- * No bus transfer, no amplifier reset is touched.
++ * With I2C firmware there (all11: proto 3, 32-bit FIFOs) the SE is set up as the touch driver
++ * sets up SE2 and register 0 is read from the aw2016 LED driver at 0x64 (not behind the
++ * amplifier resets: an answer proves the path) and from the amplifiers at 0x58 and 0x5b. The
++ * amplifier reset GPIOs are not touched: without khaje's pin-to-tile table a write could hit
++ * another pin, so a NACK from 0x58/0x5b means they are held in reset.
+  */
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+ #include <sys/param.h>
+@@ -24,6 +28,31 @@
+ #define AMP_RCG         0x1f278u        /* QUP0 S1 CMD; CFG +4, branch -4 */
+ #define AMP_SE_PA       0x04a84000u
+ 
++/* GENI registers and I2C packing as bsd/dev/sweet_touch.c (i2c-qcom-geni.c). */
++#define SE_STATUS       0x040u
++#define SE_MCLK         0x048u
++#define SE_CLK_SEL      0x07cu
++#define SE_DMA          0x258u
++#define SE_TX_LEN       0x26cu
++#define SE_RX_LEN       0x270u
++#define SE_SCL          0x278u
++#define SE_CMD          0x600u
++#define SE_CTRL         0x604u
++#define SE_IRQ          0x610u
++#define SE_IRQ_EN       0x614u
++#define SE_IRQ_CLR      0x618u
++#define SE_TX           0x700u
++#define SE_RX           0x780u
++#define SE_TX_COUNT     0x800u
++#define SE_RX_COUNT     0x804u
++#define SE_TX_WM        0x80cu
++#define SE_DONE         (1u << 0)
++#define SE_NACK         (1u << 10)
++#define SE_TX_WM_IRQ    (1u << 30)
++#define SE_ERRORS       (0x3eu | (1u << 9) | (1u << 10) | (1u << 12) | (1u << 13) | (3u << 24) | (3u << 28))
++#define SE_PACK0        0x0007f8feu
++#define SE_PACK1        0x000ffefeu
++
+ static inline uint32_t amp_rd(vm_offset_t b, uint32_t o) { return *(volatile uint32_t *)(b + o); }
+ static inline void
+ amp_wr(vm_offset_t b, uint32_t o, uint32_t v)
+@@ -45,6 +74,119 @@
+ 	return false;
+ }
+ 
++static bool
++amp_se_setup(vm_offset_t se, uint32_t rx)
++{
++	if (amp_rd(se, SE_STATUS) & 0x1001u) {
++		printf("SPES AMP: SE1 busy (%#x); no transfers\n", amp_rd(se, SE_STATUS));
++		return false;
++	}
++	amp_wr(se, 0xe18, 0);
++	amp_wr(se, 0xe1c, 0);
++	amp_wr(se, 0x644, 0);
++	amp_wr(se, SE_IRQ_CLR, 0xffffffffu);
++	amp_wr(se, 0x648, 0xffffffffu);
++	amp_wr(se, SE_DMA, 0);
++	amp_wr(se, 0x28, amp_rd(se, 0x28) | 0x7fu);
++	amp_wr(se, 0xe30, amp_rd(se, 0xe30) | 0x0fu);
++	amp_wr(se, 0x24, 0x7f);
++	amp_wr(se, 0x20, 1);
++	amp_wr(se, SE_CLK_SEL, 0);
++	amp_wr(se, SE_MCLK, (2u << 4) | 1u);
++	amp_wr(se, SE_SCL, (5u << 20) | (11u << 10) | 22u);      /* 400 kHz */
++	amp_wr(se, 0x254, 0);
++	amp_wr(se, 0x260, SE_PACK0);
++	amp_wr(se, 0x264, SE_PACK1);
++	amp_wr(se, 0x284, SE_PACK0);
++	amp_wr(se, 0x288, SE_PACK1);
++	amp_wr(se, SE_TX_WM, 0);
++	amp_wr(se, 0x810, 0);
++	amp_wr(se, 0x814, ((rx >> 16) & 0x3fu) - 1u);
++	amp_wr(se, SE_IRQ_EN, SE_DONE | SE_ERRORS | SE_TX_WM_IRQ | (3u << 26));
++	if ((amp_rd(se, SE_TX_COUNT) & 0xfffffffu) || (amp_rd(se, SE_RX_COUNT) & 0x1ffffffu)) {
++		printf("SPES AMP: inherited FIFO data; no transfers\n");
++		return false;
++	}
++	return true;
++}
++
++/* M_GENI_CMD_CANCEL, then ABORT; false if the engine does not come back idle. */
++static bool
++amp_abort(vm_offset_t se)
++{
++	amp_wr(se, SE_CTRL, 4);
++	for (unsigned i = 0; i < 1000 && !(amp_rd(se, SE_IRQ) & (1u << 4)); i++) {
++		delay(1);
++	}
++	if (!(amp_rd(se, SE_IRQ) & (1u << 4))) {
++		amp_wr(se, SE_CTRL, 2);
++		for (unsigned i = 0; i < 1000 && !(amp_rd(se, SE_IRQ) & (1u << 5)); i++) {
++			delay(1);
++		}
++	}
++	for (unsigned i = 0; i < 64 && (amp_rd(se, SE_RX_COUNT) & 0x1ffffffu); i++) {
++		(void)amp_rd(se, SE_RX);
++	}
++	amp_wr(se, SE_IRQ_CLR, 0xffffffffu);
++	return amp_wait_clear(se, SE_STATUS, 1u);
++}
++
++/*
++ * One message: a 1-byte write (stretch: keep the bus for a repeated START) or a 1-byte read.
++ * 0 done, 1 NACK, 2 other error, 3 engine stuck (stop using SE1).
++ */
++static int
++amp_msg(vm_offset_t se, uint8_t addr, bool read, uint8_t *byte)
++{
++	if (!amp_wait_clear(se, SE_STATUS, 1u)) {
++		return 3;
++	}
++	amp_wr(se, SE_IRQ_CLR, 0xffffffffu);
++	amp_wr(se, SE_TX_WM, read ? 0u : 1u);
++	amp_wr(se, read ? SE_RX_LEN : SE_TX_LEN, 1u);
++	amp_wr(se, SE_CMD, ((read ? 2u : 1u) << 27) | ((uint32_t)addr << 9) | (read ? 0u : 4u));
++	bool sent = read, got = !read;
++	for (unsigned i = 0; i < 5000; i++) {
++		uint32_t irq = amp_rd(se, SE_IRQ);
++		if (irq & SE_ERRORS) {
++			for (unsigned j = 0; j < 5000 && !(irq & SE_DONE); j++) {
++				delay(1);
++				irq = amp_rd(se, SE_IRQ);
++			}
++			int err = (irq & SE_NACK) ? 1 : 2;
++			if ((irq & SE_DONE) && !(amp_rd(se, SE_STATUS) & 1u)) {
++				amp_wr(se, SE_IRQ_CLR, irq);
++				return err;
++			}
++			return amp_abort(se) ? err : 3;
++		}
++		if (!sent && (irq & SE_TX_WM_IRQ)) {
++			amp_wr(se, SE_TX, *byte);
++			amp_wr(se, SE_TX_WM, 0);
++			sent = true;
++		}
++		if (!got && (amp_rd(se, SE_RX_COUNT) & 0x1ffffffu)) {
++			*byte = (uint8_t)amp_rd(se, SE_RX);
++			got = true;
++		}
++		if (irq & SE_DONE) {
++			amp_wr(se, SE_IRQ_CLR, irq);
++			return sent && got ? 0 : 2;
++		}
++		amp_wr(se, SE_IRQ_CLR, irq & (SE_TX_WM_IRQ | (3u << 26)));
++		delay(1);
++	}
++	return amp_abort(se) ? 2 : 3;
++}
++
++/* Register reg of the chip at addr: write the pointer, then read one byte. */
++static int
++amp_read(vm_offset_t se, uint8_t addr, uint8_t reg, uint8_t *val)
++{
++	int err = amp_msg(se, addr, false, &reg);
++	return err != 0 ? err : amp_msg(se, addr, true, val);
++}
++
+ void
+ spes_amp_init(void)
+ {
+@@ -83,7 +225,23 @@
+ 	    ((tx >> 24) & 0x3fu) == 32u && ((rx >> 24) & 0x3fu) == 32u;
+ 	printf("SPES AMP: se1 fw %#x proto %u status %#x tx %#x rx %#x: %s\n", fw, (fw >> 8) & 0xffu,
+ 	    amp_rd(se, 0x040), tx, rx,
+-	    i2c ? "I2C firmware with 32-bit FIFOs, ready for the amplifier chip-id reads" :
++	    i2c ? "I2C firmware with 32-bit FIFOs" :
+ 	    "no usable I2C firmware: the amplifiers need the SE firmware loaded first");
++	if (!i2c || !amp_se_setup(se, rx)) {
++		return;
++	}
++	static const struct { uint8_t addr; const char *what; } chips[] = {
++		{ 0x64, "aw2016 LED driver" }, { 0x58, "amplifier (reset GPIO 106)" }, { 0x5b, "amplifier (reset GPIO 35)" },
++	};
++	static const char *const how[] = { "id", "NACK (absent or held in reset)", "bus error", "engine stuck" };
++	for (unsigned i = 0; i < sizeof(chips) / sizeof(chips[0]); i++) {
++		uint8_t id = 0;
++		int err = amp_read(se, chips[i].addr, 0x00, &id);
++		printf("SPES AMP: %#x %s: reg 0 %s %#x\n", chips[i].addr, chips[i].what, how[err],
++		    err == 0 ? id : (unsigned)err);
++		if (err == 3) {
++			break;
++		}
++	}
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
