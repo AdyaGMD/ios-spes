@@ -23,7 +23,8 @@
   shim/out/spes-ios-graphics-all13.img SHA256
   c6967e1efbb1a1ec0729828aedcc4715491ad309e3d58f051e1949dba391954d;
   shim/out/spes-ios-graphics-all13bl.img (+ sweetbacklight=2) SHA256
-  5ac0b946a8f4dccb55bf676bbbfc8d14f6c351291d78c02fa38b69b50810d453. Not booted.
+  5ac0b946a8f4dccb55bf676bbbfc8d14f6c351291d78c02fa38b69b50810d453.
+  all13bl temp-booted 2026-10-25 (hash verified); all13 not booted.
 
 # all11 result: GPU address space ran out (fast, then slow); amp SE1 has I2C firmware; all12 built, 2026-10-25
 
