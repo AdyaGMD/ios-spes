@@ -13,7 +13,8 @@
 - CI 40195787941 SUCCESS: kernel xnu/out-0128 SHA256
   0f866bb5780e0ad68a9a0282615b7f1a48b0d898b3d029af9ca0a7ab126e5b48;
   image shim/out/spes-ios-graphics-all10.img (sweetpanel=1 spescpufreq=0)
-  SHA256 9e5cf9fe1fc8eb31786818246b43d0a89d1e19b67ada844ac3ba273b2b7298a8. Not booted.
+  SHA256 9e5cf9fe1fc8eb31786818246b43d0a89d1e19b67ada844ac3ba273b2b7298a8.
+  Temp-booted 2026-10-25 (hash verified).
 - Open: brightness slider (CoreBrightness + backlight-control stalls
   backboardd, 0123 keeps it off); WebKit black with sRGB (cause unknown;
   maybe MobileGestalt cache, or not the gamut at all); CPU clocks 0120
