@@ -22,7 +22,8 @@
   605243fcab4229a1e08fe907d45bef43c78ce0340aebb25683a879a69022d9e3;
   shim/out/spes-ios-graphics-all16.img (sweetpanel=1 spesamp=1
   sweetlsrestore=1) SHA256
-  386e90503440c198ca499ba289a8d2120e841242d93eadb0cc612d3d38609aee. Not booted.
+  386e90503440c198ca499ba289a8d2120e841242d93eadb0cc612d3d38609aee.
+  Temp-booted 2026-10-25 (hash verified): the restore runs on this boot.
   DO NOT boot all15 again. Boot all16 to restore the database.
 
 # Sound bus diagnosis (0132) + wallpaper LaunchServices reset (0133); all15 built, 2026-10-25
