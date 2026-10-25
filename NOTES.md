@@ -1,3 +1,47 @@
+# Wi-Fi first boot, MSA fix, keys, panel sleep, wallpaper cause, 2026-10-25
+
+- First Wi-Fi boot (spes-ios-graphics-wifi.img, kernel out-0114, modem=1
+  wifi=1), log research/spes-wifi-boot.txt (448582 B, flush #28). Patch 0099
+  works much further than anyone had tested: SMMU WLAN identity CB4 SMR5 OK;
+  PAS id 4, modem.b01 hash, init_image/mem_setup/auth_and_reset ret 0;
+  MODEM READY at 9 ms; GLINK v1, IPCRTR, QRTR HELLO, 39 services (nas, wds,
+  dms, uim, ipa, ...); pd-mapper/tftp/rmtfs served; tftp RRQ
+  image/wlanmdsp.mbn 3813748 B; WLFW service 0x45 up at 495 ms;
+  ind_register/host_cap/msa_info ok, 2 MSA regions; region 0 51900000+10000
+  secure 1: SCM assign -> 2 vmids ret -2 res 56; 0103 then refused
+  MSA_READY ("MSA validation/assignment failed (stopped)"). UI unaffected.
+- Topaz 0122 does `(void)scm_assign(addr, size, vm, sec ? 2 : 3)` and goes on
+  to MSA_READY (its WLAN then scans/joins). Patch 0110 (commit e1fbaac):
+  keep 0103's region-list validation, log a refused reassignment and send
+  MSA_READY anyway. SpesModem compile 0/1 failed.
+- Keys: the graphics builder passed sweetkeys=0, so the read-only PMIC keys
+  driver (power, vol-, vol+ via GPIO5) was off; now sweetkeys=1 (README
+  says volume was user-confirmed with it on 2026-10-21).
+- Display off: the builder passed sweetfb_stayon=1, which ignores iOS's
+  display-off requests; removed. Patch 0111 (commit b81d16b): after direct
+  scanout, display off shows one black frame instead of fading stale panel
+  memory (Topaz 0152). Opt-in sweetpanel=1: DSI0 command DMA (0x5e94000) in
+  LP mode, DCS 0x28+0x10 off / 0x11+120ms+0x29 on, brightness
+  IOMFBBrightnessLevel -> DCS 0x51 MSB first, 0..500 nits -> 1..0x7ff.
+  Active panel (ABL bootargs msm_drm.dsi_display0):
+  qcom,mdss_dsi_panel_k7_38_0c_0a_fhdp_video: OLED, bl_ctrl_dcs, max 0x7ff,
+  bl-inverted-dbv. Topaz notes its DCS commands "do not reach the panel yet
+  (video mode)", hence opt-in. Compile 0/1 failed.
+- CI40149295874 (0110 only) cancelled by CI40149642020 (0110+0111). Images
+  to build: spes-ios-graphics-wifi2.img (modem=1 wifi=1) and
+  spes-ios-graphics-wifi2-panel.img (+ sweetpanel=1).
+- Wallpaper cause found: the CRASH line's "slide" IS the shared-cache slide
+  (exception.c sweet_crash_log prints sr_slide); earlier guessing was wrong.
+  PosterBoard SIGTRAP at unslid 0x1c1778268 =
+  -[PBFPosterExtensionDataStore _stateLock_setupSwitcherConfigurationForFirstTime]+2040
+  <- _stateLock_updateExtensions:... <- executeUpdate:... <-
+  prewarmWithCompletion: <- PRSServer prewarm (XPC). Same in the fence and
+  Wi-Fi boots. Matches Topaz's "no app extensions registered, PosterBoard
+  finds no wallpaper provider". HackiOS has wallpapers; its inject_media.c
+  keeps mediaserverd alive for HEIC decode (our mediaserverd does not crash,
+  so not the gap). Next: inspect poster extensions/registration in our root.
+- Sound: still to do after Wi-Fi (user reminder).
+
 # Audio/Wi-Fi now owned here — status and plan, 2026-10-25
 
 - README updated (commit 171b509): GPU-accelerated UI ~20 fps, graphics patch
