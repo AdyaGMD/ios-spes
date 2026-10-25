@@ -18,7 +18,8 @@
   d97dba6e8e21e372284b0809e83e14c109792e85f09b7d184e1e1924276df888;
   image shim/out/spes-ios-graphics-all9.img (direct on, sweetpanel=1,
   spescpufreq=0) SHA256
-  806e09e9107fa6d8fe56fdb1ebde4f15e9f1b4aa3ec6a40a0d16c436f79d0f4a. Not booted.
+  806e09e9107fa6d8fe56fdb1ebde4f15e9f1b4aa3ec6a40a0d16c436f79d0f4a.
+  Temp-booted 2026-10-25 (hash verified).
   Tests 0122's DSI buffer move (direct UI) and start level (lock fade).
   Brightness slider still open.
 
