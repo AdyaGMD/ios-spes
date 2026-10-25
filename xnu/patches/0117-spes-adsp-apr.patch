@@ -1,0 +1,146 @@
+Sound step 2: an APR client on apr_audio_svc (spes speaks APR, not GPR): ADSP core state until
+ready, then its services and versions (as HackiOS redwood_adsp.c step 11).
+
+--- a/iokit/Kernel/arm/SpesAudio.cpp
++++ b/iokit/Kernel/arm/SpesAudio.cpp
+@@ -1204,9 +1204,127 @@
+ 		gpr_last_ask = ms();
+ 		gpr_asks++;
+ 		gpr_send(APM_MODULE_IID, APM_CMD_GET_SPF_STATE, NULL, 0);
++	}
++}
++
++/* ---------------------------------------------------------------- APR (spes) */
++
++/*
++ * spes's ADSP opens apr_audio_svc, not adsp_apps: its audio services speak APR (Linux
++ * drivers/soc/qcom/apr.c; Android q6core.c), as HackiOS redwood_adsp.c step 11 does. A packet
++ * is an 8-word header (kind, header length, version; packet length; from service/domain/port;
++ * to service/domain/port; token; opcode) and the opcode's payload. We are domain 5, the ADSP 4.
++ * Step 2 of sound: ask the core service (3) whether the audio services are up, as Android
++ * asks until the answer is 1, then which services it has in which versions.
++ */
++#define ACHAN                           "apr_audio_svc"
++#define APR_DOMAIN_ADSP                 4
++#define APR_DOMAIN_APPS                 5
++#define APR_SVC_ADSP_CORE               3
++#define APR_MSG_TYPE_SEQ_CMD            2
++#define APR_HDR_FIELD(type, bytes)      ((uint16_t)((type) << 8 | ((bytes) / 4) << 4))      /* version 0 */
++#define APR_BASIC_RSP_RESULT            0x000110e8u
++#define AVCS_GET_VERSIONS               0x00012905u
++#define AVCS_GET_VERSIONS_RSP           0x00012906u
++#define AVCS_CMD_ADSP_EVENT_GET_STATE   0x0001290cu
++#define AVCS_CMDRSP_ADSP_EVENT_GET_STATE 0x0001290du
++
++struct apr_hdr {
++	uint16_t field, size;
++	uint8_t  from_service, from_domain;
++	uint16_t from_port;
++	uint8_t  to_service, to_domain;
++	uint16_t to_port;
++	uint32_t token, opcode;
++} __attribute__((packed));
++
++static uint32_t apr_token = 0x100, apr_state = 0xFFFFFFFFu, apr_asks, apr_rxn;
++static unsigned apr_last_ask;
++static bool apr_versions_asked;
++
++static void
++apr_send(uint8_t service, uint32_t opcode, const void *payload, uint32_t len)
++{
++	uint8_t buf[sizeof(struct apr_hdr) + 256];
++	struct apr_hdr *h = (struct apr_hdr *)buf;
++
++	if (len > 256) {
++		return;
++	}
++	bzero(buf, sizeof(buf));
++	h->field = APR_HDR_FIELD(APR_MSG_TYPE_SEQ_CMD, sizeof(struct apr_hdr));
++	h->size = (uint16_t)(sizeof(struct apr_hdr) + len);
++	h->from_service = service;
++	h->from_domain = APR_DOMAIN_APPS;
++	h->to_service = service;
++	h->to_domain = APR_DOMAIN_ADSP;
++	h->token = apr_token++;
++	h->opcode = opcode;
++	if (len != 0) {
++		memcpy(buf + sizeof(struct apr_hdr), payload, len);
++	}
++	glink_send(ACHAN, buf, (uint32_t)sizeof(struct apr_hdr) + len);
++}
++
++static void
++apr_rx(const uint8_t *data, uint32_t len)
++{
++	struct apr_hdr h;
++	uint32_t w[34];
++
++	apr_rxn++;
++	if (len < sizeof(h)) {
++		LOG("t=%u.%03u apr: short packet %u B", T, len);
++		return;
+ 	}
++	memcpy(&h, data, sizeof(h));
++	uint32_t hlen = ((h.field >> 4) & 0xF) * 4, n = 0;
++	if (hlen < sizeof(h) || hlen > len) {
++		hlen = sizeof(h);
++	}
++	bzero(w, sizeof(w));
++	n = MIN((len - hlen) / 4, (uint32_t)(sizeof(w) / 4));
++	memcpy(w, data + hlen, n * 4);
++	if (h.opcode == AVCS_CMDRSP_ADSP_EVENT_GET_STATE) {
++		if (w[0] != apr_state) {
++			LOG("t=%u.%03u *** APR: ADSP audio services state = %u%s (after %u asks) ***", T, w[0],
++			    w[0] == 1 ? " READY" : "", apr_asks);
++		}
++		apr_state = w[0];
++		return;
++	}
++	if (h.opcode == AVCS_GET_VERSIONS_RSP) {
++		/* avcs_cmdrsp_get_version: build id, number of services, then {service id, version} */
++		LOG("t=%u.%03u APR: core versions: build %#x, %u services", T, w[0], w[1]);
++		for (uint32_t i = 0; i < w[1] && 2 + 2 * i + 1 < n; i++) {
++			LOG("t=%u.%03u APR:   service %#x version %#x", T, w[2 + 2 * i], w[3 + 2 * i]);
++		}
++		return;
++	}
++	if (apr_rxn <= 32) {
++		LOG("t=%u.%03u apr rx %u B: svc %u/%u -> %u/%u token %x opcode %08x payload %08x %08x", T, len,
++		    h.from_service, h.from_domain, h.to_service, h.to_domain, h.token, h.opcode, w[0], w[1]);
++	}
+ }
+ 
++static void
++apr_poll(void)
++{
++	if (!glink_chan_up(ACHAN) || apr_asks >= 240) {
++		return;
++	}
++	if (apr_state != 1) {
++		if (apr_asks == 0 || ms() - apr_last_ask >= 500) {
++			apr_last_ask = ms();
++			apr_asks++;
++			apr_send(APR_SVC_ADSP_CORE, AVCS_CMD_ADSP_EVENT_GET_STATE, NULL, 0);
++		}
++	} else if (!apr_versions_asked) {
++		apr_versions_asked = true;
++		apr_send(APR_SVC_ADSP_CORE, AVCS_GET_VERSIONS, NULL, 0);
++	}
++}
++
+ /* ---------------------------------------------------------------- thread */
+ 
+ static void
+@@ -1252,10 +1370,12 @@
+ 	}
+ 	glink_register(QCHAN, qrtr_rx);
+ 	glink_register(GCHAN, gpr_rx);
++	glink_register(ACHAN, apr_rx);              /* spes: the ADSP's audio services speak APR */
+ 	for (;;) {
+ 		bool busy = glink_poll();
+ 		qrtr_poll();
+ 		gpr_poll();
++		apr_poll();
+ 		if (*adsp_state & 1) {
+ 			LOG("t=%u.%03u *** ADSP FATAL (slave-kernel %08x) ***", T, *adsp_state);
+ 			crash_reason();
