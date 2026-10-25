@@ -1,3 +1,34 @@
+# all29 result: WALLPAPERS WORK; video crash and missing audio node found; 0153, all30 CI building, 2026-10-25
+
+- User (all29): wallpapers work (0151 AMFI 0x60 was the cause); the red
+  gradient lock wallpaper (seen since the first UI boot, 2026-10-24) still
+  shows; some library thumbnails look glitched; mediaserverd crashed when
+  a YouTube video played. Log research/spes-all29-boot.txt (1607191 B,
+  flush #123).
+- Video (observed, symbolicated): mediaserverd NSInvalidArgumentException
+  "-[__NSCFNumber objectForKey:]" in VideoToolbox
+  FigGetAlignmentForIOSurfaceOutputToDisplayService <- FPSupport_Copy
+  DestinationPixelBufferAttributesWithIOSurfaceSupport <- itemfig_create
+  RenderTriplesForVideo: it reads PlaneBaseAlignmentLinear from AppleCLCD
+  "DisplayPipePlaneBaseAlignment" (we set a number since 0046).
+  DisplayPipeStrideRequirements (StrideLinearHorizontal) we do not set:
+  default used.
+- Sound (observed): "SpesAudio: /dev/redwood-audio: not created" (line 73,
+  spes_audio_init before devfs); stream opened at t=5.4; mediaserverd
+  loaded RedwoodAudio: "the speaker is with the HAL (/dev/redwood-audio:
+  No such file or directory)". The plug-in opens the node only once.
+- Posters (observed): exec of every poster extension (Collections, Emoji,
+  Gradient, Pride, Unity, Extragalactic, PhotosPosterProvider) and 12x
+  AegirPoster, each AegirPoster aborting (uncaught exception in a
+  FBSSerialQueue block; reason not captured). iOSPlus10 also has
+  AegirPoster failing (nil buffer) under Metal. Guess: glitched
+  thumbnails = Metal/CoreImage-rendered posters without Metal.
+- Commit 465ee69, patch 0153: DisplayPipePlaneBaseAlignment =
+  {PlaneBaseAlignmentLinear: 64}; SpesAudio thread retries
+  devfs_make_node every 100 ms (<= 60 s) before booting the ADSP.
+  Compile-check OK. CI 40246105110 running. all30 plan: no sweetlsreset;
+  sweetnull/sweetscan add AegirPoster and mediaserverd.
+
 # all29 temp-booted: amps + AMFI 0x60 + stream + RedwoodAudio.driver installed, 2026-10-25
 
 - all28 log research/spes-all28-boot.txt: "SPES AMP: 0x58 on: writes 0/0,
