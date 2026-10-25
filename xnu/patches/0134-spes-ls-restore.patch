@@ -1,0 +1,65 @@
+LaunchServices: sweetlsrestore=1 puts the .bak databases back; a reset never overwrites a .bak.
+
+all15: both stores moved aside, but lsd did not finish rebuilding in 9 minutes and SpringBoard
+waited for it in _LSContextInitCommon (CCSModuleRepository -> LSApplicationRecord) at the Apple
+logo. Every later boot would wait the same way, and a second reset would have renamed the
+partial new database over the good backup.
+
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -14588,6 +14588,11 @@
+  * _stateLock_setupSwitcherConfigurationForFirstTime] and there is no wallpaper. HackiOS has a
+  * fresh /private/var every boot, so its database is always new. The files are renamed to .bak,
+  * not removed; a rename that finds nothing (already moved) is reported and harmless.
++ *
++ * Here lsd did not finish rebuilding in 9 minutes and SpringBoard waited for it in
++ * _LSContextInitCommon at the Apple logo (all15). So a .bak is never overwritten (a second
++ * reset would have replaced the good database with the partial one), and boot-arg
++ * sweetlsrestore=1 renames the .bak files back over whatever lsd left.
+  */
+ void sweet_ls_reset(void);
+ void
+@@ -14599,17 +14604,35 @@
+ 		"/private/var/mobile/Containers/Data/InternalDaemon/E440478E-94EE-4C07-A184-35F73711651B/"
+ 		"Library/Caches/SystemDataOnly-com.apple.LaunchServices-4035-v2.csstore",
+ 	};
+-	int on = 0;
+-	if (!PE_parse_boot_argn("sweetlsreset", &on, sizeof(on)) || on != 1) {
++	int reset = 0, restore = 0;
++	(void)PE_parse_boot_argn("sweetlsreset", &reset, sizeof(reset));
++	(void)PE_parse_boot_argn("sweetlsrestore", &restore, sizeof(restore));
++	if (reset != 1 && restore != 1) {
+ 		return;
+ 	}
+ 	for (unsigned i = 0; i < sizeof(stores) / sizeof(stores[0]); i++) {
+-		char to[256];
+-		snprintf(to, sizeof(to), "%s.bak", stores[i]);
+-		int err = renameat_internal(vfs_context_kernel(), AT_FDCWD, CAST_USER_ADDR_T(stores[i]),
+-		    AT_FDCWD, CAST_USER_ADDR_T(to), UIO_SYSSPACE, 0);
+-		printf("SWEET LS: %s -> .bak: %s (%d)\n", strrchr(stores[i], '/') + 1,
+-		    err == 0 ? "moved aside, lsd rebuilds it" : err == ENOENT ? "not there" : "failed", err);
++		char bak[256];
++		snprintf(bak, sizeof(bak), "%s.bak", stores[i]);
++		vnode_t vp = NULLVP;
++		bool have_bak = vnode_lookup(bak, 0, &vp, vfs_context_kernel()) == 0;
++		if (vp != NULLVP) {
++			vnode_put(vp);
++		}
++		const char *name = strrchr(stores[i], '/') + 1;
++		int err;
++		if (restore == 1) {
++			err = have_bak ? renameat_internal(vfs_context_kernel(), AT_FDCWD, CAST_USER_ADDR_T(bak),
++			    AT_FDCWD, CAST_USER_ADDR_T(stores[i]), UIO_SYSSPACE, 0) : ENOENT;
++			printf("SWEET LS: %s.bak -> back: %s (%d)\n", name,
++			    err == 0 ? "restored" : err == ENOENT ? "no .bak" : "failed", err);
++		} else if (have_bak) {
++			printf("SWEET LS: %s: a .bak exists, not moved (it would replace the backup)\n", name);
++		} else {
++			err = renameat_internal(vfs_context_kernel(), AT_FDCWD, CAST_USER_ADDR_T(stores[i]),
++			    AT_FDCWD, CAST_USER_ADDR_T(bak), UIO_SYSSPACE, 0);
++			printf("SWEET LS: %s -> .bak: %s (%d)\n", name,
++			    err == 0 ? "moved aside, lsd rebuilds it" : err == ENOENT ? "not there" : "failed", err);
++		}
+ 	}
+ }
+ #endif
