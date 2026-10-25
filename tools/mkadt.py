@@ -56,7 +56,12 @@ def d22ap_product(path=D22AP_ADT):
     root, _ = adt.parse(open(path, 'rb').read())
     for c in root.children:
         if dict((k, v) for k, f, v in c.props).get('name') == b'product\0':
-            return [(k, v) for k, f, v in c.props if not f and k not in ('name', 'AAPL,phandle')]
+            # The iPhone X panel is P3; with it MobileGestalt says
+            # HasExtendedColorDisplay and WebKit draws page tiles in ten-bit
+            # formats that come out black here (HackiOS loader.c). The panel
+            # and framebuffer are sRGB.
+            return [(k, b'sRGB\0' if k == 'artwork-display-gamut' else v)
+                    for k, f, v in c.props if not f and k not in ('name', 'AAPL,phandle')]
     raise SystemExit(f'{path}: no /product node')
 
 u32 = lambda *v: struct.pack('<%dI' % len(v), *v)
