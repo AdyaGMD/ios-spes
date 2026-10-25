@@ -20,7 +20,7 @@
   ~15 min (rebuild slow vs stuck), samples every 120 s from 90 s.
   Restore image shim/out/spes-ios-graphics-all17r.img (sweetlsrestore=1)
   SHA256 d1ea9511a3a7e9644b66014a0c8762cd114368c86221010451d73dbd258d33d9.
-  Neither booted.
+  all17ls temp-booted 2026-10-25 (hash verified); all17r not booted.
 
 # all16 restored the LaunchServices database; all17 built (amp reset pulse), 2026-10-25
 
