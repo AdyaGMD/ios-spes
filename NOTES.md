@@ -1,3 +1,20 @@
+# all7p3 result: still black, so the gamut is not the cause; all7nodirect built, 2026-10-25
+
+- User on all7p3 (P3 restored): "same issue". Log
+  research/spes-all7p3-boot.txt (294675 B, flush #12): frames 1-4 shown
+  directly from pool slots, boot display off -> "panel display off, sleep
+  in: done", display on -> "panel sleep out, display on: done"; afterwards
+  black; framebuffer selector traffic otherwise matches all5.
+- Reading (guess): during wake the screen still scans panel memory (boot
+  text visible while the level ramps), then the first iOS frame is flipped
+  in directly from a pool slot and it is black. In all5 (no panel
+  commands) direct pool scanout worked. Suspect: DCS sleep in/out (or the
+  DSI command DMA in video mode) leaves MDP/DSI unable to show pool slots.
+- Test image all7nodirect = all7 (sRGB) + sweetfb_direct=0 (CPU copies
+  each frame into panel memory): shim/out/spes-ios-graphics-all7nodirect.img
+  SHA256 96bcf43a6ce7b8e2dd18df2fb8a163a7463a83f43ec96db5ae49c419e09cb106.
+  UI visible (slower) -> direct scanout after panel commands is the fault.
+
 # all7 result: no reset (0121 works), fades work, but the iOS UI is black, 2026-10-25
 
 - User on all7: screen black; power press fades to the boot console text
