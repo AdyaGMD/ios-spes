@@ -1,3 +1,27 @@
+# all8 result: UI then console text, frozen; backboardd stalls with backlight-control; 0123, all9 built, 2026-10-25
+
+- User on all8: "the ui appeared, then the logs show again and it doesn't
+  seem like that's gonna change no matter what i press". Log
+  research/spes-all8-boot.txt (277893 B, flush #17): no panic; kernel alive
+  (touch, keys, Wi-Fi scans to the end). "buffer 0x5cefc000", "panel level
+  0x3ff: done" at start; frames 1-2 shown directly; boot display off/on
+  with panel commands done.
+- Observed: backboardd's backlight-control match now "-> 1 found"
+  (AppleCLCD), then backboardd almost stops drawing: only 7 redwood-gl
+  frames all boot, RedwoodGPU 4 submissions in 35 s, 2 in 10 s; still no
+  "SWEET FB: brightness" (CoreBrightness never set a level). The console
+  text is panel memory shown after the processor-copied wake frame.
+- Guess: CoreBrightness given a backlight service waits on something
+  AppleCLCD doesn't provide, and that stalls backboardd's rendering.
+- Commit 0123: backlight-control only with sweetbacklight=1 (default off).
+  CI 40194466363 SUCCESS: kernel xnu/out-0127 SHA256
+  d97dba6e8e21e372284b0809e83e14c109792e85f09b7d184e1e1924276df888;
+  image shim/out/spes-ios-graphics-all9.img (direct on, sweetpanel=1,
+  spescpufreq=0) SHA256
+  806e09e9107fa6d8fe56fdb1ebde4f15e9f1b4aa3ec6a40a0d16c436f79d0f4a. Not booted.
+  Tests 0122's DSI buffer move (direct UI) and start level (lock fade).
+  Brightness slider still open.
+
 # all7nodirect result: UI shows; direct pool scanout breaks after DSI fetch from the pool; 0122, all8 built, 2026-10-25
 
 - User on all7nodirect: "ios screen shows", but on a power press the
