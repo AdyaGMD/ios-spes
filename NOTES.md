@@ -1,3 +1,22 @@
+# all6 result: early reset (no panic flushed); bisect images built, 2026-10-25
+
+- User: "it rebooted so ig it crashed" (template report unfilled). Log
+  research/spes-all6-boot.txt is only 93177 B, flush #1: ends ~4 s into
+  userspace (Wi-Fi scan, mediaserverd AKS); no panic text, so the reset
+  came before the next 10 s flush.
+- Observed: "SPES CPUFREQ: silver: 7 states, perf state 4 (1516 MHz) -> 6
+  (1900 MHz)"; "gold: 7 states, perf state 0 (300 MHz) -> 6 (2400 MHz)",
+  both read back 6. "SWEET FB: DSI0 ctrl 0x1f7: panel commands on". No
+  "SWEET FB: brightness" / "panel level" line before the log ends.
+- Guess (not proven): Gold 300 -> 2400 MHz at once (0120) is the likeliest
+  cause; sweetpanel=1 DSI access the other candidate.
+- Bisect images, same kernel xnu/out-0124:
+  shim/out/spes-ios-graphics-all6nocpu.img (sweetpanel=1 spescpufreq=0)
+  SHA256 4831ff4390a7b61b10c122252c0b3a7a509e1ab99803d8c6f58e7b87aee82b20;
+  shim/out/spes-ios-graphics-all6nopanel.img (cpufreq on, no sweetpanel)
+  SHA256 72af85d2045b3447711ce29db7f2b6b26bab40bca8ac55c9c12c56196ba044d2.
+  Boot all6nocpu first. Not booted.
+
 # all5 result: no GPU crash/freeze; brightness, sound, WebKit open; 0119 panel fade, 2026-10-25
 
 - User on all5: "gpu didnt crash anymore"; Wi-Fi works; brightness slider
