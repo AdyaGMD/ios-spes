@@ -1,0 +1,44 @@
+A copied frame that copied nothing leaves the pipe where it is.
+
+Frames without a layer (the wake redraw, CoreAnimation's lock fade) went down the copy path,
+copied nothing, and still pointed VIG0 at panel memory: the boot console text faded in and out
+on every power press (all9). Panel memory is shown only when a layer was copied into it or is
+the panel surface itself.
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -646,6 +646,7 @@
+ 		return true;
+ 	}
+ 
++	bool shown = false;     /* panel memory now holds something of this frame */
+ 	for (uint32_t layer = 0; layer < SWEET_FB_LAYERS; layer++) {
+ 		uint32_t id = get32(rec, 0x54 + 4 * layer);
+ 		const uint8_t *a = rec + 0x64 + 16 * layer;
+@@ -665,6 +666,9 @@
+ 			    s ? s->pixelFormat : 0, s ? s->bytesPerRow : 0, sx, sy, get32(a, 8),
+ 			    get32(a, 12), dx, dy, w, h);
+ 		}
++		if (s == fSurface) {
++			shown = true;
++		}
+ 		if (s == NULL || s == fSurface) {
+ 			continue;
+ 		}
+@@ -717,9 +721,15 @@
+ 				    (const void *)(src + s->offset + (uint64_t)(sy + y) * s->bytesPerRow + (uint64_t)sx * 4),
+ 				    (size_t)w * 4);
+ 			}
++			shown = true;
+ 		}
+ 	}
+-	if (fDirect && fScanPhys != fBootSrc) {
++	/*
++	 * A frame with no layer (the wake redraw, CoreAnimation's own lock fade) copies nothing:
++	 * pointing the pipe at panel memory then showed the boot console text (all9). The pipe
++	 * keeps what it shows: the last direct frame, or black while the display wakes.
++	 */
++	if (fDirect && fScanPhys != fBootSrc && shown) {
+ 		scanFrom(fBootSrc, fBootStride, NULL);  /* copied into panel memory: show that again */
+ 	}
+ 	if (fDirect && ++fCopiedFrames <= 4) {
