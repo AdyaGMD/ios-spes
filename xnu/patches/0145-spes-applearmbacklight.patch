@@ -1,0 +1,223 @@
+Brightness: AppleARMBacklight as ios-sailfish 0168 has it (sweetbacklight=2).
+
+CoreBrightness takes the backlight-control service that conforms to AppleARMBacklight, reads
+IODisplayParameters brightness {min, max, value} and sets {brightness, FadePeriod,
+backlight-level}. Our earlier service had another class and nits keys and backboardd stalled
+(all13bl, all14bl). 0..255 maps onto the panel's DCS 0x51 1..0x7ff, faded every 16 ms on its
+own work loop, and becomes the level the lock fade starts from.
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -182,20 +182,37 @@
+ OSDefineMetaClassAndStructors(IOAcceleratorES, IOService);
+ 
+ /*
+- * The backlight CoreBrightness drives (BrightnessControl's BCAppleBacklightBrtControl): a
+- * service of its own that says backlight-control, gives its range in nits and is told a
+- * brightness through setProperties. backlight-control on AppleCLCD itself made QuartzCore take
+- * the framebuffer for one with frame-synchronous brightness and backboardd stopped drawing
+- * (all8). Opt-in (sweetbacklight=2) until a boot shows what QuartzCore does with this one;
+- * every property set on it is logged, and a nits value goes to the panel.
++ * Panel brightness for CoreBrightness (backboardd), as ios-sailfish 0168 does it: CoreBrightness
++ * takes the service with backlight-control = true that conforms to AppleARMBacklight, reads min
++ * and max from IODisplayParameters and sets {brightness = ceil(level * (max - min)) + min,
++ * FadePeriod = seconds as 16.16, backlight-level} with IORegistryEntrySetCFProperties. 0..255 is
++ * mapped onto the panel's DCS 0x51 range (1..0x7ff); the fade is stepped here every 16 ms on its
++ * own work loop. Our first tries (backlight-control on AppleCLCD, then a service of our own class
++ * with nits keys) stalled backboardd (all8, all13bl, all14bl): the wrong class and no
++ * IODisplayParameters. Opt-in with sweetbacklight=2.
+  */
+-class SweetBacklight : public IOService {
+-	OSDeclareDefaultStructors(SweetBacklight);
++#define SWEET_BL_MAX            255
++#define SWEET_BL_STEP_MS        16
++
++class AppleARMBacklight : public IOService {
++	OSDeclareDefaultStructors(AppleARMBacklight);
++
++	IOWorkLoop         *fWL;
++	IOTimerEventSource *fFade;
++	bool                fKnown;
++	uint32_t            fLevel, fFrom, fTo, fLogged;
++	uint64_t            fStart, fPeriod;        /* abs time */
++
++	static void fadeStep(OSObject *owner, IOTimerEventSource *sender);
++	void apply(uint32_t level);
++	void publish(uint32_t level);
++
+ public:
+ 	AppleCLCD *fFB;
++	bool startBacklight(void);
+ 	IOReturn setProperties(OSObject *properties) APPLE_KEXT_OVERRIDE;
+ };
+-OSDefineMetaClassAndStructors(SweetBacklight, IOService);
++OSDefineMetaClassAndStructors(AppleARMBacklight, IOService);
+ 
+ OSDefineMetaClassAndStructors(AppleCLCD, IOMobileFramebuffer);
+ 
+@@ -380,19 +397,13 @@
+ 	OSSafeReleaseNULL(accel);
+ 	int backlight = 0;
+ 	(void)PE_parse_boot_argn("sweetbacklight", &backlight, sizeof(backlight));
+-	SweetBacklight *bl = (backlight == 2 && fDsi != NULL) ? OSTypeAlloc(SweetBacklight) : NULL;
+-	if (bl != NULL && bl->init()) {
++	AppleARMBacklight *bl = (backlight == 2 && fDsi != NULL) ? OSTypeAlloc(AppleARMBacklight) : NULL;
++	if (bl != NULL && bl->init() && bl->attach(this)) {
+ 		bl->fFB = this;
+-		bl->setName("backlight");
+-		bl->setProperty("backlight-control", kOSBooleanTrue);
+-		bl->setProperty("BuiltIn", kOSBooleanTrue);
+-		bl->setProperty("MaxNits", 500ULL, 32);
+-		bl->setProperty("MinNits", 2ULL, 32);
+-		bl->setProperty("user-accessible-max-nits", 500ULL, 32);
+-		bl->setProperty("brightness-nits", 250ULL, 32);
+-		if (bl->attach(this)) {
+-			bl->registerService();
+-			IOLog("SWEET FB: backlight service published (sweetbacklight=2)\n");
++		if (!bl->startBacklight()) {
++			IOLog("SWEET BL: setup failed\n");
++		} else {
++			IOLog("SWEET BL: AppleARMBacklight published (sweetbacklight=2)\n");
+ 		}
+ 	}
+ 	OSSafeReleaseNULL(bl);
+@@ -401,50 +412,104 @@
+ 	return true;
+ }
+ 
+-IOReturn
+-SweetBacklight::setProperties(OSObject *properties)
++void
++AppleARMBacklight::publish(uint32_t level)
+ {
+-	static uint32_t logged;
++	OSDictionary *b = OSDictionary::withCapacity(3);
++	OSDictionary *p = OSDictionary::withCapacity(1);
++	if (b != NULL && p != NULL) {
++		OSNumber *n;
++		n = OSNumber::withNumber(0ULL, 32); b->setObject("min", n); OSSafeReleaseNULL(n);
++		n = OSNumber::withNumber(SWEET_BL_MAX, 32); b->setObject("max", n); OSSafeReleaseNULL(n);
++		n = OSNumber::withNumber(level, 32); b->setObject("value", n); OSSafeReleaseNULL(n);
++		p->setObject("brightness", b);
++		setProperty("IODisplayParameters", p);
++	}
++	OSSafeReleaseNULL(b);
++	OSSafeReleaseNULL(p);
++}
++
++bool
++AppleARMBacklight::startBacklight(void)
++{
++	fWL = IOWorkLoop::workLoop();
++	fFade = IOTimerEventSource::timerEventSource(this, &AppleARMBacklight::fadeStep);
++	if (fWL == NULL || fFade == NULL || fWL->addEventSource(fFade) != kIOReturnSuccess) {
++		return false;
++	}
++	fLevel = (fFB->fPanelLevel * SWEET_BL_MAX + 0x3ff) / 0x7ff;
++	setProperty("backlight-control", true);
++	publish(fLevel);
++	registerService();
++	return true;
++}
++
++/* fWL gate held. 0..255 -> the panel's 1..0x7ff, kept as the level the lock fade starts from. */
++void
++AppleARMBacklight::apply(uint32_t level)
++{
++	if (fKnown && level == fLevel) {
++		return;
++	}
++	uint32_t panel = level == 0 ? 1 : (level * 0x7ff + SWEET_BL_MAX / 2) / SWEET_BL_MAX;
++	fFB->fPanelLevel = panel;
++	if (!fFB->fPowerOff) {
++		fFB->setPanelLevel(panel);
++	}
++	fKnown = true;
++	fLevel = level;
++}
++
++void
++AppleARMBacklight::fadeStep(OSObject *owner, IOTimerEventSource *sender)
++{
++	AppleARMBacklight *bl = (AppleARMBacklight *)owner;
++	uint64_t t = mach_absolute_time() - bl->fStart;
++	uint32_t level = bl->fTo;
++	if (t < bl->fPeriod) {
++		level = (uint32_t)((int64_t)bl->fFrom +
++		    ((int64_t)bl->fTo - (int64_t)bl->fFrom) * (int64_t)t / (int64_t)bl->fPeriod);
++	}
++	bl->apply(level);
++	if (level != bl->fTo) {
++		sender->setTimeoutMS(SWEET_BL_STEP_MS);
++	}
++}
++
++IOReturn
++AppleARMBacklight::setProperties(OSObject *properties)
++{
+ 	OSDictionary *d = OSDynamicCast(OSDictionary, properties);
+-	if (d == NULL || fFB == NULL) {
++	if (d == NULL) {
+ 		return kIOReturnBadArgument;
+ 	}
+-	if (logged++ < 24) {
+-		OSSerialize *ser = OSSerialize::withCapacity(256);
++	OSNumber *b = OSDynamicCast(OSNumber, d->getObject("brightness"));
++	OSNumber *f = OSDynamicCast(OSNumber, d->getObject("FadePeriod"));
++	if (fLogged < 40) {
++		fLogged++;
+ 		char name[32];
+ 		proc_selfname(name, sizeof(name));
+-		IOLog("SWEET FB: backlight set by %s: %.200s\n", name, ser != NULL && d->serialize(ser) ? ser->text() : "?");
+-		OSSafeReleaseNULL(ser);
++		OSNumber *l = OSDynamicCast(OSNumber, d->getObject("backlight-level"));
++		IOLog("SWEET BL: %s sets %u keys: brightness %d FadePeriod %d backlight-level %d\n", name,
++		    d->getCount(), b ? (int)b->unsigned32BitValue() : -1, f ? (int)f->unsigned32BitValue() : -1,
++		    l ? (int)l->unsigned32BitValue() : -1);
+ 	}
+-	/* A number under a key about nits or brightness, or a { value = n } under one. */
+-	OSNumber *n = NULL;
+-	OSCollectionIterator *it = OSCollectionIterator::withCollection(d);
+-	OSSymbol *key;
+-	while (it != NULL && n == NULL && (key = OSDynamicCast(OSSymbol, it->getNextObject())) != NULL) {
+-		const char *k = key->getCStringNoCopy();
+-		if (strnstr(k, "nits", 64) == NULL && strnstr(k, "rightness", 64) == NULL && strcmp(k, "value") != 0) {
+-			continue;
+-		}
+-		OSObject *v = d->getObject(key);
+-		n = OSDynamicCast(OSNumber, v);
+-		if (n == NULL && OSDynamicCast(OSDictionary, v) != NULL) {
+-			n = OSDynamicCast(OSNumber, ((OSDictionary *)v)->getObject("value"));
+-		}
+-	}
+-	OSSafeReleaseNULL(it);
+-	if (n == NULL) {
++	if (b == NULL) {
+ 		return kIOReturnSuccess;
+ 	}
+-	uint64_t v = n->unsigned64BitValue();
+-	setProperty("brightness-nits", v > 0xffff ? v >> 16 : v, 32);
+-	OSDictionary *level = OSDictionary::withCapacity(1);
+-	OSNumber *nits = OSNumber::withNumber(v > 0xffff ? v : v << 16, 32);
+-	if (level != NULL && nits != NULL) {
+-		level->setObject("IOMFBBrightnessLevel", nits);
+-		fFB->setProperties(level);
+-	}
+-	OSSafeReleaseNULL(nits);
+-	OSSafeReleaseNULL(level);
++	int32_t v = (int32_t)b->unsigned32BitValue();
++	uint32_t to = v < 0 ? 0 : MIN((uint32_t)v, SWEET_BL_MAX);
++	uint64_t ms = f != NULL ? ((uint64_t)f->unsigned32BitValue() * 1000) >> 16 : 0;
++	fWL->runActionBlock(^IOReturn (void) {
++		fFade->cancelTimeout();
++		fFrom = fLevel;
++		fTo = to;
++		fStart = mach_absolute_time();
++		nanoseconds_to_absolutetime(MIN(ms, 5000ULL) * NSEC_PER_MSEC, &fPeriod);
++		fadeStep(this, fFade);
++		return kIOReturnSuccess;
++	});
++	publish(to);
+ 	return kIOReturnSuccess;
+ }
+ 

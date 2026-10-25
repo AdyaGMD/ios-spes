@@ -62,7 +62,14 @@ def d22ap_product(path=D22AP_ADT):
             # and framebuffer are sRGB.
             # MKADT_GAMUT=P3 keeps the iPhone's value (a test).
             gamut = os.environ.get('MKADT_GAMUT', 'sRGB').encode() + b'\0'
-            return [(k, gamut if k == 'artwork-display-gamut' else v)
+            # MKADT_OLED=0 (a test): report an LCD, so iOS takes the
+            # AppleARMBacklight path the iPhone 8 userland uses (ios-sailfish)
+            # instead of OLED frame-synchronous brightness.
+            oled = os.environ.get('MKADT_OLED')
+            over = {'artwork-display-gamut': gamut}
+            if oled is not None:
+                over['oled-display'] = u32(int(oled))
+            return [(k, over.get(k, v))
                     for k, f, v in c.props if not f and k not in ('name', 'AAPL,phandle')]
     raise SystemExit(f'{path}: no /product node')
 
