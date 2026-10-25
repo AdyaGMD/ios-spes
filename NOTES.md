@@ -1,3 +1,36 @@
+# all10 result: fades fixed; all11 / all11bl built (Safari diag, backlight service, CPU step, amp probe), 2026-10-25
+
+- User on all10: "okay fixed" (0124: lock/wake fades show the UI). Next
+  asked: brightness slider, Safari black pages, sound, faster CPU clocks.
+  Log research/spes-all10-boot.txt (369032 B, flush #16; Safari not opened).
+- Safari (observed): no WebKit surface line in any log: only the first 64
+  creates + failures are logged and WebKit's creates do not fail; WebContent
+  launched 3x in all5 with no CRASH line. 0125 logs WebKit/MobileSafari
+  creates and port lookups (128 lines) and "EXIT name[pid] status ..
+  reason ns .. code .." from proc_exit. Diagnostic only.
+- Brightness (from the shared cache strings): BrightnessControl's
+  BCAppleBacklightBrtControl drives a separate backlight-control service
+  (MaxNits, MinNits, MaxNitsPanel, user-accessible-max-nits,
+  backlight-marketing-table, brightness-nits / value); QuartzCore also
+  matches backlight-control next to DeviceSupportsFrameSynchronousBrightness
+  / SynchronousBrightnessTransactions (likely why all8 stalled). 0126:
+  SweetBacklight child of AppleCLCD with those range properties, logs
+  "SWEET FB: backlight set by ..: <dict>", forwards a nits value as
+  IOMFBBrightnessLevel; only with sweetbacklight=2.
+- CPU (0127): cpufreq-hw vote climbs one LUT row per 10 ms.
+- Sound (0128, spesamp=1): live DT: aw87xxx_pa at 0x5b (reset GPIO 35) and
+  0x58 (reset GPIO 106) on i2c@4a84000 (QUP0 SE1). Probe votes GCC
+  0x7900c bit 11 (+ wrapper bits), XO on RCG 0x1f278, waits for the branch,
+  logs "SPES AMP: se1 fw .. proto ..": I2C firmware present or not. No
+  transfers yet.
+- All local syntax checks OK. CI 40197400567 SUCCESS: kernel xnu/out-0129
+  SHA256 11c1c882d7a4902d905e91eba086e0d8e9711a800598a274aa29e9037e9ab812.
+  shim/out/spes-ios-graphics-all11.img (sweetpanel=1 spesamp=1, CPU vote
+  on) SHA256 e64895fc45afd16e38eac5c22674e4bf4ddc4d793d4b80d076d904f855689d4f;
+  shim/out/spes-ios-graphics-all11bl.img (+ sweetbacklight=2, spescpufreq=0)
+  SHA256 4f305127ec9c89da9b82bcad3706b9582178e91a70e37ded459ed295af93d6fa.
+  Not booted. Boot all11 first (CPU + Safari log + amp), then all11bl.
+
 # all9 result: UI stays up at speed; fades show console text; 0124, all10 built, 2026-10-25
 
 - User on all9: "works again"; brightness slider does nothing; the
