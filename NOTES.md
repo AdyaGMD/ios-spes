@@ -1,3 +1,26 @@
+# all22 result: L14 on, clocks given, block 3 vote refused; console output not captured; all23 built, 2026-10-25
+
+- Log research/spes-all22-boot.txt (261210 B, flush #6); user report template
+  unfilled (booted).
+- Codec (observed): "SPES RPM: request set 0/1 0x616f646c/14 uv 1800000 /
+  swen 1: acked" (all four); "codec: L14 on"; "AFE 000100f4 -> status 0x1"
+  then "LPASS core HW vote given, handle 23"; both AFE 000100f3 status 0;
+  "votes 1/2, clocks 2/2, failures 1: stopping before any register".
+  spes DT has only vote_lpass_audio_hw (block 4); block 3 is refused.
+- Wallpaper: PosterBoard and pkd exec'd with the new plist, but nothing of
+  theirs in the log: user-space /dev/console writes go to the screen console
+  (muted by sweetfb_noconsole), not the persistent log.
+- Commit a1ebca0, patch 0143: codec votes block 4 only and needs 1 vote;
+  cnwrite (bsd/dev/arm/cons.c) copies /dev/console writes of sweetnull
+  processes to the log as "|name| text" (sweet_console_tee in mem.c).
+- CI 40217181129 SUCCESS: kernel xnu/out-0143 SHA256
+  4b47bab474facd48c329feaa4612cbe9e35073346d51ff0b8b260a7476151da8;
+  shim/out/spes-ios-graphics-all23.img (spescodec=1,
+  sweetnull=backboardd,SpringBoard,PosterBoard,pkd) SHA256
+  3080cc0ee490c8ef99fe72e6c685bd673b3a3619824b56ebd0c2ac6847aff953. Not booted.
+  Risk: stage 2 touches LPASS registers for the first time (votes/clocks given
+  first). A hang there = bus hang; a forced reboot recovers.
+
 # Audio stage 1 built (0142, all22); root snapshot for the PosterBoard logging change, 2026-10-25
 
 - Commit b4daee4, patch 0142: sweet_touch.c keeps the RPM GLINK link after
