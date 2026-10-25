@@ -1,0 +1,31 @@
+CPU clocks: the cpufreq-hw vote climbs one LUT row every 10 ms instead of jumping.
+
+--- a/bsd/dev/spes_cpufreq.c
++++ b/bsd/dev/spes_cpufreq.c
+@@ -8,11 +8,13 @@
+  * Register layout as Linux's qcom-cpufreq-hw (v1): enable 0x0, LUT 0x110 in 32-byte rows
+  * (bits 31:30 clock source, 7:0 multiplier of the 19.2 MHz XO; source 0 = 300 MHz), perf
+  * state 0x920. The table ends at the first row that repeats the previous frequency. The
+- * limits hardware (LMh) still throttles on temperature by itself.
++ * limits hardware (LMh) still throttles on temperature by itself. The vote climbs one row
++ * every 10 ms instead of jumping (Gold sat at 300 MHz, row 0).
+  */
+ #if defined(ARM64_BOARD_CONFIG_SWEET)
+ #include <sys/param.h>
+ #include <sys/systm.h>
++#include <kern/clock.h>
+ #include <machine/machine_routines.h>
+ #include <pexpert/pexpert.h>
+ 
+@@ -68,7 +70,10 @@
+ 	}
+ 	uint32_t was = cf_rd(b, CF_PERF_STATE);
+ 	uint32_t was_khz = was < n ? cf_khz(cf_rd(b, CF_LUT + was * CF_LUT_ROW)) : 0;
+-	cf_wr(b, CF_PERF_STATE, top);
++	for (uint32_t s = was < top ? was + 1 : top; s <= top; s++) {
++		cf_wr(b, CF_PERF_STATE, s);
++		delay(10 * 1000);
++	}
+ 	printf("SPES CPUFREQ: %s: %u states, perf state %u (%u MHz) -> %u (%u MHz), reads back %u\n",
+ 	    name, n, was, was_khz / 1000, top, top_khz / 1000, cf_rd(b, CF_PERF_STATE));
+ }

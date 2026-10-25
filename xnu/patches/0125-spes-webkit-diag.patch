@@ -1,0 +1,75 @@
+Safari diagnostics: WebKit and Safari surface calls and exits.
+
+Pages stay black and WebContent was launched three times with no crash line; the first 64
+creates of a boot are long gone when Safari starts. WebKit/Safari creates and port lookups
+are logged apart (128 lines), and their exits with status and exit reason.
+
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -81,6 +81,19 @@
+ static uint32_t      sweet_surface_users[SWEET_SURFACE_MAX_ID];
+ static uint32_t      sweet_surface_next_id = 1;
+ static uint32_t      sweet_surface_creates_logged;
++static uint32_t      sweet_surface_web_logged;
++
++/*
++ * Safari's pages are black and the first 64 creates of a boot are long gone when it starts:
++ * WebKit's and Safari's own surface calls are logged apart (128 lines).
++ */
++static bool
++sweet_surf_web(char *name, size_t len)
++{
++	proc_selfname(name, (int)len);
++	return (strncmp(name, "com.apple.WebKi", 15) == 0 || strcmp(name, "MobileSafari") == 0) &&
++	       sweet_surface_web_logged < 128;
++}
+ static uint64_t      sweet_surface_wired;       /* bytes of buffer surfaces */
+ #define SWEET_SURFACE_WIRED_MAX         (1536ull << 20)
+ 
+@@ -926,10 +939,11 @@
+ 			}
+ 		}
+ 	}
+-	if (ret != kIOReturnSuccess || sweet_surface_creates_logged < 64) {
+-		char name[32];
+-		proc_selfname(name, sizeof(name));
++	char name[32];
++	bool web = sweet_surf_web(name, sizeof(name));
++	if (ret != kIOReturnSuccess || sweet_surface_creates_logged < 64 || web) {
+ 		sweet_surface_creates_logged++;
++		sweet_surface_web_logged += web;
+ 		IOLog("SWEET SURF: %s create id %u %ux%u fmt 0x%x bpe %u bpr %u planes %u size %u keys %u -> 0x%x\n",
+ 		    name, s->id, s->width, s->height, s->pixelFormat, s->bytesPerElement,
+ 		    s->bytesPerRow, s->planeCount, s->allocSize, props->getCount(), ret);
+@@ -1278,6 +1292,13 @@
+ 		if (ret == kIOReturnSuccess) {
+ 			ret = (s != NULL && sweet_surface_get(s)) ? returnSurface(s, args) : kIOReturnBadArgument;
+ 		}
++		char name[32];
++		if (sweet_surf_web(name, sizeof(name))) {
++			sweet_surface_web_logged++;
++			IOLog("SWEET SURF: %s lookup port -> id %u %ux%u fmt 0x%x bpr %u: 0x%x\n", name,
++			    s ? s->id : 0, s ? s->width : 0, s ? s->height : 0, s ? s->pixelFormat : 0,
++			    s ? s->bytesPerRow : 0, ret);
++		}
+ 		OSSafeReleaseNULL(obj);
+ 		sweet_surf_log_once("sel", selector);
+ 		return ret;
+--- a/bsd/kern/kern_exit.c
++++ b/bsd/kern/kern_exit.c
+@@ -2152,6 +2152,15 @@
+ 	proc_unlock(p);
+ 	pid = proc_getpid(p);
+ 	exitval = p->p_xstat;
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	/* WebKit's processes come and go without a crash line while Safari's pages stay black. */
++	if (strncmp(p->p_comm, "com.apple.WebKi", 15) == 0 || strcmp(p->p_comm, "MobileSafari") == 0) {
++		os_reason_t r = p->p_exit_reason;
++		printf("EXIT %s[%d] status %#x reason ns %u code %#llx%s\n", p->p_comm, pid, exitval,
++		    r != OS_REASON_NULL ? r->osr_namespace : 0, r != OS_REASON_NULL ? r->osr_code : 0ULL,
++		    r != OS_REASON_NULL && r->osr_kcd_buf != NULL ? " (with a description)" : "");
++	}
++#endif
+ 	KERNEL_DEBUG_CONSTANT_IST(KDEBUG_COMMON,
+ 	    BSDDBG_CODE(DBG_BSD_PROC, BSD_PROC_EXIT) | DBG_FUNC_START,
+ 	    pid, exitval, 0, 0, 0);

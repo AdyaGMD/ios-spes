@@ -1,0 +1,110 @@
+Backlight service for CoreBrightness, opt-in sweetbacklight=2.
+
+BrightnessControl's BCAppleBacklightBrtControl drives a service of its own with
+backlight-control, its range in nits (MaxNits, MinNits, user-accessible-max-nits) and a
+brightness set through setProperties. backlight-control on AppleCLCD stalled backboardd
+(all8, 0123): QuartzCore also matches it (DeviceSupportsFrameSynchronousBrightness). This
+child of AppleCLCD logs what is set on it and sends a nits value to the panel.
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -181,6 +181,22 @@
+ };
+ OSDefineMetaClassAndStructors(IOAcceleratorES, IOService);
+ 
++/*
++ * The backlight CoreBrightness drives (BrightnessControl's BCAppleBacklightBrtControl): a
++ * service of its own that says backlight-control, gives its range in nits and is told a
++ * brightness through setProperties. backlight-control on AppleCLCD itself made QuartzCore take
++ * the framebuffer for one with frame-synchronous brightness and backboardd stopped drawing
++ * (all8). Opt-in (sweetbacklight=2) until a boot shows what QuartzCore does with this one;
++ * every property set on it is logged, and a nits value goes to the panel.
++ */
++class SweetBacklight : public IOService {
++	OSDeclareDefaultStructors(SweetBacklight);
++public:
++	AppleCLCD *fFB;
++	IOReturn setProperties(OSObject *properties) APPLE_KEXT_OVERRIDE;
++};
++OSDefineMetaClassAndStructors(SweetBacklight, IOService);
++
+ OSDefineMetaClassAndStructors(AppleCLCD, IOMobileFramebuffer);
+ 
+ class IOMobileFramebufferUserClient : public IOUserClient {
+@@ -361,11 +377,76 @@
+ 		}
+ 	}
+ 	OSSafeReleaseNULL(accel);
++	int backlight = 0;
++	(void)PE_parse_boot_argn("sweetbacklight", &backlight, sizeof(backlight));
++	SweetBacklight *bl = (backlight == 2 && fDsi != NULL) ? OSTypeAlloc(SweetBacklight) : NULL;
++	if (bl != NULL && bl->init()) {
++		bl->fFB = this;
++		bl->setName("backlight");
++		bl->setProperty("backlight-control", kOSBooleanTrue);
++		bl->setProperty("BuiltIn", kOSBooleanTrue);
++		bl->setProperty("MaxNits", 500ULL, 32);
++		bl->setProperty("MinNits", 2ULL, 32);
++		bl->setProperty("user-accessible-max-nits", 500ULL, 32);
++		bl->setProperty("brightness-nits", 250ULL, 32);
++		if (bl->attach(this)) {
++			bl->registerService();
++			IOLog("SWEET FB: backlight service published (sweetbacklight=2)\n");
++		}
++	}
++	OSSafeReleaseNULL(bl);
+ 	IOLog("SWEET FB: AppleCLCD %ux%u stride %u at 0x%llx, default surface %u, presented as %ux%u\n",
+ 	    fWidth, fHeight, fRowBytes, fPhys, fSurface->id, fLogicalW, fLogicalH);
+ 	return true;
+ }
+ 
++IOReturn
++SweetBacklight::setProperties(OSObject *properties)
++{
++	static uint32_t logged;
++	OSDictionary *d = OSDynamicCast(OSDictionary, properties);
++	if (d == NULL || fFB == NULL) {
++		return kIOReturnBadArgument;
++	}
++	if (logged++ < 24) {
++		OSSerialize *ser = OSSerialize::withCapacity(256);
++		char name[32];
++		proc_selfname(name, sizeof(name));
++		IOLog("SWEET FB: backlight set by %s: %.200s\n", name, ser != NULL && d->serialize(ser) ? ser->text() : "?");
++		OSSafeReleaseNULL(ser);
++	}
++	/* A number under a key about nits or brightness, or a { value = n } under one. */
++	OSNumber *n = NULL;
++	OSCollectionIterator *it = OSCollectionIterator::withCollection(d);
++	OSSymbol *key;
++	while (it != NULL && n == NULL && (key = OSDynamicCast(OSSymbol, it->getNextObject())) != NULL) {
++		const char *k = key->getCStringNoCopy();
++		if (strnstr(k, "nits", 64) == NULL && strnstr(k, "rightness", 64) == NULL && strcmp(k, "value") != 0) {
++			continue;
++		}
++		OSObject *v = d->getObject(key);
++		n = OSDynamicCast(OSNumber, v);
++		if (n == NULL && OSDynamicCast(OSDictionary, v) != NULL) {
++			n = OSDynamicCast(OSNumber, ((OSDictionary *)v)->getObject("value"));
++		}
++	}
++	OSSafeReleaseNULL(it);
++	if (n == NULL) {
++		return kIOReturnSuccess;
++	}
++	uint64_t v = n->unsigned64BitValue();
++	setProperty("brightness-nits", v > 0xffff ? v >> 16 : v, 32);
++	OSDictionary *level = OSDictionary::withCapacity(1);
++	OSNumber *nits = OSNumber::withNumber(v > 0xffff ? v : v << 16, 32);
++	if (level != NULL && nits != NULL) {
++		level->setObject("IOMFBBrightnessLevel", nits);
++		fFB->setProperties(level);
++	}
++	OSSafeReleaseNULL(nits);
++	OSSafeReleaseNULL(level);
++	return kIOReturnSuccess;
++}
++
+ /* Mode ABI adapted from Topaz 0948 / HackiOS publishModes(). */
+ #define SWEET_FB_TIMING_ID      1
+ #define SWEET_FB_COLOR_ID       1

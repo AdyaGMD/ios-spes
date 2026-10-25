@@ -1,0 +1,125 @@
+Speaker amplifiers, first look (spesamp=1): SE1 clock vote and its I2C firmware/FIFO state.
+
+No bus transfer and no amplifier reset: the next step reads the aw87xxx chip ids at
+0x58/0x5b only when SE1 has I2C firmware with 32-bit FIFOs.
+
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -111,6 +111,7 @@
+ bsd/dev/spes_sta.c		standard
+ bsd/dev/spes_vib.c		standard
+ bsd/dev/spes_cpufreq.c		standard
++bsd/dev/spes_amp.c		standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -54,6 +54,7 @@
+ extern void sweet_keys_init(void);
+ extern void spes_vib_init(void);       /* bsd/dev/spes_vib.c (spesvib=1) */
+ extern void spes_cpufreq_init(void);   /* bsd/dev/spes_cpufreq.c (spescpufreq=0 off) */
++extern void spes_amp_init(void);       /* bsd/dev/spes_amp.c (spesamp=1) */
+ extern void sweet_touch_init(void);
+ extern void sweet_usb_probe(void);
+ 
+@@ -786,6 +787,7 @@
+ 		printf("SPES: PMIC keys %s; USB disabled\n", keys == 1 ? "requested" : "disabled");
+ 		spes_cpufreq_init();
+ 		spes_vib_init();
++		spes_amp_init();
+ 		return 0;
+ 	}
+ 	sweet_keys_init();
+--- /dev/null
++++ b/bsd/dev/spes_amp.c
+@@ -0,0 +1,89 @@
++/*
++ * spes speaker amplifiers, first look (boot-arg spesamp=1; nothing happens without it).
++ *
++ * The live DT has two awinic,aw87xxx_pa on i2c@4a84000 (QUP0 SE1): 0x5b (reset GPIO 35) and
++ * 0x58 (reset GPIO 106). Before any transfer this only learns whether the bootloader left I2C
++ * firmware and FIFOs on SE1, as the touch driver does for SE2 (bsd/dev/sweet_touch.c
++ * touch_clocks/touch_se_init): vote the SE1 clock (GCC 0x7900c bit 11, gcc-khaje.c), XO source
++ * on its RCG (0x1f278), wait for the branch, then read the SE's firmware and FIFO registers.
++ * No bus transfer, no amplifier reset is touched.
++ */
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <kern/clock.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++void spes_amp_init(void);
++
++#define AMP_GCC_PA      0x01400000u
++#define AMP_GCC_VOTE    0x7900cu        /* QUP0 wrapper bits 6-9, SE1 bit 11 */
++#define AMP_GCC_BITS    0x0bc0u
++#define AMP_RCG         0x1f278u        /* QUP0 S1 CMD; CFG +4, branch -4 */
++#define AMP_SE_PA       0x04a84000u
++
++static inline uint32_t amp_rd(vm_offset_t b, uint32_t o) { return *(volatile uint32_t *)(b + o); }
++static inline void
++amp_wr(vm_offset_t b, uint32_t o, uint32_t v)
++{
++	__asm__ volatile ("dsb sy" ::: "memory");
++	*(volatile uint32_t *)(b + o) = v;
++	__asm__ volatile ("dsb sy" ::: "memory");
++}
++
++static bool
++amp_wait_clear(vm_offset_t b, uint32_t o, uint32_t mask)
++{
++	for (unsigned i = 0; i < 100; i++) {
++		if ((amp_rd(b, o) & mask) == 0) {
++			return true;
++		}
++		delay(10);
++	}
++	return false;
++}
++
++void
++spes_amp_init(void)
++{
++	int on = 0;
++	if (!PE_parse_boot_argn("spesamp", &on, sizeof(on)) || on != 1) {
++		return;
++	}
++	vm_offset_t gcc = ml_io_map(AMP_GCC_PA, 0x80000);
++	if (gcc == 0) {
++		printf("SPES AMP: no GCC mapping\n");
++		return;
++	}
++	uint32_t vote = amp_rd(gcc, AMP_GCC_VOTE);
++	printf("SPES AMP: gcc vote %#x rcg %#x cfg %#x branch %#x before\n", vote,
++	    amp_rd(gcc, AMP_RCG), amp_rd(gcc, AMP_RCG + 4u), amp_rd(gcc, AMP_RCG - 4u));
++	amp_wr(gcc, AMP_GCC_VOTE, vote | AMP_GCC_BITS);
++	if ((amp_rd(gcc, AMP_RCG + 4u) & 0x71fu) != 1u) {
++		amp_wr(gcc, AMP_RCG + 4u, 1u);  /* XO, divider 1: 19.2 MHz */
++		amp_wr(gcc, AMP_RCG, amp_rd(gcc, AMP_RCG) | 1u);
++		if (!amp_wait_clear(gcc, AMP_RCG, 1u)) {
++			printf("SPES AMP: RCG update timeout\n");
++			return;
++		}
++	}
++	if (!amp_wait_clear(gcc, AMP_RCG - 4u, 1u << 31)) {
++		printf("SPES AMP: SE1 branch halted (%#x); SE registers not read\n", amp_rd(gcc, AMP_RCG - 4u));
++		return;
++	}
++	vm_offset_t se = ml_io_map(AMP_SE_PA, 0x4000);
++	if (se == 0) {
++		printf("SPES AMP: no SE1 mapping\n");
++		return;
++	}
++	uint32_t fw = amp_rd(se, 0x068), tx = amp_rd(se, 0xe24), rx = amp_rd(se, 0xe28);
++	bool i2c = ((fw >> 8) & 0xffu) == 3u && !(amp_rd(se, 0x64) & 1u) &&
++	    ((tx >> 24) & 0x3fu) == 32u && ((rx >> 24) & 0x3fu) == 32u;
++	printf("SPES AMP: se1 fw %#x proto %u status %#x tx %#x rx %#x: %s\n", fw, (fw >> 8) & 0xffu,
++	    amp_rd(se, 0x040), tx, rx,
++	    i2c ? "I2C firmware with 32-bit FIFOs, ready for the amplifier chip-id reads" :
++	    "no usable I2C firmware: the amplifiers need the SE firmware loaded first");
++}
++#endif /* ARM64_BOARD_CONFIG_SWEET */
