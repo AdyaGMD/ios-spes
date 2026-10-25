@@ -1,3 +1,44 @@
+# HANDOFF (usage limit): audio stage 1 + PosterBoard logging approved, not started on device, 2026-10-25
+
+- User APPROVED (in chat): patch the PosterBoard and pkd launchd jobs to log
+  to /dev/console (root write), and build audio stage 1 in the same build.
+- Phone state: last seen in OrangeFox after the all21 log pull, then not
+  visible on USB (adb/fastboot empty). Ask the user to put it in recovery.
+- Root change procedure (as before, see eagl entries): fresh 16 GiB snapshot
+  from recovery (adb exec-out dd if=/dev/block/by-name/userdata bs=1048576
+  count=16384; strip dd's trailer; verify size/sha), APFS clone (cp -c),
+  attach + mount RW with owners off, run tools/patch-launchd-plist.py on
+  /System/Library/xpc/launchd.plist for the PosterBoard and pkd labels (find
+  exact Label strings in the plist first), detach, tools/make-ios-root-delta.py
+  before after outdir, then tools/apply-ios-root-delta.py outdir (verify),
+  then --apply. Local disk: 114 GB free.
+- Audio stage 1 design (nothing written yet):
+  * RPM: the GLINK link to the RPM is opened once inside the GPU probe
+    (sweet_touch.c spes_glink_rpm_probe: ram/tx_off/tx_size/rx_off/rx_size/
+    apcs locals, lcid 1, msg_id 1-2 used for rwcx/rwmx). Keep that state in
+    globals after "13. rwmx vote confirmed" and export
+    spes_rpm_kvp(set, type, id, key, value) (same 56 B req struct, next
+    msg_id, wait for cmd 9 ACK). Never handshake a second time (Topaz: RPM
+    crash). L14 on: type "ldoa" 0x616F646C, id 14, key "uv" 0x00007675 =
+    1800000, key "swen" 0x6E657773 = 1, sets 0 and 1.
+  * APR AFE (SpesAudio.cpp apr_send(service,...), add APR_SVC_AFE = 4):
+    AFE_SVC_CMD_SET_PARAM 0x000100f3 with in-band param: {payload_size,
+    addr lsw/msw 0, mem handle 0} + {module AFE_MODULE_CLOCK_SET 0x1028f,
+    param AFE_PARAM_ID_CLOCK_SET 0x10290, size, 0} + afe_clock_set {1,
+    clk_id, 19200000, 1 (couple no), 0, enable 1} for clk 0x30C (TX core
+    MCLK) and 0x30D (TX NPL); log APR_BASIC_RSP_RESULT. Port exact layout from
+    HackiOS redwood_sound.c afe_service_param()/struct afe_clock_set.
+    DCODEC vote: verify opcode in Linux q6afe before sending.
+  * Codec (Topaz 0145 codec_bringup, same SoC): LPASS addresses RX_MACRO
+    0x0A600000, RX_SWR 0x0A610000, TX_MACRO 0x0A620000, VA_MACRO 0x0A730000,
+    VA_SWR 0x0A740000, LPI_TLMM 0x0A7C0000, 0x0A95A000, CGCR 0x0A6A9098 /
+    0x0A7EC100; GPIO92 (WCD937x reset) = 0x0055C000. Map ONLY 16 KB pages
+    on demand (io_submap is 8 MB; Topaz maps 3.4 MB). Steps 2-6 of
+    codec_bringup + log SWR slave status (+0x1090) and ids (+0x538). Gate
+    with boot-arg spescodec=1. WCD937x init/AUX/stream come after.
+- Saved Topaz patches for reference: scratchpad topaz-0145.patch/0146.patch
+  (regenerate with git show origin/topaz:xnu/patches/0145-topaz-audio-codec.patch).
+
 # all21 result: SAFARI WORKS (MobileGestalt cache was stale); mediaserverd aborts; wallpaper still empty, 2026-10-25
 
 - User on all21: "safari works" (long session); YouTube video refuses to play;
