@@ -1,3 +1,20 @@
+# all30 temp-booted (0153: video alignment dict + /dev/redwood-audio after devfs), 2026-10-26
+
+- CI 40246105110 SUCCESS: kernel xnu/out-0153 SHA256
+  857a8faee1c307802c32cc91b1d9aff5ad305b4c4a0aa8a558a44adc9b871d40;
+  shim/out/spes-ios-graphics-all30.img (spesamp=2 spescodec=4, NO
+  sweetlsreset; sweetnull/sweetscan add mediaserverd and AegirPoster) SHA256
+  a1a233d9de8c9618f69f3bfa95601822d6546100103c14744a6167331c4e750c.
+  Temp-booted from OrangeFox via bootloader (hash verified). User tests
+  sound and video.
+- Next build (user): 90 Hz, input delay, Metal step 1. Facts so far: panel
+  is k7_38_0c_0a OLED, DSI video mode + DSC, DT timing@0 framerate 90 (0x5a),
+  dfps list 90/60 via vertical front porch (dfps_immediate_porch_mode_vfp),
+  panel commands dispparam-bc-90hz/-60hz (0xF1 5A5A, 0x60 0x01 / 0x21 ...).
+  Our vsync is a free-running 16667 us IOTimerEventSource (not tied to the
+  panel); "modes published: 1125x2436 at 60 Hz". Panel's real rate not
+  measured yet (MDP INTF frame counter).
+
 # Metal study: iOSPlus10's metal2vulkan stack vs spes (read-only study, c0a451f), 2026-10-25
 
 Sources: research/iOSPlus10 docs/metal-design.md, metal-plan.md,
