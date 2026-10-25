@@ -18,7 +18,9 @@
   f2e5a3dc9afa383e661ffbd09e12f33ff4b97a1d2b6cac87cbe2b454d84adf62;
   shim/out/spes-ios-graphics-all14bl.img (sweetpanel=1 spesamp=1
   sweetbacklight=2) SHA256
-  f19272b529276670cbca8dabfbab48cf9f251ffa1450d30ebec1eafa8531fcfa. Not booted.
+  f19272b529276670cbca8dabfbab48cf9f251ffa1450d30ebec1eafa8531fcfa.
+  Temp-booted 2026-10-25 (hash verified; first send failed usb_write e00002ed,
+  second succeeded).
 
 # all12 result: GPU stays on (512 MiB VA), frames ~11 ms; amps NACK (pins unmuxed); WebKit GPU process makes BGRA tiles; all13 built, 2026-10-25
 
