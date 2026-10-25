@@ -1,3 +1,28 @@
+# all21 result: SAFARI WORKS (MobileGestalt cache was stale); mediaserverd aborts; wallpaper still empty, 2026-10-25
+
+- User on all21: "safari works" (long session); YouTube video refuses to play;
+  wallpapers still empty. Log research/spes-all21-boot.txt (1220417 B, flush
+  #34).
+- Observed: "SWEET MG: com.apple.MobileGestalt.plist -> .bak: moved aside";
+  WebKit now asks 'BGRA' only (11x, no w30r/b3a8). Cause confirmed: the
+  cached HasExtendedColorDisplay from the P3 days. Keep sweetmgreset off now
+  (the guard would refuse anyway; the .bak stays as the old cache).
+- Video/YouTube (for later): mediaserverd aborts repeatedly (sig 6; 6 times
+  in this log): _abort <- demangling_terminate_handler <- objc_terminate <-
+  std::terminate <- _dispatch_client_callout <- _dispatch_lane_serial_drain
+  = an uncaught C++ exception in a dispatch block. Matches Topaz b90a150
+  ("mediaserverd crash is the VirtualAudio HAL plug-in without a default
+  device"): the audio HAL device (RedwoodAudio.driver) should fix it, and
+  media playback depends on mediaserverd.
+- Wallpaper: PosterBoard runs, no crash, no stderr; picker empty. Its
+  reasons are in os_log, which nothing captures. Option: make the
+  PosterBoard (and pkd) launchd jobs log to /dev/console
+  (tools/patch-launchd-plist.py on /System/Library/xpc/launchd.plist):
+  a root write, needs the user's approval.
+- Next build (user): audio + wallpaper. Audio stage 1 = codec bring-up
+  (RPM L14, APR clocks 0x30C/0x30D, LPI pins, macros, SoundWire masters with
+  GPIO92 reset, WCD937x enumeration logged) per the port plan above.
+
 # all20 result: both amps answer; WebKit asks for w30r/b3a8; MobileGestalt cache reset (0141), all21 built, 2026-10-25
 
 - Log research/spes-all20-boot.txt (638432 B, flush #17); user report
