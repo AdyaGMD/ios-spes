@@ -1,3 +1,35 @@
+# Sound bus diagnosis (0132) + wallpaper LaunchServices reset (0133); all15 built, 2026-10-25
+
+- User: sound next (find what powers the amp bus), then wallpaper in the same
+  build, "look at hackios' implementation".
+- Live DT i2c@4a84000 (SE1): no supply properties on the bus or the
+  aw87xxx nodes (only reset-gpio 35/106). The same bus carries max77729
+  charger/fuel gauge @0x66 and sc8551 charger @0x65 (battery-powered, always
+  answer if the bus works), wl2866d camera LDO @0x28 (en-gpio 26), aw2016
+  LED @0x64, disabled pm8008/wsa881x/fsa4480. 0132: logs GPIO4/5 pad levels
+  (idle I2C must read high) and probes 0x66, 0x65, 0x64, 0x58, 0x5b; sets
+  the pin function only if it is not qup1 and keeps the pull-up.
+- Wallpaper: PosterBoard SIGTRAP symbolicated again (all13bl/all14bl):
+  -[PBFPosterExtensionDataStore _stateLock_setupSwitcherConfigurationForFirstTime]+2040
+  <- _stateLock_updateExtensions <- executeUpdate <- prewarmWithCompletion
+  <- PRSServer prewarm (XPC). HackiOS (userland/src/init.c): /private/var is
+  a fresh memory filesystem each boot (optionally restored by var_store), so
+  lsd always rebuilds LaunchServices' database and poster extensions
+  register. Ours persists; the csstore lists no extensions (read-only check
+  of research/spes-phone-root-eagl-20261024.img: two stores in
+  /private/var/mobile/Containers/Data/InternalDaemon/E440478E-94EE-4C07-A184-35F73711651B/Library/Caches/:
+  com.apple.LaunchServices-4035-v2.csstore 3637248 B and
+  SystemDataOnly-...csstore 4407296 B).
+- 0133 (sweetlsreset=1): before bsd_utaskbootstrap, renameat_internal moves
+  both stores to .bak (not deleted); logs "SWEET LS: .. -> .bak: ..". Only
+  this image passes it; later images drop it (it would rebuild every boot).
+- CI 40202862774 SUCCESS: kernel xnu/out-0133 SHA256
+  188b63b58805b54f954d9d6f592ca897f6d265ba390483b1bdfd36cb7af5574b;
+  shim/out/spes-ios-graphics-all15.img (sweetpanel=1 spesamp=1
+  sweetlsreset=1, no backlight service) SHA256
+  ed2d1daae8b4eacf6fe8182924b63794cef96fea6876872d04316dcbd5dc259b. Not booted.
+  First boot after the reset may be slow while lsd re-registers everything.
+
 # all14bl result: a separate backlight service stalls backboardd too; brightness parked, 2026-10-25
 
 - User on all14bl: "extreme lag again, brightness doesn't work". Log
