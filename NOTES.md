@@ -1,3 +1,30 @@
+# all2 result: ADSP boots and speaks APR; wifid never started (no ADT wlan node); still slow, 2026-10-25
+
+- User on all2: "no wifi no sound no vibration still slow"; "the wifi toggle in
+  settings don't work". Log research/spes-all2-boot.txt (457833 B, flush #33).
+- ADSP (0115 with the fw_all fix) BOOTS: phdrs 34, hash 1, region
+  53800000..56600000, PAS init_image/mem_setup/auth_and_reset ret 0, SMP2P
+  443 at 22 ms, slave-kernel READY handover 33 ms, GLINK v1, ADSP opens
+  glink_ssr, IPCRTR, fastrpcglink-apps-dsp, LOOPBACK_CTL_LPASS and
+  **apr_audio_svc** (no client); QRTR HELLO node 5, services announced. So
+  spes's ADSP speaks APR, not GPR: next sound step is an APR client on
+  apr_audio_svc (HackiOS redwood_adsp/sound/speaker: ASM/ADM/AFE), then the
+  codec route and aw87559 amps, then the HAL plug-in (root write).
+- Vibration: no buzz from the 300 ms GPIO36 pulse -> the motor needs the
+  PM6125 LPG PWM (SPMI SID 1, 0xb300); needs a PMIC write path (our PMIC
+  access is read-only today). spesvib=1 dropped from the next image.
+- Wi-Fi: kernel side up (en0 attached, station up, configd answered for
+  CARD_CAPABILITIES; SSID -> error 6 = not associated), but wifid never
+  exec'd. launchd.plist job com.apple.wifid has _LimitLoadToDeviceTree =
+  [wlan, marconi-wifi]; our ADT had no wlan node. tools/mkadt.py now adds
+  /arm-io/wlan (device_type wlan, compatible spes,wcn3988) as Topaz does
+  (commit 2cb7920). ADT-only change.
+- Speed: RedwoodGPU push rule changed (same commit): surfaces pushed when
+  their seed moves (trapUnlock after a write bumps it; EAGL bumps it for GPU
+  drawing) or once per GPU_PUSH_AGAIN_MS = 50 ms (was 4 ms, and "seen"
+  surfaces went out every submission). CI40180566741 -> image
+  spes-ios-graphics-all3.img (modem=1 wifi=1 adsp=1 + wlan_mac).
+
 # Hardware result — all1: scanout works, Wi-Fi iOS layer up, ADSP firmware lookup bug, 2026-10-25
 
 - User's report for all1 arrived as an unfilled template; results from the log
