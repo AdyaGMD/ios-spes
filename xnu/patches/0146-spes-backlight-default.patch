@@ -1,0 +1,17 @@
+AppleARMBacklight on by default (sweetbacklight=0 leaves it out).
+
+all25: backboardd drives it (brightness 216 ... 173 as the slider moves), the panel follows and the
+UI stays fast.
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -395,7 +395,8 @@
+ 		}
+ 	}
+ 	OSSafeReleaseNULL(accel);
+-	int backlight = 0;
++	/* On by default since all25 (slider and fades work, UI unaffected); sweetbacklight=0 leaves it out. */
++	int backlight = 2;
+ 	(void)PE_parse_boot_argn("sweetbacklight", &backlight, sizeof(backlight));
+ 	AppleARMBacklight *bl = (backlight == 2 && fDsi != NULL) ? OSTypeAlloc(AppleARMBacklight) : NULL;
+ 	if (bl != NULL && bl->init() && bl->attach(this)) {
