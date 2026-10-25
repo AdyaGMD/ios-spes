@@ -24,7 +24,7 @@
   shim/out/spes-ios-graphics-all12.img (sweetpanel=1 spesamp=1, CPU on)
   SHA256 78cbcbbae654dfa1b4d80ff6fc3a396139c2ae8727fb88d7f09234e75bf5c321;
   shim/out/spes-ios-graphics-all12bl.img (+ sweetbacklight=2) built from the
-  same kernel. Not booted.
+  same kernel. all12 temp-booted 2026-10-25 (hash verified); all12bl not booted.
 
 # all10 result: fades fixed; all11 / all11bl built (Safari diag, backlight service, CPU step, amp probe), 2026-10-25
 
