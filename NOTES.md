@@ -22,8 +22,11 @@
 - Speed: RedwoodGPU push rule changed (same commit): surfaces pushed when
   their seed moves (trapUnlock after a write bumps it; EAGL bumps it for GPU
   drawing) or once per GPU_PUSH_AGAIN_MS = 50 ms (was 4 ms, and "seen"
-  surfaces went out every submission). CI40180566741 -> image
-  spes-ios-graphics-all3.img (modem=1 wifi=1 adsp=1 + wlan_mac).
+  surfaces went out every submission). CI40180566741 SUCCESS: kernel
+  xnu/out-0121 SHA256 9acb1a39ef54c6bce4bda3a1124c60413fa095186845d68285e821039856fda9;
+  image shim/out/spes-ios-graphics-all3.img (modem=1 wifi=1 adsp=1 +
+  wlan_mac; ADT has /arm-io/wlan) SHA256
+  dabf61a2f5e9a17cbfc83615abfd4a24c56baff0500551c3ad671c703bde99c6. Not booted.
 
 # Hardware result — all1: scanout works, Wi-Fi iOS layer up, ADSP firmware lookup bug, 2026-10-25
 
