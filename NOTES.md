@@ -1,3 +1,22 @@
+# all23 result: CODEC UP (SoundWire slaves answer); PosterBoard/pkd print nothing, 2026-10-25
+
+- User: booted, opened the wallpaper picker twice (still empty). Log
+  research/spes-all23-boot.txt (296322 B, flush #7).
+- Codec stage 1 (observed): "codec: L14 on"; "LPASS core HW vote given,
+  handle 23"; both clocks status 0; "macros clocked (rx 00000003 tx 00000001
+  va 00000001)" (read back as written); "SoundWire slaves rx 00000004 va
+  00000004, ids 01170224 01170223" at t=5.448: both masters see a slave; ids
+  look like the WCD937x RX/TX slaves. No hang. Next (stage 2): WCD937x init
+  over VA SWR dev 1 + AUX DAC + rx_stock (Topaz 0145 steps 7-9, SMMU identity
+  SID 0x1C1), then the APR stream (HackiOS redwood_sound.c) and the amps.
+- Wallpaper (observed): with the launchd.plist change and the 0143 console
+  tee, 0 lines from PosterBoard and pkd (SpringBoard 481 NSLog lines,
+  backboardd 260: the capture works). They wrote nothing to stderr while the
+  picker opened twice; OS_ACTIVITY_DT_MODE did not mirror their os_log.
+  The plist change stays (harmless; rollback delta kept). Next options: stack
+  samples of PosterBoard (sweetsample=PosterBoard) while the picker is open;
+  or inspect the rebuilt LS database for posterkit.provider records.
+
 # all22 result: L14 on, clocks given, block 3 vote refused; console output not captured; all23 built, 2026-10-25
 
 - Log research/spes-all22-boot.txt (261210 B, flush #6); user report template
