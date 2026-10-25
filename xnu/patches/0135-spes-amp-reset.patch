@@ -1,0 +1,94 @@
+Amplifier resets: find GPIO 35/106's tile by reading all three, pulse the reset, read the ids.
+
+all15: the SE1 bus works (max77729 0x66 -> 0x15, sc8551 0x65 -> 0x29) but both aw87xxx NACK:
+held in reset. A pin is driven only when exactly one tile shows a register for it; the reset
+is pulsed as Linux aw87xxx does (low 2 ms, high, 2 ms) and the amplifier stays powered down.
+
+--- a/bsd/dev/spes_amp.c
++++ b/bsd/dev/spes_amp.c
+@@ -35,6 +35,7 @@
+  */
+ #define AMP_WEST_PA     0x00500000u
+ 
++
+ /* GENI registers and I2C packing as bsd/dev/sweet_touch.c (i2c-qcom-geni.c). */
+ #define SE_STATUS       0x040u
+ #define SE_MCLK         0x048u
+@@ -79,6 +80,55 @@
+ 		delay(10);
+ 	}
+ 	return false;
++}
++
++/*
++ * The amplifier resets (GPIO 35 for 0x5b, GPIO 106 for 0x58, active low). khaje's pin-to-tile
++ * table is not at hand: known pins are GPIO 4 on 0x500000 (0x207) and GPIO 98 on 0x900000
++ * (0xac3). Each pin's config is read on all three tiles and the pin is driven only when
++ * exactly one tile has a register there; anything else is logged and left alone.
++ */
++static const uint32_t amp_tiles[3] = { 0x00500000u, 0x00900000u, 0x00d00000u };
++
++static vm_offset_t
++amp_reset_tile(uint32_t pin)
++{
++	vm_offset_t found = 0;
++	unsigned hits = 0;
++	uint32_t seen[3];
++	for (unsigned i = 0; i < 3; i++) {
++		vm_offset_t tile = ml_io_map(amp_tiles[i], (pin + 1) * 0x1000u);
++		seen[i] = tile != 0 ? amp_rd(tile, pin * 0x1000u) : 0;
++		if (seen[i] != 0 && seen[i] != 0xffffffffu) {
++			found = tile;
++			hits++;
++		}
++	}
++	printf("SPES AMP: GPIO%u cfg on tiles 0x500000/0x900000/0xd00000: %#x %#x %#x -> %s\n", pin,
++	    seen[0], seen[1], seen[2], hits == 1 ? "one tile, driven" : "ambiguous, left alone");
++	return hits == 1 ? found : 0;
++}
++
++/* Linux aw87xxx: reset low 2 ms, high, 2 ms. The amplifier then sits powered down (no output). */
++static bool
++amp_reset_pulse(uint32_t pin)
++{
++	vm_offset_t tile = amp_reset_tile(pin);
++	if (tile == 0) {
++		return false;
++	}
++	uint32_t cfg = amp_rd(tile, pin * 0x1000u), out = (cfg & ~0x3ffu) | 0x200u;   /* GPIO, output */
++	if (cfg & (1u << 11)) {
++		out |= 1u << 12;
++	}
++	amp_wr(tile, pin * 0x1000u + 4u, amp_rd(tile, pin * 0x1000u + 4u) & ~2u);
++	amp_wr(tile, pin * 0x1000u, out);
++	delay(2000);
++	amp_wr(tile, pin * 0x1000u + 4u, amp_rd(tile, pin * 0x1000u + 4u) | 2u);
++	delay(2000);
++	printf("SPES AMP: GPIO%u reset pulsed, now cfg %#x io %#x\n", pin, amp_rd(tile, pin * 0x1000u),
++	    amp_rd(tile, pin * 0x1000u + 4u));
++	return true;
+ }
+ 
+ static bool
+@@ -270,8 +320,20 @@
+ 		printf("SPES AMP: %#x %s: reg 0 %s %#x\n", chips[i].addr, chips[i].what, how[err],
+ 		    err == 0 ? id : (unsigned)err);
+ 		if (err == 3) {
+-			break;
++			return;
+ 		}
+ 	}
++	static const struct { uint32_t pin; uint8_t addr; } amps[] = { { 106, 0x58 }, { 35, 0x5b } };
++	for (unsigned i = 0; i < 2; i++) {
++		if (!amp_reset_pulse(amps[i].pin)) {
++			continue;
++		}
++		uint8_t id = 0;
++		int err = amp_read(se, amps[i].addr, 0x00, &id);
++		printf("SPES AMP: %#x after reset: reg 0 %s %#x\n", amps[i].addr, how[err], err == 0 ? id : (unsigned)err);
++		if (err == 3) {
++			return;
++		}
++	}
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
