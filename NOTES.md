@@ -1,3 +1,18 @@
+# all14bl result: a separate backlight service stalls backboardd too; brightness parked, 2026-10-25
+
+- User on all14bl: "extreme lag again, brightness doesn't work". Log
+  research/spes-all14bl-boot.txt (322224 B, flush #13).
+- Observed: backlight-control now matches only SweetBacklight ("1 found",
+  0131 works), yet backboardd draws 19 redwood-gl frames all boot and
+  CoreBrightness never sets a property on it (no "backlight set by" line).
+- Conclusion: any backlight-control service makes QuartzCore (inside
+  backboardd) stall, before CoreBrightness talks to it; likely its
+  frame-synchronous brightness path (DeviceSupportsFrameSynchronousBrightness
+  / SynchronousBrightnessTransactions) waiting on something the framebuffer
+  never provides. Fixing the slider needs reverse-engineering QuartzCore's
+  backlight path in the shared cache. Default images keep sweetbacklight
+  off (no backlight-control anywhere): UI fast, slider inert.
+
 # all13bl stalled (both backlight props), all13 fast; amps NACK with pins already qup1; all14bl built, 2026-10-25
 
 - all13bl: "ui is slow af". Log research/spes-all13bl-boot.txt (356290 B):
