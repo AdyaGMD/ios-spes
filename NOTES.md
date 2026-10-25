@@ -1,3 +1,24 @@
+# all17ls result: rebuild finished in ~15 min, PosterBoard no longer crashes (no wallpaper yet); amp 0x58 answers 0x5a; all18 built, 2026-10-25
+
+- User: "the ui showed up after 15 min"; no wallpaper seen. Log
+  research/spes-all17ls-boot.txt (570297 B, flush #91).
+- Observed: both csstores moved aside; installd ran this time (line 3693),
+  PosterBoard started (3863) and did NOT crash (every earlier boot logged the
+  _stateLock_setupSwitcherConfigurationForFirstTime trap). The rebuilt
+  database is now in place; the old one stays as .bak (all17r restores it).
+  Do not pass sweetlsreset/sweetlsrestore from now on.
+- Sound (observed): "GPIO106 cfg on tiles 0x500000/0x900000/0xd00000: 0
+  0x801 0 -> one tile, driven", reset pulsed (cfg 0x1a00 io 0x3), then
+  "0x58 after reset: reg 0 id 0x5a" = aw87559 answers. GPIO35 read 0 on all
+  three tiles -> left alone. 0137 logs GPIO 32-38 on all tiles when ambiguous.
+- CI 40208433342 SUCCESS: kernel xnu/out-0137 SHA256
+  8cc03b8dbb211f3f703f6d5955350adee87776212ea55999717ac6df85752c54 (0135,
+  0136 Safari tile diag, 0137). shim/out/spes-ios-graphics-all18.img
+  (sweetpanel=1 spesamp=1) SHA256
+  6a27e4799e206764f6ef5a452ce3fa8e874f49c9fd237b8fabe5cd7b567d93f6. Not booted.
+  Checks: wallpaper on the first normal-speed boot with the new database;
+  Safari tile pixels/lookups; GPIO35's tile from its neighbours.
+
 # Prepared while all17ls runs: Safari tile diagnostics (0136), codec scope, 2026-10-25
 
 - Commit cf98345, patch 0136: surfaces created by WebKit/MobileSafari are
