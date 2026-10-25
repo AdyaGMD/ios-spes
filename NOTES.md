@@ -10,7 +10,27 @@
   Local syntax check OK. CI 40189822482 dispatched. Next image all6 adds
   sweetpanel=1 (first boot of the DSI path on spes; watch for "DSI cmd ...
   not done").
-- WebKit black: not diagnosed; needs the all5 log (WebContent / GPU process).
+- Log research/spes-all5-boot.txt (808950 B, flush #35): 0 failed creates
+  (0118 holds). Frames (backboardd redwood-gl, frame > 300): median 27.2 ms
+  (~37 fps), p90 47.8 ms; "handing on" median 7.7 ms p90 24 ms; waiting
+  0.8 ms (was ~17 ms); cache pushes ~0-1 KB per period. Rest is CPU time.
+- WebKit black (cause from HackiOS, not yet verified here): /product is
+  copied from the real D22AP tree with artwork-display-gamut "P3", so
+  MobileGestalt says HasExtendedColorDisplay and WebKit draws tiles in
+  10-bit formats that come out black (HackiOS xnuloader/loader.c,
+  rc.jobs.safari). Commit a80371a: mkadt writes "sRGB". Risk: a cached
+  MobileGestalt answer on the root may hide the change (cache reset would
+  be a root write: ask first). Surface selector 44 (SetOwnershipIdentity)
+  already succeeds via the default case.
+- Speed: no DVFS in this kernel; cores keep ABL's perf state. Commit
+  22ada48, patch 0120 bsd/dev/spes_cpufreq.c: votes cpufreq-hw domain0
+  (Silver 0x0f521000) and domain1 (Gold 0x0f523000, live DT) to the top
+  LUT row via 0x920; logs "SPES CPUFREQ: ..." old/new MHz; spescpufreq=0 off.
+  Local syntax check OK.
+- Sound: APR up (all4); the stream path (ASM/ADM/AFE, codec, amps) is the
+  next sound step, not started.
+- CI 40189822482 (0119) SUCCESS; CI 40190289547 dispatched (0119+0120).
+  Next image all6: + sweetpanel=1.
 
 # all4 result: no black screen, APR handshake works; Wi-Fi settings freeze = surface leak (0118), 2026-10-25
 
