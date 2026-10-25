@@ -21,7 +21,8 @@
   85546b230b92ef7fe29555d548b43475ec267a29302c0417ef99cca444f00115;
   image shim/out/spes-ios-graphics-all8.img (direct scanout on, sweetpanel=1,
   spescpufreq=0, sRGB) SHA256
-  5cec8e182111ee4022485da265b2878a3e169b30ed7c307b89647d84b051c670. Not booted.
+  5cec8e182111ee4022485da265b2878a3e169b30ed7c307b89647d84b051c670.
+  Temp-booted 2026-10-25 (hash verified).
   Check: UI visible with direct scanout; "SWEET FB: brightness" lines when
   the slider moves; lock fade without the bright flash.
 
