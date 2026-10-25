@@ -1,3 +1,33 @@
+# Audio stage 1 built (0142, all22); root snapshot for the PosterBoard logging change, 2026-10-25
+
+- Commit b4daee4, patch 0142: sweet_touch.c keeps the RPM GLINK link after
+  "13. rwmx vote confirmed" and exports spes_rpm_kvp(set,type,id,key,val)
+  (waits up to 30 s for the link, serialized, logs "SPES RPM: request ...").
+  SpesAudio codec_poll() (spescodec=1), after APR READY + versions: L14
+  ("ldoa" 14 uv 1800000 + swen 1, sets 0/1), AFE LPASS core HW votes block 3
+  "LPASS_HW_MACRO" and 4 "LPASS_HW_DCODEC" (0x100f4 -> 0x100f5 handle), AFE
+  clocks 0x30c/0x30d 19.2 MHz (AFE_SVC_CMD_SET_PARAM in band, module
+  0x1028f param 0x10290, attribute 1); waits for 2 votes + 2 clock
+  results (3 s); only then Topaz steps 2-6 (LPI pins, VA/RX/TX macro clocks,
+  CGCRs 0x0A6A9098/0x0A7EC100, GPIO92 0x0055C000 low, both SWR masters init,
+  GPIO92 high, 300 ms) and logs "codec: SoundWire slaves rx .. va .., ids".
+  Pages mapped 16 KB at a time (cdc_reg cache of 24).
+- Lesson: research/gpu-buildtree sweet_touch.c was stale (missing the
+  spesgpu_mhz hunks); the patch was rebuilt on the replayed file. Always diff
+  against the replay for files created by the patch series.
+- CI 40216023694 SUCCESS: kernel xnu/out-0142 SHA256
+  a4aa533ab80ca28745a69bbebceb7bf1599b1aea0d3807e5acacfa16e43ab908;
+  shim/out/spes-ios-graphics-all22.img (sweetpanel=1 spesamp=1 spescodec=1)
+  SHA256 abb29105b41e75c581cb1bef7dd5c3f4bf89543e536702a657efe0b979ae2f38.
+  Not booted.
+- Wallpaper: launchd.plist labels com.apple.PosterBoard and
+  com.apple.pluginkit.pkd. launchd.plist's AppExtensions cache (421
+  entries) lists all nine posterkit.provider appexes (CollectionsPoster,
+  Gradient, Emoji, Pride, Unity, PhotosPosterProvider, Extragalactic,
+  AegirPoster, LegacyPoster): launch side fine, discovery (LS/pkd) is not.
+  Fresh root snapshot research/spes-phone-root-20261025.img.partial in
+  progress from OrangeFox (device-side sha256 recorded next to it).
+
 # HANDOFF (usage limit): audio stage 1 + PosterBoard logging approved, not started on device, 2026-10-25
 
 - User APPROVED (in chat): patch the PosterBoard and pkd launchd jobs to log
