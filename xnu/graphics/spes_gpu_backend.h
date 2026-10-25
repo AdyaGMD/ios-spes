@@ -168,17 +168,34 @@ static bool spes_gpu_ring_queue(const uint32_t *words,uint32_t count) {
  for(uint32_t i=0;i<count;++i){ring[sg.tail]=words[i];sg.tail=(sg.tail+1u)&2047u;}
  return true;
 }
+/*
+ * A submission refused by the checks below is not a full ring: RedwoodGPU asks
+ * redwood_gpu_rejected() before it takes a 0 for a stopped core (it stopped the whole GPU
+ * for one refused submission: the all3 boot, with the ring empty).
+ */
+static bool sg_rejected;
+static unsigned sg_rejects;
+bool redwood_gpu_rejected(void) { bool r=sg_rejected; sg_rejected=false; return r; }
+static uint32_t spes_gpu_reject(const char *why, unsigned i, uint64_t address, uint32_t words) {
+ sg_rejected=true;
+ if(sg_rejects++<8)printf("SPES GPU: submission refused (%s): command buffer %u at %#llx, %u words\n",
+     why,i,(unsigned long long)address,words);
+ return 0;
+}
+#define SPES_GPU_MAX_IBS 128u
 uint32_t redwood_gpu_submit(const uint64_t *addresses,const uint32_t *words,uint32_t count) {
- if(!redwood_gpu_ready() || !count || count>64 || sg.fence==0xffffffffu)return 0;
- uint32_t commands[268],n=0;
+ if(!redwood_gpu_ready() || sg.fence==0xffffffffu)return 0;
+ if(!count || count>SPES_GPU_MAX_IBS)return spes_gpu_reject("count",count,0,0);
+ uint32_t commands[SPES_GPU_MAX_IBS*4+12],n=0;
  /* The hardware-proven A610 order: indirect buffer(s), CP_WAIT_FOR_IDLE, then
   * CACHE_FLUSH_TS. Do not prepend EAGL-style invalidate events here. */
  for(unsigned i=0;i<count;++i){
-  if(!words[i] || words[i]>0xfffffu || (addresses[i]&3) ||
-      spes_gpu_owner(addresses[i],(uint64_t)words[i]*4)<0)return 0;
+  if(!words[i] || words[i]>0xfffffu || (addresses[i]&3))return spes_gpu_reject("size",i,addresses[i],words[i]);
+  if(spes_gpu_owner(addresses[i],(uint64_t)words[i]*4)<0)return spes_gpu_reject("no buffer",i,addresses[i],words[i]);
   uint64_t end=addresses[i]+(uint64_t)words[i]*4;
   for(uint64_t page=addresses[i]&~4095ull;page<end;page+=4096){
-   uint64_t *leaf=spes_gpu_leaf(page,false);if(!leaf || !(*leaf&1))return 0;
+   uint64_t *leaf=spes_gpu_leaf(page,false);
+   if(!leaf || !(*leaf&1))return spes_gpu_reject("unmapped page",i,addresses[i],words[i]);
   }
   commands[n++]=0x70bf8003;commands[n++]=(uint32_t)addresses[i];
   commands[n++]=(uint32_t)(addresses[i]>>32);commands[n++]=words[i];

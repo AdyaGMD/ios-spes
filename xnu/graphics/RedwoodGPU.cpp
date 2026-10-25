@@ -67,6 +67,7 @@ void redwood_gpu_to_memory(void * start, uint64_t size);
 uint32_t redwood_gpu_submit(const uint64_t * addresses, const uint32_t * words, uint32_t count);
 extern uint32_t gpu_log;
 bool redwood_gpu_done(uint32_t fence);
+bool redwood_gpu_rejected(void);       /* bsd/dev/spes_gpu_backend.h: the last 0 from submit was a refusal */
 uint32_t redwood_gpu_last(void);
 void redwood_gpu_worked(uint64_t * microseconds, uint32_t * submissions, uint32_t by[7]);
 void redwood_gpu_report(const char * why);
@@ -1040,7 +1041,9 @@ RedwoodGPUUserClient::submit(struct msm_gem_submit * request)
 	 * room for it. (A wait of a second or more notices a stopped core first, as a rule; this is
 	 * for a program that submits without waiting.)
 	 */
-	if (request->fence == 0 && redwood_gpu_ready() && !gGPUReported) {
+	if (request->fence == 0 && redwood_gpu_rejected()) {
+		/* (the backend refused this one and said why: the GPU is fine, the submission fails) */
+	} else if (request->fence == 0 && redwood_gpu_ready() && !gGPUReported) {
 		redwood_gpu_report("the ring is full");
 		gGPUReported = !redwood_gpu_recover();
 		if (!gGPUReported) {

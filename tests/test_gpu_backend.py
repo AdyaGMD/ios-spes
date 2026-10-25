@@ -71,9 +71,9 @@ int main(void){
  assert(!redwood_gpu_map(a,0x100008000ULL,false));
  assert((*spes_gpu_leaf(a+(4<<20),false)&0x80)!=0);
  assert(redwood_gpu_mapped());
- uint64_t ib[64];uint32_t words[64];
- for(unsigned i=0;i<64;++i){ib[i]=a;words[i]=4;}
- assert(!redwood_gpu_submit(ib,words,65));
+ uint64_t ib[129];uint32_t words[129];
+ for(unsigned i=0;i<129;++i){ib[i]=a;words[i]=4;}
+ assert(!redwood_gpu_submit(ib,words,129) && redwood_gpu_rejected() && redwood_gpu_ready());
  assert(redwood_gpu_submit(ib,words,64)==2049);
  assert(captured_count==262 && captured[0]==0x70bf8003);
  assert(captured[256]==0x70268000 && captured[259]==0x011f0024);
@@ -88,7 +88,7 @@ int main(void){
  complete=false;assert(redwood_gpu_submit(ib,words,1)==2052);
  faults=1;assert(!redwood_gpu_done(2052) && !redwood_gpu_ready());
  faults=0;sg.faulted=false;sg.ready=true;*fence_word=2052;rptr=wptr;complete=true;
- ib[0]=a+4096;assert(!redwood_gpu_submit(ib,words,1)); /* unmapped */
+ ib[0]=a+4096;assert(!redwood_gpu_submit(ib,words,1) && redwood_gpu_rejected() && redwood_gpu_ready()); /* unmapped: refused, GPU kept */
  ib[0]=a;words[0]=0x100000;assert(!redwood_gpu_submit(ib,words,1));
 
  redwood_gpu_address_free(a,12<<20);
