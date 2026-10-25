@@ -1,3 +1,22 @@
+# all18 panicked: io_map's 8 MB used up by the amp probe; 0138, all19 built, 2026-10-25
+
+- User photo (all18): "panic(cpu 2 ...): kmem_alloc(0xfffffe1001ce41a8,
+  589824, 0x100021): failed with 3 @vm_kern.c:178" right after "SPES GPU: 20.
+  branches": the GPU probe's ml_io_map(0x05900000, 0x90000) (sweet_touch.c
+  1269). io_map allocates from io_submap, IO_MAP_SIZE = 8 MB on arm
+  (osfmk/arm/io_map.c), and maps are never returned (ml_io_unmap frees from
+  kernel_map, so it must not be used on these). 0135/0137 mapped each tile
+  from its base up to the pin (3 x 107 pages for GPIO106) plus 7 neighbours
+  x 3 tiles and 512 KB of GCC: several MB, and the GPU's 576 KB no longer fit.
+  Lesson: map only the page you need; budget io_submap.
+- Commit 16c75c7, patch 0138: one page per pin look (tile + pin*0x1000,
+  io_map keeps the offset), two GCC pages (0x79000, 0x1f000). ~430 KB total.
+- CI 40209464026 SUCCESS: kernel xnu/out-0138 SHA256
+  5ab84a7e0218e6ca08b35f0c10d39c835bc521ca10fde7f9afdf54f3c089441a;
+  shim/out/spes-ios-graphics-all19.img (sweetpanel=1 spesamp=1) SHA256
+  59686a0d26a38db23935d9c9b49b0923665be6440bbdd78c7c6870c65dae0047. Not booted.
+  Same checks as all18 (wallpaper, Safari tiles, GPIO35 neighbours).
+
 # all17ls result: rebuild finished in ~15 min, PosterBoard no longer crashes (no wallpaper yet); amp 0x58 answers 0x5a; all18 built, 2026-10-25
 
 - User: "the ui showed up after 15 min"; no wallpaper seen. Log
