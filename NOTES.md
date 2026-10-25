@@ -1,3 +1,38 @@
+# 60 fps work: direct scanout never engaged; scanout pool (0116); no WC cache pushes, 2026-10-25
+
+- Finding: both Wi-Fi boots log "direct scanout on" but "frame copied by the
+  processor (0 shown directly so far)" and zero "shown directly" lines. 0109
+  allocated screen surfaces as contiguous kernel RAM below 4 GiB; on spes all
+  of XNU's RAM is above 4 GiB (shim range 0x100000000 + 3 GiB), so that never
+  succeeds and every frame is copied (10.4 MB) by the processor. The speed-up
+  the user felt on the "scanout" image therefore came from 0108, not 0109.
+  The 0112 black frame had the same problem (fell back to the fade).
+- Live DT RAM below 4 GiB: 0x40000000+0x3cc00000, 0x80000000+0x40000000;
+  reservations listed (hyp, smem, cdsp, modem 0x4ab00000-0x51400000, MSA,
+  adsp 0x53800000-0x56600000, splash 0x5c000000+0xf00000, ramoops,
+  removed_region 0x60000000+0x3900000); 0x80000000-0xc0000000 unreserved.
+  The panel framebuffer is 0x5c000000 (VIG0 src 0x5c000000 stride 0x10e0).
+- 0116 (commit fcdcbe4): scanout pool at 0x90000000, 12 x 16 MB slots
+  (SweetSurface.h SWEET_SCANOUT_*), screen-sized BGRA/format-0 surfaces get a
+  slot (withPhysicalAddress, mapped write-combined for kernel and clients,
+  zeroed), slot 11 = black display-off frame. Logs "SWEET SURF: screen
+  surface WxH size N: scanout slot|no scanout slot free". Shim load area
+  ends ~0x86000000; SpesModem pool 0xe0000000. 0116 run cancelled by the
+  next commit (included there).
+- Frame breakdown (wifi2 log, frames >= 15, n=27; before 0116): median 68.9
+  ms (p90 201.8), flush 20.7, wait 16.5, prep 6.4 ms; draws median 163.
+  RedwoodGPU pushed 5-13 MB of surfaces out of the cache per submission,
+  6-16 ms each (surfaces the client mapped were pushed every submission).
+- Commit 98b9954 (0100 regenerated from xnu/graphics/RedwoodGPU.cpp): skip
+  the push for surfaces whose mapCache is write-combined (scanout pool,
+  panel). Barrier after the loop kept. CI40175736416 -> image
+  spes-ios-graphics-all1.img (modem=1 wifi=1 spesvib=1 adsp=1 + wlan_mac;
+  all of 0112-0116 + this).
+- Next speed levers to measure after this boot: GPU wait 16.5 ms (GPU at
+  300 MHz nominal; Topaz 0922 has stock OPPs above 600 MHz via the GPU PLL
+  but without GX voltage votes - needs RPM votes first); EAGL non-target
+  IOSurface uploads; HackiOS's GPU path for anything else.
+
 # Sound step 1: ADSP boot port (0115), 2026-10-25
 
 - User asked to put the ADSP boot into the same build before booting.
