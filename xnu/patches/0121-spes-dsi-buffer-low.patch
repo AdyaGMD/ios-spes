@@ -1,0 +1,79 @@
+DSI command buffer below 4 GiB for real: the last page of the black scanout slot.
+
+The DSI DMA address register is 32 bits and all of XNU's RAM is above 4 GiB on spes,
+so the IOBufferMemoryDescriptor's address was truncated and the controller fetched some
+other low page: all6 and all6nocpu (sweetpanel=1) reset early in userspace with no panic.
+The buffer is now 0x90000000 + 11 * 16 MB + 16 MB - 4 KB (the 11 MB black frame leaves it
+unused), mapped write-combined and filled with whole words; its address is logged.
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -43,6 +43,7 @@
+ extern "C" void redwood_gpu_ring(uint32_t *rptr, uint32_t *tail);
+ extern "C" void spes_modem_init(void);  /* iokit/Kernel/arm/SpesModem.cpp (boot-arg modem=1) */
+ extern "C" vm_offset_t ml_io_map(vm_offset_t phys_addr, vm_size_t size);
++extern "C" vm_offset_t ml_io_map_wcomb(vm_offset_t phys_addr, vm_size_t size);
+ 
+ /* SM6225 MDSS (DT qcom,mdss_mdp mdp_phys 0x5e00000), as Topaz drives it: SSPP VIG0, CTL0. */
+ #define SWEET_MDP_VIG0          0x05e05000
+@@ -156,7 +157,7 @@
+ 	 * boot-arg sweetpanel=1 until a boot shows the panel takes them.
+ 	 */
+ 	volatile uint8_t *fDsi;
+-	IOBufferMemoryDescriptor *fDsiBuf;
++	volatile uint32_t *fDsiBuf;   /* command DMA buffer, write-combined, below 4 GiB */
+ 	uint64_t      fDsiBufPhys;
+ 	IOLock       *fDsiLock;
+ 	uint32_t      fPanelLevel;    /* DCS 0x51 level 1..0x7ff, kept while the display is off */
+@@ -285,15 +286,25 @@
+ 		fPanelLevel = 0x400;
+ 		if (panel) {
+ 			fDsi = (volatile uint8_t *)ml_io_map(0x05e94000, 0x1000);
+-			fDsiBuf = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
+-			    kIODirectionInOut | kIOMemoryPhysicallyContiguous, page_size, 0x00000000fffff000ull);
+-			fDsiBufPhys = fDsiBuf != NULL ? fDsiBuf->getPhysicalSegment(0, NULL, kIOMemoryMapperNone) : 0;
++			/*
++			 * The DSI DMA address register takes 32 bits and all of XNU's RAM is above 4 GiB
++			 * here, so a kernel buffer's address came out truncated and the controller read
++			 * some other low page: the phone reset as soon as CoreBrightness set a level
++			 * (all6). The buffer is the last page of the black frame's scanout slot, which
++			 * the 11 MB frame leaves unused.
++			 */
++			fDsiBufPhys = SWEET_SCANOUT_BASE + (uint64_t)SWEET_SCANOUT_BLACK * SWEET_SCANOUT_SLOT +
++			    SWEET_SCANOUT_SLOT - page_size;
++			fDsiBuf = (volatile uint32_t *)ml_io_map_wcomb(fDsiBufPhys, page_size);
++			if (fDsiBuf == NULL || fDsiBufPhys + page_size > (1ull << 32)) {
++				fDsiBufPhys = 0;
++			}
+ 			fDsiLock = IOLockAlloc();
+ 			if (fDsi == NULL || fDsiBufPhys == 0 || fDsiLock == NULL) {
+ 				fDsi = NULL;
+ 			} else {
+-				IOLog("SWEET FB: DSI0 ctrl %#x: panel commands on (sleep, brightness)\n",
+-				    *(volatile uint32_t *)(fDsi + 0x004));
++				IOLog("SWEET FB: DSI0 ctrl %#x: panel commands on (sleep, brightness), buffer %#llx\n",
++				    *(volatile uint32_t *)(fDsi + 0x004), fDsiBufPhys);
+ 				setProperty("IOMFBBrightnessLevel", (unsigned long long)(250u << 16), 32);
+ 			}
+ 		}
+@@ -790,15 +801,16 @@
+ 	if (fDsi == NULL || len > 60) {
+ 		return false;
+ 	}
+-	uint8_t *p = (uint8_t *)fDsiBuf->getBytesNoCopy();
++	uint32_t words[16];
++	uint8_t *p = (uint8_t *)words;
+ 	uint32_t size = (4 + len + 3) & ~3u;
+-	memset(p, 0xff, 64);
++	memset(p, 0xff, sizeof(words));
+ 	memcpy(p, hdr, 4);
+ 	if (len) {
+ 		memcpy(p + 4, payload, len);
+ 	}
+-	for (uintptr_t line = (uintptr_t)p & ~(uintptr_t)63; line < (uintptr_t)p + 64; line += 64) {
+-		__asm__ volatile ("dc civac, %0" : : "r" (line));
++	for (unsigned i = 0; i < 16; i++) {
++		fDsiBuf[i] = words[i];          /* uncached: whole words, nothing to clean */
+ 	}
+ 	__asm__ volatile ("dsb sy" ::: "memory");
+ 	uint32_t ctrl = sweet_dsi_rd(fDsi, 0x004), trig = sweet_dsi_rd(fDsi, 0x084);
