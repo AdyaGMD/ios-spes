@@ -1,0 +1,95 @@
+MobileGestalt cache reset (sweetmgreset=1 / sweetmgrestore=1); one move-aside helper for LS and MG.
+
+all20: WebKit's GPU process asks for w30r/b3a8 tiles, i.e. HasExtendedColorDisplay is still
+true though the ADT says sRGB (Topaz fixed Safari with sRGB alone). The likely source is the cached
+answer in systemgroup.com.apple.mobilegestaltcache/Library/Caches/com.apple.MobileGestalt.plist,
+moved to .bak before launchd so MobileGestalt recomputes it; a .bak is never overwritten.
+
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -14593,7 +14593,38 @@
+  * _LSContextInitCommon at the Apple logo (all15). So a .bak is never overwritten (a second
+  * reset would have replaced the good database with the partial one), and boot-arg
+  * sweetlsrestore=1 renames the .bak files back over whatever lsd left.
++ */
++/*
++ * Move one file aside to .bak (reset) or back (restore). A .bak is never overwritten: a second
++ * reset would replace the good copy with whatever was rebuilt in between.
+  */
++static void
++sweet_move_aside(const char *path, int reset, int restore, const char *tag)
++{
++	char bak[256];
++	snprintf(bak, sizeof(bak), "%s.bak", path);
++	vnode_t vp = NULLVP;
++	bool have_bak = vnode_lookup(bak, 0, &vp, vfs_context_kernel()) == 0;
++	if (vp != NULLVP) {
++		vnode_put(vp);
++	}
++	const char *name = strrchr(path, '/') + 1;
++	int err;
++	if (restore == 1) {
++		err = have_bak ? renameat_internal(vfs_context_kernel(), AT_FDCWD, CAST_USER_ADDR_T(bak),
++		    AT_FDCWD, CAST_USER_ADDR_T(path), UIO_SYSSPACE, 0) : ENOENT;
++		printf("SWEET %s: %s.bak -> back: %s (%d)\n", tag, name,
++		    err == 0 ? "restored" : err == ENOENT ? "no .bak" : "failed", err);
++	} else if (reset == 1 && have_bak) {
++		printf("SWEET %s: %s: a .bak exists, not moved (it would replace the backup)\n", tag, name);
++	} else if (reset == 1) {
++		err = renameat_internal(vfs_context_kernel(), AT_FDCWD, CAST_USER_ADDR_T(path),
++		    AT_FDCWD, CAST_USER_ADDR_T(bak), UIO_SYSSPACE, 0);
++		printf("SWEET %s: %s -> .bak: %s (%d)\n", tag, name,
++		    err == 0 ? "moved aside, rebuilt on demand" : err == ENOENT ? "not there" : "failed", err);
++	}
++}
++
+ void sweet_ls_reset(void);
+ void
+ sweet_ls_reset(void)
+@@ -14607,32 +14638,21 @@
+ 	int reset = 0, restore = 0;
+ 	(void)PE_parse_boot_argn("sweetlsreset", &reset, sizeof(reset));
+ 	(void)PE_parse_boot_argn("sweetlsrestore", &restore, sizeof(restore));
+-	if (reset != 1 && restore != 1) {
+-		return;
++	for (unsigned i = 0; i < sizeof(stores) / sizeof(stores[0]) && (reset == 1 || restore == 1); i++) {
++		sweet_move_aside(stores[i], reset, restore, "LS");
+ 	}
+-	for (unsigned i = 0; i < sizeof(stores) / sizeof(stores[0]); i++) {
+-		char bak[256];
+-		snprintf(bak, sizeof(bak), "%s.bak", stores[i]);
+-		vnode_t vp = NULLVP;
+-		bool have_bak = vnode_lookup(bak, 0, &vp, vfs_context_kernel()) == 0;
+-		if (vp != NULLVP) {
+-			vnode_put(vp);
+-		}
+-		const char *name = strrchr(stores[i], '/') + 1;
+-		int err;
+-		if (restore == 1) {
+-			err = have_bak ? renameat_internal(vfs_context_kernel(), AT_FDCWD, CAST_USER_ADDR_T(bak),
+-			    AT_FDCWD, CAST_USER_ADDR_T(stores[i]), UIO_SYSSPACE, 0) : ENOENT;
+-			printf("SWEET LS: %s.bak -> back: %s (%d)\n", name,
+-			    err == 0 ? "restored" : err == ENOENT ? "no .bak" : "failed", err);
+-		} else if (have_bak) {
+-			printf("SWEET LS: %s: a .bak exists, not moved (it would replace the backup)\n", name);
+-		} else {
+-			err = renameat_internal(vfs_context_kernel(), AT_FDCWD, CAST_USER_ADDR_T(stores[i]),
+-			    AT_FDCWD, CAST_USER_ADDR_T(bak), UIO_SYSSPACE, 0);
+-			printf("SWEET LS: %s -> .bak: %s (%d)\n", name,
+-			    err == 0 ? "moved aside, lsd rebuilds it" : err == ENOENT ? "not there" : "failed", err);
+-		}
++	/*
++	 * MobileGestalt's cache (sweetmgreset=1 / sweetmgrestore=1). WebKit's GPU process still asks
++	 * for ten-bit tiles ('w30r', 'b3a8': all20), so something still answers
++	 * HasExtendedColorDisplay from the iPhone X's P3, though the ADT says sRGB: likely the
++	 * cached answer. MobileGestalt recomputes a missing cache from the device tree.
++	 */
++	int mgreset = 0, mgrestore = 0;
++	(void)PE_parse_boot_argn("sweetmgreset", &mgreset, sizeof(mgreset));
++	(void)PE_parse_boot_argn("sweetmgrestore", &mgrestore, sizeof(mgrestore));
++	if (mgreset == 1 || mgrestore == 1) {
++		sweet_move_aside("/private/var/containers/Shared/SystemGroup/systemgroup.com.apple.mobilegestaltcache/"
++		    "Library/Caches/com.apple.MobileGestalt.plist", mgreset, mgrestore, "MG");
+ 	}
+ }
+ #endif
