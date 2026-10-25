@@ -181,6 +181,14 @@ def build(seed=None, qemu=False, highmem=False, device="topaz", memory=None):
         # with this device_type and reads the canvas size from the node
         # (the presented iPhone X size, see SweetFramebuffer.cpp);
         # the kernel's AppleCLCD matches the compatible string.
+        # launchd starts wifid only when the device tree has a "wlan" node
+        # (com.apple.wifid _LimitLoadToDeviceTree = wlan, marconi-wifi); without
+        # it the Settings Wi-Fi switch does nothing (Topaz adds the same node).
+        node('wlan', [
+            ph(),
+            ('device_type', cstr('wlan')),
+            ('compatible', cstr('spes,wcn3988')),
+        ]),
         node('disp0', [
             ph(),
             ('device_type', cstr('display-subsystem')),
