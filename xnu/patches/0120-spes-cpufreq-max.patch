@@ -1,0 +1,123 @@
+CPU clocks: both cpufreq-hw domains (Silver 0x0f521000, Gold 0x0f523000 in the live DT)
+voted to the top of their LUT at boot; spescpufreq=0 leaves the bootloader vote. Logs the
+state count, the old and new perf state and MHz.
+
+--- a/bsd/conf/files
++++ b/bsd/conf/files
+@@ -110,6 +110,7 @@
+ bsd/dev/redwood_apple80211.c	standard
+ bsd/dev/spes_sta.c		standard
+ bsd/dev/spes_vib.c		standard
++bsd/dev/spes_cpufreq.c		standard
+ bsd/dev/sweet_sample.c			standard
+ bsd/dev/sweet_keys.c			standard
+ bsd/dev/sweet_touch.c			standard
+--- a/bsd/dev/sweet_ufs.c
++++ b/bsd/dev/sweet_ufs.c
+@@ -53,6 +53,7 @@
+ extern void sweet_sample_start(void);
+ extern void sweet_keys_init(void);
+ extern void spes_vib_init(void);       /* bsd/dev/spes_vib.c (spesvib=1) */
++extern void spes_cpufreq_init(void);   /* bsd/dev/spes_cpufreq.c (spescpufreq=0 off) */
+ extern void sweet_touch_init(void);
+ extern void sweet_usb_probe(void);
+ 
+@@ -783,6 +784,7 @@
+ 		(void)PE_parse_boot_argn("sweetkeys", &keys, sizeof(keys));
+ 		if (keys == 1) sweet_keys_init();
+ 		printf("SPES: PMIC keys %s; USB disabled\n", keys == 1 ? "requested" : "disabled");
++		spes_cpufreq_init();
+ 		spes_vib_init();
+ 		return 0;
+ 	}
+--- /dev/null
++++ b/bsd/dev/spes_cpufreq.c
+@@ -0,0 +1,88 @@
++/*
++ * spes CPU clocks: both cpufreq-hw domains voted to the top of their frequency table
++ * (boot-arg spescpufreq=0 leaves the bootloader's vote alone).
++ *
++ * Nothing in this kernel runs DVFS, so the cores keep whatever performance state ABL left;
++ * backboardd's GL translation is CPU-bound. The live DT's qcom,cpufreq-hw has
++ * freq-domain0 (Silver, cpu0-3) at 0x0f521000 and freq-domain1 (Gold, cpu4-7) at 0x0f523000.
++ * Register layout as Linux's qcom-cpufreq-hw (v1): enable 0x0, LUT 0x110 in 32-byte rows
++ * (bits 31:30 clock source, 7:0 multiplier of the 19.2 MHz XO; source 0 = 300 MHz), perf
++ * state 0x920. The table ends at the first row that repeats the previous frequency. The
++ * limits hardware (LMh) still throttles on temperature by itself.
++ */
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++#include <sys/param.h>
++#include <sys/systm.h>
++#include <machine/machine_routines.h>
++#include <pexpert/pexpert.h>
++
++extern vm_offset_t ml_io_map(vm_offset_t, vm_size_t);
++void spes_cpufreq_init(void);
++
++#define CF_ENABLE       0x000u
++#define CF_LUT          0x110u
++#define CF_LUT_ROW      32u
++#define CF_LUT_MAX      40u
++#define CF_PERF_STATE   0x920u
++#define CF_XO_KHZ       19200u
++
++static inline uint32_t cf_rd(vm_offset_t b, uint32_t o) { return *(volatile uint32_t *)(b + o); }
++static inline void
++cf_wr(vm_offset_t b, uint32_t o, uint32_t v)
++{
++	__asm__ volatile ("dsb sy" ::: "memory");
++	*(volatile uint32_t *)(b + o) = v;
++	__asm__ volatile ("dsb sy" ::: "memory");
++}
++
++static uint32_t
++cf_khz(uint32_t row)
++{
++	return ((row >> 30) & 3u) != 0 ? (row & 0xffu) * CF_XO_KHZ : 300000u;
++}
++
++static void
++cf_domain(const char *name, vm_offset_t pa)
++{
++	vm_offset_t b = ml_io_map(pa, 0x1000);
++	if (b == 0) {
++		printf("SPES CPUFREQ: %s: no mapping\n", name);
++		return;
++	}
++	if ((cf_rd(b, CF_ENABLE) & 1u) == 0) {
++		printf("SPES CPUFREQ: %s: hardware DVFS off, left alone\n", name);
++		return;
++	}
++	uint32_t top = 0, top_khz = 0, prev = 0, n = 0;
++	for (uint32_t i = 0; i < CF_LUT_MAX; i++) {
++		uint32_t khz = cf_khz(cf_rd(b, CF_LUT + i * CF_LUT_ROW));
++		if (i > 0 && khz == prev) {
++			break;
++		}
++		if (khz > top_khz) {
++			top = i;
++			top_khz = khz;
++		}
++		prev = khz;
++		n++;
++	}
++	uint32_t was = cf_rd(b, CF_PERF_STATE);
++	uint32_t was_khz = was < n ? cf_khz(cf_rd(b, CF_LUT + was * CF_LUT_ROW)) : 0;
++	cf_wr(b, CF_PERF_STATE, top);
++	printf("SPES CPUFREQ: %s: %u states, perf state %u (%u MHz) -> %u (%u MHz), reads back %u\n",
++	    name, n, was, was_khz / 1000, top, top_khz / 1000, cf_rd(b, CF_PERF_STATE));
++}
++
++void
++spes_cpufreq_init(void)
++{
++	int on = 1;
++	(void)PE_parse_boot_argn("spescpufreq", &on, sizeof(on));
++	if (on == 0) {
++		printf("SPES CPUFREQ: off (spescpufreq=0)\n");
++		return;
++	}
++	cf_domain("silver", 0x0f521000);
++	cf_domain("gold", 0x0f523000);
++}
++#endif /* ARM64_BOARD_CONFIG_SWEET */
