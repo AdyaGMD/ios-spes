@@ -1,3 +1,18 @@
+# all28 built: aw87559 amplifiers switched on (0150, spesamp=2), 2026-10-25
+
+- Commit 3930c6f, patch 0150 (bsd/dev/spes_amp.c): 2-byte I2C write; after
+  each amp's reset pulse and id 0x5a, PAGR (0x06) = spesampgain (default 6 =
+  9 dB, reset value 0x10 = 24 dB), SYSCTRL (0x01) = 0x78 (EN_SW + charge
+  pump + boost + PA; reset value 0x38). No aw87xxx_acf.bin profile used
+  (we have none): guess from aw87xxx_pid_5a_reg.h reset values. Logs "SPES
+  AMP: 0x58 on: writes e1/e2, sysctrl .. gain .. sysst ..".
+- CI 40241332514 SUCCESS: kernel xnu/out-0150 SHA256
+  63f8b975f47688f172ee9323a4d7f5afbd146996cb8fd3e93b264c94694f82cb;
+  shim/out/spes-ios-graphics-all28.img (all27 args with spesamp=2) SHA256
+  a39aa41fdeb37e124126fda5b90d78b1fc17d223530d1a4667544b9f0d3563d6.
+  Test: the stage 3 tone (3 s, about 5-8 s after SpesAudio starts, early
+  boot) should be audible from the speaker. Not yet booted.
+
 # all27 result: stage 3 tone stream plays fully into the codec (141/140 periods); PosterBoard ran without crashing but wallpapers still empty, 2026-10-25
 
 - User: wallpaper picker still empty. Log research/spes-all27-boot.txt
