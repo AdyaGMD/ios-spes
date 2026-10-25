@@ -29,7 +29,7 @@
   on) SHA256 e64895fc45afd16e38eac5c22674e4bf4ddc4d793d4b80d076d904f855689d4f;
   shim/out/spes-ios-graphics-all11bl.img (+ sweetbacklight=2, spescpufreq=0)
   SHA256 4f305127ec9c89da9b82bcad3706b9582178e91a70e37ded459ed295af93d6fa.
-  Not booted. Boot all11 first (CPU + Safari log + amp), then all11bl.
+  all11 temp-booted 2026-10-25 (hash verified); all11bl not booted.
 
 # all9 result: UI stays up at speed; fades show console text; 0124, all10 built, 2026-10-25
 
