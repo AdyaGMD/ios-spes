@@ -1,3 +1,20 @@
+# Prepared while all17ls runs: Safari tile diagnostics (0136), codec scope, 2026-10-25
+
+- Commit cf98345, patch 0136: surfaces created by WebKit/MobileSafari are
+  marked by id; each writing unlock by their owner logs "SWEET SURF: <proc>
+  unlocked its surface N WxH: K of 1024 sampled pixels not zero"; another
+  process looking one up logs "SWEET SURF: <proc> looks up WebKit's surface
+  N" (64 lines each). Tells "WebKit draws nothing" from "nobody shows it".
+- CI 40207554834 SUCCESS: kernel xnu/out-0136 SHA256
+  286fa66e8d9f06ad69437d5fe3429a87fa18414b7493548c33f9127bcf7b91e4
+  (0135 amp reset + 0136). No image yet: built after the all17ls log.
+- Codec port scope (Topaz 0145): RPM client TopazRpm.cpp (~330 lines, GLINK
+  over RPM message RAM; L14 = WCD937x VDD_BUCK), PRM (AudioReach) DCODEC
+  clock vote + TX core/NPL clocks (RX/VA run on TX MCLK), LPI pins, macros,
+  both SoundWire masters, SMMU identity for audio DMA SID 0x1C1, stock RX
+  macro registers (topaz-woa rxtab.h), WCD937x init + AUX DAC. On spes the
+  PRM votes must become APR AFE clock requests (HackiOS redwood_sound.c).
+
 # Audio plan: what HackiOS and Topaz give us, 2026-10-25
 
 - spes (live DT): qcom,msm-audio-apr (APR DSP, as our SpesAudio sees:
