@@ -13,6 +13,9 @@ fb_hz=${SWEET_FB_HZ:-60}
 gpu_mhz=${SPES_GPU_MHZ:-300}
 # Extra boot-args for diagnostic images, e.g. SWEET_EXTRA_ARGS='modem=1 wifi=1'.
 extra=${SWEET_EXTRA_ARGS:-}
+# A stable per-phone Wi-Fi MAC (from the live FDT's serial number; the serial is not printed).
+wlan_mac=$(python3 tools/spes_wlan_mac.py "$fdt" 2>/dev/null || true)
+[[ -n "$wlan_mac" ]] && extra="${extra:+$extra }wlan_mac=$wlan_mac"
 mkdir -p shim/out
 python3 tools/mkadt.py shim/out/spes-ios-graphics.adt --device spes --memory-dtb "$fdt"
 # The development kernel uses OSX platform policy; allow iOS executables.
