@@ -1,3 +1,25 @@
+# all13bl stalled (both backlight props), all13 fast; amps NACK with pins already qup1; all14bl built, 2026-10-25
+
+- all13bl: "ui is slow af". Log research/spes-all13bl-boot.txt (356290 B):
+  only 39 redwood-gl frames; backboardd matched backlight-control ->
+  AppleCLCD and "2 found": 0123 enabled AppleCLCD's property for any
+  nonzero sweetbacklight, so =2 set both. No "backlight set by" line.
+  Commit 0131: AppleCLCD property only with sweetbacklight=1.
+- all13 (user asked to boot it while I read all13bl): log
+  research/spes-all13-boot.txt (741759 B): frame > 200 median 11.4 ms, p90
+  24.6 ms, 0 copied out. Preferences crashed sig 11 (Settings freeze?).
+  User: audio still doesn't work (expected: only chip probes so far).
+- Amps (observed): GPIO4/5 read 0x207 before 0130's write = function 1
+  (qup1), pull-up, OE already: the mux was right in all12 too, and 0130
+  cleared the pull-ups (harmless guess; restore next). 0x64, 0x58, 0x5b
+  still NACK. Guess: bus pull-up / chip supply regulator off (Android's
+  driver enables it), not the SE. Next: find the supply in the live DT.
+- CI 40201075958 SUCCESS: kernel xnu/out-0132 SHA256
+  f2e5a3dc9afa383e661ffbd09e12f33ff4b97a1d2b6cac87cbe2b454d84adf62;
+  shim/out/spes-ios-graphics-all14bl.img (sweetpanel=1 spesamp=1
+  sweetbacklight=2) SHA256
+  f19272b529276670cbca8dabfbab48cf9f251ffa1450d30ebec1eafa8531fcfa. Not booted.
+
 # all12 result: GPU stays on (512 MiB VA), frames ~11 ms; amps NACK (pins unmuxed); WebKit GPU process makes BGRA tiles; all13 built, 2026-10-25
 
 - User report template unfilled. Log research/spes-all12-boot.txt
