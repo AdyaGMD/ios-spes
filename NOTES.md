@@ -1,3 +1,28 @@
+# Sound stage 5: /dev/redwood-audio stream (0152) + RedwoodAudio.driver built; all29 CI building, 2026-10-25
+
+- Commit da7a9f8, patch 0152 (SpesAudio.cpp), after Topaz 0146 (user: "use
+  topaz, more similar to ours"): stage 3 split into s3_open/s3_run/s3_ports/
+  s3_rx2/s3_write/s3_close (tone test unchanged at spescodec=3).
+  spescodec=4 opens the stream once (no run); /dev/redwood-audio (created at
+  spes_audio_init, HackiOS ABI: 48 kHz s16 stereo writes, ioctl
+  _IOW('r',1,{below,muted})) fills a 1 s FIFO, never waits. Audio thread:
+  first write -> session run (once), ports (once), RX2 on at spesvol (dB,
+  default -12) less iOS's attenuation, 6 periods (4096 B) with the DSP,
+  refilled as WRITE_DONE comes back (silence if short; skips ahead if >250
+  ms queued). 0.5 s after the last write: mute, RX2 off, no more refills.
+  Logs "stream: playing / stopped: N frames in, ...". Compile-check OK.
+  Guess (unverified): no PAUSE/FLUSH used (HackiOS uses neither); idle
+  session may report underflows (counted only).
+- CI 40242842562 (0150+0151+0152) running. all29 plan: spesamp=2
+  spescodec=4 sweetlsreset=3 (+ all27 diagnostics).
+- HAL plug-in: tools/build-spes-audio-hal.sh builds HackiOS
+  audio_plugin.c (906425b) with our iOS 16.5 SDK -> research/audio-hal/
+  RedwoodAudio.driver (RedwoodAudio SHA256 fef0d61d...; reproducible).
+  Install = root write (NOT approved yet): fresh snapshot (the 25c one is
+  stale: all28 booted since), clone, copy to
+  /System/Library/Audio/Plug-Ins/HAL/RedwoodAudio.driver, delta, verify,
+  apply. Expected: mediaserverd stops aborting, iOS sound via the speaker.
+
 # all28 result: FIRST SOUND from the speaker, 2026-10-25
 
 - User (all28 temp-boot): "sound works": the stage 3 boot tone is audible
