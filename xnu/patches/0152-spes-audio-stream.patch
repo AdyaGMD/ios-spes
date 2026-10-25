@@ -1,0 +1,547 @@
+Sound stage 5: the stream iOS plays into, /dev/redwood-audio (spescodec=4), after Topaz 0146.
+
+all28 played the stage 3 tone out of the speaker. Stage 3's steps are split (s3_open / s3_run /
+s3_ports / s3_rx2 / s3_write / s3_close; the tone test is unchanged), and spescodec=4 keeps the
+stream open as Topaz's TopazAudio stream does, on spes's APR push path: /dev/redwood-audio (the
+ABI of HackiOS's RedwoodAudio.driver, created at spes_audio_init so the plug-in finds it) fills a
+1 s FIFO without waiting; the audio thread runs the session once, sets up the ports once, turns
+RX2 on and keeps 6 periods with the DSP, refilled from the FIFO (silence where short) as they
+come back; 0.5 s after the last write it mutes and turns RX2 off. Volume: RX2 digital gain,
+spesvol dB (default -12) less iOS's attenuation.
+
+--- a/iokit/Kernel/arm/SpesAudio.cpp
++++ b/iokit/Kernel/arm/SpesAudio.cpp
+@@ -1584,37 +1584,38 @@
+ 	return false;
+ }
+ 
+-static void
+-cdc_stage3(void)
++/* the stream's pieces, kept between its steps (stage 3 closes them again, the stream does not) */
++static uint8_t *s3_buf;
++static uint64_t s3_pa;
++static uint32_t s3_handle;
++static uint16_t s3_copp;
++static bool s3_port_on, s3_copp_open, s3_stream_open;
++
++/* buffer, port 0xb032, ADM device path, ASM stream with its route and format: everything but the run */
++static bool
++s3_open(void)
+ {
+-	uint64_t pa = 0;
+-	uint8_t *buf = (uint8_t *)spes_pool_alloc(S3_PERIODS * S3_PERIOD_BYTES, &pa);
+-	if (buf == NULL || pa == 0 || pa + S3_PERIODS * S3_PERIOD_BYTES > (1ull << 32)) {
+-		LOG("t=%u.%03u codec: stage 3: no buffer below 4 GiB (%#llx)", T, pa);
+-		return;
++	s3_buf = (uint8_t *)spes_pool_alloc(S3_PERIODS * S3_PERIOD_BYTES, &s3_pa);
++	if (s3_buf == NULL || s3_pa == 0 || s3_pa + S3_PERIODS * S3_PERIOD_BYTES > (1ull << 32)) {
++		LOG("t=%u.%03u codec: stage 3: no buffer below 4 GiB (%#llx)", T, s3_pa);
++		return false;
+ 	}
+ 	if (!spes_smmu_identity(0x1C1, 0, "audio")) {
+ 		LOG("t=%u.%03u codec: stage 3: audio SID 0x1C1 not passed through", T);
+-		return;
++		return false;
+ 	}
+-	unsigned at = 0;
+-	for (unsigned p = 0; p < S3_PERIODS; p++) {
+-		int16_t *s = (int16_t *)(buf + p * S3_PERIOD_BYTES);
+-		for (unsigned f = 0; f < S3_PERIOD_FRAMES; f++) {
+-			s[2 * f] = s[2 * f + 1] = s3_tone[at++ % 48];
+-		}
+-	}
+-	for (uintptr_t l = (uintptr_t)buf; l < (uintptr_t)buf + S3_PERIODS * S3_PERIOD_BYTES; l += 64) {
++	bzero(s3_buf, S3_PERIODS * S3_PERIOD_BYTES);
++	for (uintptr_t l = (uintptr_t)s3_buf; l < (uintptr_t)s3_buf + S3_PERIODS * S3_PERIOD_BYTES; l += 64) {
+ 		__asm__ volatile ("dc cvac, %0" : : "r" (l));
+ 	}
+ 	__asm__ volatile ("dsb sy" ::: "memory");
+ 
+ 	struct { uint16_t pool, regions; uint32_t property, low, high, size; } __attribute__((packed)) map =
+-	    { 3, 1, 0, (uint32_t)pa, 1, S3_PERIODS * S3_PERIOD_BYTES };
++	    { 3, 1, 0, (uint32_t)s3_pa, 1, S3_PERIODS * S3_PERIOD_BYTES };
+ 	if (!s3_call("buffer mapped (ASM)", APR_SVC_ASM, 0, 0x00010d92u, &map, sizeof(map), ASM_CMDRSP_SHARED_MEM_MAP_REGIONS)) {
+-		return;
++		return false;
+ 	}
+-	uint32_t handle = s3_rsp_word0;
++	s3_handle = s3_rsp_word0;
+ 
+ 	struct {
+ 		uint16_t port, size; uint32_t lsw, msw, handle;
+@@ -1622,7 +1623,7 @@
+ 		uint32_t version, rate; uint16_t bits, format, channels, mask;
+ 	} __attribute__((packed)) cfg = { S3_PORT, 8 + 4 + 16, 0, 0, 0, 0x0001020cu, 0x000102b8u, 16, 0, 1, 48000, 16, 0, 2, 3 };
+ 	uint16_t start[2] = { S3_PORT, 0 };
+-	bool port_on = s3_call("port 0xb032 configured (codec DMA, 2 x 16 bit, 48 kHz)", APR_SVC_AFE, 0, 0x000100efu, &cfg,
++	s3_port_on = s3_call("port 0xb032 configured (codec DMA, 2 x 16 bit, 48 kHz)", APR_SVC_AFE, 0, 0x000100efu, &cfg,
+ 	    sizeof(cfg), 0x000100efu) &&
+ 	    s3_call("port 0xb032 started", APR_SVC_AFE, 0, 0x000100e5u, start, sizeof(start), 0x000100e5u);
+ 
+@@ -1630,58 +1631,116 @@
+ 		uint16_t flags, mode, endpoint1, endpoint2; uint32_t topology;
+ 		uint16_t channels, bits; uint32_t rate; uint8_t map[8];
+ 	} __attribute__((packed)) open = { 0, 1, S3_PORT, 0xffff, 0x00010312u, 2, 16, 48000, { 1, 2 } };
+-	bool copp_open = port_on && s3_call("device path (ADM)", APR_SVC_ADM, S3_PORT, 0x00010326u, &open, sizeof(open),
++	s3_copp_open = s3_port_on && s3_call("device path (ADM)", APR_SVC_ADM, S3_PORT, 0x00010326u, &open, sizeof(open),
+ 	    ADM_CMDRSP_DEVICE_OPEN_V5) && s3_rsp_word0 == 0;
+-	uint16_t copp = (uint16_t)(s3_rsp_word1 & 0xffff);
++	s3_copp = (uint16_t)(s3_rsp_word1 & 0xffff);
+ 
+ 	struct { uint32_t flags; uint16_t sink, bits; uint32_t topology, format; } __attribute__((packed)) wr =
+ 	    { 0, 0, 16, 0x00010c68u, 0x00010da5u };
+ 	struct { uint32_t matrix, sessions; uint16_t session, copps; uint16_t copp[2]; } __attribute__((packed)) route =
+-	    { 0, 1, (uint16_t)S3_SESSION, 1, { copp, 0 } };
++	    { 0, 1, (uint16_t)S3_SESSION, 1, { s3_copp, 0 } };
+ 	struct { uint32_t size; uint16_t channels, bits; uint32_t rate; uint16_t is_signed, reserved; uint8_t map[8]; }
+ 	__attribute__((packed)) fmt = { 20, 2, 16, 48000, 1, 0, { 1, 2 } };
+-	uint32_t run[3] = { 0, 0, 0 };
+-	bool stream_open = copp_open &&
++	s3_stream_open = s3_copp_open &&
+ 	    s3_call("stream opened (ASM, 16-bit PCM)", APR_SVC_ASM, S3_STREAM_PORT, 0x00010db3u, &wr, sizeof(wr), 0x00010db3u);
+-	bool running = stream_open &&
+-	    s3_call("session routed to the device path", APR_SVC_ADM, 0, 0x00010325u, &route, sizeof(route), 0x00010325u) &&
+-	    s3_call("stream format", APR_SVC_ASM, S3_STREAM_PORT, 0x00010d98u, &fmt, sizeof(fmt), 0x00010d98u) &&
+-	    s3_call("session run", APR_SVC_ASM, S3_STREAM_PORT, 0x00010daau, run, sizeof(run), 0x00010daau);
++	return s3_stream_open &&
++	       s3_call("session routed to the device path", APR_SVC_ADM, 0, 0x00010325u, &route, sizeof(route), 0x00010325u) &&
++	       s3_call("stream format", APR_SVC_ASM, S3_STREAM_PORT, 0x00010d98u, &fmt, sizeof(fmt), 0x00010d98u);
++}
+ 
+-	if (running) {
+-		/* Topaz ports_and_pa(): SoundWire data ports and the WCD937x AUX PA, after the start */
+-		static const uint32_t slv[][2] = { { 0x203, 7 }, { 0x230, 1 }, { 0x232, 0x1F }, { 0x233, 0 }, { 0x234, 0 },
+-			                           { 0x236, 0x36 }, { 0x430, 1 }, { 0x432, 7 }, { 0x433, 0 }, { 0x434, 1 } };
+-		cdc_w(CDC_RX_SWR + 0x1264, 0x0100001F); cdc_w(CDC_RX_SWR + 0x127C, 0); cdc_w(CDC_RX_SWR + 0x122C, 7);
+-		cdc_w(CDC_RX_SWR + 0x1274, 0x63);
+-		cdc_w(CDC_RX_SWR + 0x1464, 0x01000107); cdc_w(CDC_RX_SWR + 0x147C, 0); cdc_w(CDC_RX_SWR + 0x1474, 0);
+-		for (uint32_t i = 0; i < sizeof(slv) / sizeof(slv[0]); i++) {
+-			cdc_swr_wr(CDC_RX_SWR, 1, slv[i][0], slv[i][1]);
+-		}
+-		cdc_w(CDC_RX_SWR + 0x105C, 0x5000F);
+-		cdc_w(CDC_RX_SWR + 0x300, (0x0Fu << 24) | (15u << 20) | (15u << 16) | 0x70);
+-		IOSleep(5);
+-		cdc_swr_wr(CDC_VA_SWR, 1, 0x3467, 0x05);
+-		cdc_swr_wr(CDC_VA_SWR, 1, 0x3128, 0x80);
+-		cdc_swr_wr(CDC_VA_SWR, 1, 0x346B, 0x4C);
+-		cdc_swr_wr(CDC_VA_SWR, 1, 0x346C, 0x7F);
+-		cdc_swr_wr(CDC_VA_SWR, 1, 0x346D, 0x0F);
+-		/*
+-		 * RX2's path on, as Topaz's tone_test() does after the ports: volume, 0x518 = 4, path
+-		 * control 0x24. Left muted (0x04, stage 2) the codec never pulled the DMA: the DSP played
+-		 * 1 period of 140 in 3 s (all26).
+-		 */
+-		cdc_w(CDC_RX_MACRO + 0x514, (uint32_t)(int8_t)-30 & 0xFF);
++static bool
++s3_run(void)
++{
++	uint32_t run[3] = { 0, 0, 0 };
++	return s3_call("session run", APR_SVC_ASM, S3_STREAM_PORT, 0x00010daau, run, sizeof(run), 0x00010daau);
++}
++
++/* Topaz ports_and_pa(): SoundWire data ports and the WCD937x AUX PA, after the first run */
++static void
++s3_ports(void)
++{
++	static const uint32_t slv[][2] = { { 0x203, 7 }, { 0x230, 1 }, { 0x232, 0x1F }, { 0x233, 0 }, { 0x234, 0 },
++		                           { 0x236, 0x36 }, { 0x430, 1 }, { 0x432, 7 }, { 0x433, 0 }, { 0x434, 1 } };
++	cdc_w(CDC_RX_SWR + 0x1264, 0x0100001F); cdc_w(CDC_RX_SWR + 0x127C, 0); cdc_w(CDC_RX_SWR + 0x122C, 7);
++	cdc_w(CDC_RX_SWR + 0x1274, 0x63);
++	cdc_w(CDC_RX_SWR + 0x1464, 0x01000107); cdc_w(CDC_RX_SWR + 0x147C, 0); cdc_w(CDC_RX_SWR + 0x1474, 0);
++	for (uint32_t i = 0; i < sizeof(slv) / sizeof(slv[0]); i++) {
++		cdc_swr_wr(CDC_RX_SWR, 1, slv[i][0], slv[i][1]);
++	}
++	cdc_w(CDC_RX_SWR + 0x105C, 0x5000F);
++	cdc_w(CDC_RX_SWR + 0x300, (0x0Fu << 24) | (15u << 20) | (15u << 16) | 0x70);
++	IOSleep(5);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x3467, 0x05);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x3128, 0x80);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x346B, 0x4C);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x346C, 0x7F);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x346D, 0x0F);
++}
++
++/*
++ * RX2's path on at a volume (s8 dB), as Topaz's tone_test() does after the ports: volume,
++ * 0x518 = 4, path control 0x24; off is 0x04. Left muted the codec never pulls the DMA (all26).
++ */
++static void
++s3_rx2(bool on, int db)
++{
++	cdc_w(CDC_RX_MACRO + 0x514, (uint32_t)(int8_t)db & 0xFF);
++	if (on) {
+ 		cdc_w(CDC_RX_MACRO + 0x518, 0x04);
+-		cdc_w(CDC_RX_MACRO + 0x500, 0x24);
++	}
++	cdc_w(CDC_RX_MACRO + 0x500, on ? 0x24 : 0x04);
++}
++
++static void
++s3_write(uint32_t p)
++{
++	uint32_t w[8] = { (uint32_t)(s3_pa + p * S3_PERIOD_BYTES), 1, s3_handle, S3_PERIOD_BYTES, p, 0, 0, 0 };
++	apr_send_to(APR_SVC_ASM, S3_STREAM_PORT, S3_WRITE_TOKEN | p, 0x00010dabu, w, sizeof(w));
++}
++
++static void
++s3_close(void)
++{
++	if (s3_stream_open) {
++		s3_call("stream closed", APR_SVC_ASM, S3_STREAM_PORT, 0x00010bcdu, NULL, 0, 0x00010bcdu);
++	}
++	if (s3_copp_open) {
++		s3_call("device path closed", APR_SVC_ADM, s3_copp, 0x00010327u, NULL, 0, 0x00010327u);
++	}
++	if (s3_port_on) {
++		uint16_t stop[2] = { S3_PORT, 0 };
++		s3_call("port stopped", APR_SVC_AFE, 0, 0x000100e6u, stop, sizeof(stop), 0x000100e6u);
++	}
++	s3_call("buffer unmapped", APR_SVC_ASM, 0, 0x00010d94u, &s3_handle, sizeof(s3_handle), 0x00010d94u);
++	s3_stream_open = s3_copp_open = s3_port_on = false;
++}
++
++static void
++cdc_stage3(void)
++{
++	bool running = s3_open() && s3_run();
++	if (running) {
++		s3_ports();
++		s3_rx2(true, -30);
+ 		LOG("t=%u.%03u codec: ports + AUX PA + RX2 on: rx frame %08x, irq %08x, rx2 ctl %02x", T,
+ 		    cdc_r(CDC_RX_SWR + 0x105C), cdc_r(CDC_RX_SWR + 0x200), cdc_r(CDC_RX_MACRO + 0x500) & 0xFF);
+ 
++		unsigned at = 0;
++		for (unsigned p = 0; p < S3_PERIODS; p++) {
++			int16_t *s = (int16_t *)(s3_buf + p * S3_PERIOD_BYTES);
++			for (unsigned f = 0; f < S3_PERIOD_FRAMES; f++) {
++				s[2 * f] = s[2 * f + 1] = s3_tone[at++ % 48];
++			}
++		}
++		for (uintptr_t l = (uintptr_t)s3_buf; l < (uintptr_t)s3_buf + S3_PERIODS * S3_PERIOD_BYTES; l += 64) {
++			__asm__ volatile ("dc cvac, %0" : : "r" (l));
++		}
++		__asm__ volatile ("dsb sy" ::: "memory");
++
+ 		/* 3 s of the tone: every period written again as the DSP gives it back */
+ 		s3_done = s3_underflows = s3_errors = s3_returned = 0;
+ 		for (uint32_t p = 0; p < S3_PERIODS; p++) {
+-			uint32_t w[8] = { (uint32_t)(pa + p * S3_PERIOD_BYTES), 1, handle, S3_PERIOD_BYTES, p, 0, 0, 0 };
+-			apr_send_to(APR_SVC_ASM, S3_STREAM_PORT, S3_WRITE_TOKEN | p, 0x00010dabu, w, sizeof(w));
++			s3_write(p);
+ 		}
+ 		unsigned began = ms();
+ 		while (ms() - began < 3000) {
+@@ -1691,8 +1750,7 @@
+ 				s3_returned &= ~back;
+ 				for (uint32_t p = 0; p < S3_PERIODS; p++) {
+ 					if (back & (1u << p)) {
+-						uint32_t w[8] = { (uint32_t)(pa + p * S3_PERIOD_BYTES), 1, handle, S3_PERIOD_BYTES, p, 0, 0, 0 };
+-						apr_send_to(APR_SVC_ASM, S3_STREAM_PORT, S3_WRITE_TOKEN | p, 0x00010dabu, w, sizeof(w));
++						s3_write(p);
+ 					}
+ 				}
+ 			}
+@@ -1700,22 +1758,264 @@
+ 		}
+ 		LOG("t=%u.%03u codec: 3 s of tone: %u periods done (%u expected at 48 kHz), %u errors, %u underflows", T,
+ 		    s3_done, 3000u * 48 / S3_PERIOD_FRAMES, s3_errors, s3_underflows);
+-		cdc_w(CDC_RX_MACRO + 0x500, 0x04);      /* RX2 path off again */
++		s3_rx2(false, -30);
+ 	}
+-	if (stream_open) {
+-		s3_call("stream closed", APR_SVC_ASM, S3_STREAM_PORT, 0x00010bcdu, NULL, 0, 0x00010bcdu);
+-	}
+-	if (copp_open) {
+-		s3_call("device path closed", APR_SVC_ADM, copp, 0x00010327u, NULL, 0, 0x00010327u);
+-	}
+-	if (port_on) {
+-		uint16_t stop[2] = { S3_PORT, 0 };
+-		s3_call("port stopped", APR_SVC_AFE, 0, 0x000100e6u, stop, sizeof(stop), 0x000100e6u);
++	s3_close();
++}
++
++/* ---------------------------------------------------------------- the stream iOS plays into */
++
++/*
++ * spescodec=4: Topaz's 0146 on spes's APR path. The stream of stage 3 is opened once and stays
++ * open; /dev/redwood-audio (HackiOS's RedwoodAudio.driver HAL plug-in in mediaserverd writes
++ * whole 48 kHz 16-bit stereo frames, ioctl _IOW('r', 1, {below, muted}) the volume) puts frames
++ * into a 1 s FIFO and never waits. When frames come the audio thread runs the session (once),
++ * sets up the ports (once), turns RX2's path on and keeps ST_INFLIGHT periods with the DSP,
++ * each refilled from the FIFO (silence where it runs short) as the DSP gives it back. 0.5 s after
++ * the last write it stops refilling, mutes and turns RX2's path off; the periods still with the
++ * DSP are silence by then. The amplifiers stay on (spes_amp.c, spesamp=2). Volume: RX2's
++ * digital gain, boot-arg spesvol (dB, default -12) at iOS's loudest.
++ */
++#define FIFO_BYTES          (48000u * 4)
++#define ST_INFLIGHT         6u                      /* 6 x 21.3 ms with the DSP */
++#define ST_QUIET_MS         500u
++
++static uint8_t *fifo;
++static uint32_t fifo_r, fifo_w;                     /* bytes read and written, ever (mod 2^32) */
++static IOLock *fifo_lock;
++static volatile bool st_ready;
++static volatile uint32_t st_last_write;             /* ms() of the latest write, 0: none since the stop */
++static bool st_playing, st_ran, st_ports_up;
++static uint32_t st_busy;                            /* periods with the DSP */
++static int st_vol_db = -12;
++static volatile uint32_t vol_below, vol_muted, vol_gen;
++static uint32_t vol_applied;
++static uint64_t st_in, st_dropped, st_skipped, st_short, st_sent;
++
++static int
++st_db(void)
++{
++	int db = vol_muted ? -84 : st_vol_db - (int)(vol_below / 8);
++	return db < -84 ? -84 : db;
++}
++
++static void
++st_fill(uint32_t p)
++{
++	uint8_t *dst = s3_buf + p * S3_PERIOD_BYTES;
++	IOLockLock(fifo_lock);
++	uint32_t held = fifo_w - fifo_r;
++	if (held > FIFO_BYTES / 4) {                    /* the writer ran ahead of the DSP's clock: keep 100 ms */
++		uint32_t skip = (held - FIFO_BYTES / 10) & ~3u;
++		fifo_r += skip;
++		held -= skip;
++		st_skipped += skip / 4;
+ 	}
+-	s3_call("buffer unmapped", APR_SVC_ASM, 0, 0x00010d94u, &handle, sizeof(handle), 0x00010d94u);
++	uint32_t n = MIN(held, S3_PERIOD_BYTES), at = fifo_r % FIFO_BYTES, n1 = MIN(n, FIFO_BYTES - at);
++	memcpy(dst, fifo + at, n1);
++	memcpy(dst + n1, fifo, n - n1);
++	fifo_r += n;
++	IOLockUnlock(fifo_lock);
++	if (n < S3_PERIOD_BYTES) {
++		bzero(dst + n, S3_PERIOD_BYTES - n);
++		if (n != 0) {
++			st_short++;
++		}
++	}
++	for (uintptr_t l = (uintptr_t)dst; l < (uintptr_t)dst + S3_PERIOD_BYTES; l += 64) {
++		__asm__ volatile ("dc cvac, %0" : : "r" (l));
++	}
++	__asm__ volatile ("dsb sy" ::: "memory");
++	st_busy |= 1u << p;
++	st_sent++;
++	s3_write(p);
++}
++
++static void
++stream_open(void)
++{
++	(void)PE_parse_boot_argn("spesvol", &st_vol_db, sizeof(st_vol_db));
++	if (st_vol_db > 0 || st_vol_db < -84) {
++		st_vol_db = -12;
++	}
++	fifo = (uint8_t *)IOMalloc(FIFO_BYTES);
++	fifo_lock = IOLockAlloc();
++	if (fifo == NULL || fifo_lock == NULL || !s3_open()) {
++		LOG("t=%u.%03u stream: not opened", T);
++		return;
++	}
++	st_ready = true;
++	LOG("t=%u.%03u stream: open, waiting for /dev/redwood-audio (spesvol %d dB)", T, st_vol_db);
++}
++
++static void
++stream_start(void)
++{
++	if (!st_ran) {
++		if (!s3_run()) {
++			LOG("t=%u.%03u stream: run failed: no sound this boot", T);
++			st_ready = false;
++			return;
++		}
++		st_ran = true;
++	}
++	if (!st_ports_up) {
++		s3_ports();
++		st_ports_up = true;
++	}
++	s3_done = s3_underflows = s3_errors = 0;
++	s3_rx2(true, st_db());
++	vol_applied = vol_gen;
++	for (uint32_t p = 0; p < ST_INFLIGHT; p++) {
++		if (!(st_busy & (1u << p))) {
++			st_fill(p);
++		}
++	}
++	st_playing = true;
++	LOG("t=%u.%03u stream: playing at %d dB", T, st_db());
++}
++
++static void
++stream_stop(void)
++{
++	st_playing = false;
++	cdc_w(CDC_RX_MACRO + 0x514, (uint32_t)(int8_t)-84 & 0xFF);     /* mute first: no click */
++	IOSleep(30);
++	s3_rx2(false, -84);
++	st_last_write = 0;
++	LOG("t=%u.%03u stream: stopped: %llu frames in, %llu dropped (FIFO full), %llu skipped (ahead), %llu periods sent, "
++	    "%u done, %u short, %u errors, %u underflows", T, st_in, st_dropped, st_skipped, st_sent, s3_done, (unsigned)st_short,
++	    s3_errors, s3_underflows);
++}
++
++/* the audio thread, between GLINK polls: start, refill, volume, stop */
++static void
++stream_poll(void)
++{
++	if (!st_ready) {
++		return;
++	}
++	uint32_t back = s3_returned;
++	if (back != 0) {
++		s3_returned &= ~back;
++		st_busy &= ~back;
++	}
++	uint32_t last = st_last_write;
++	bool fresh = last != 0 && ms() - last < ST_QUIET_MS;
++	if (!st_playing) {
++		if (fresh) {
++			stream_start();
++		}
++		return;
++	}
++	for (uint32_t p = 0; p < ST_INFLIGHT; p++) {
++		if ((back & (1u << p)) && !(st_busy & (1u << p))) {
++			st_fill(p);
++		}
++	}
++	if (vol_applied != vol_gen) {
++		vol_applied = vol_gen;
++		cdc_w(CDC_RX_MACRO + 0x514, (uint32_t)(int8_t)st_db() & 0xFF);
++		LOG("t=%u.%03u stream: volume %d dB", T, st_db());
++	}
++	if (!fresh) {
++		stream_stop();
++	}
+ }
+ 
++/* frames from /dev/redwood-audio: never waits; how many were taken */
++static uint32_t
++stream_write(const int16_t *frames, uint32_t count)
++{
++	if (!st_ready) {
++		return 0;
++	}
++	uint32_t bytes = count * 4;
++	IOLockLock(fifo_lock);
++	uint32_t room = FIFO_BYTES - (fifo_w - fifo_r);
++	if (bytes > room) {
++		st_dropped += (bytes - room) / 4;
++		bytes = room;
++	}
++	uint32_t at = fifo_w % FIFO_BYTES, n1 = MIN(bytes, FIFO_BYTES - at);
++	memcpy(fifo + at, frames, n1);
++	memcpy(fifo, (const uint8_t *)frames + n1, bytes - n1);
++	fifo_w += bytes;
++	st_in += bytes / 4;
++	uint32_t now = ms();
++	st_last_write = now != 0 ? now : 1;
++	IOLockUnlock(fifo_lock);
++	return bytes / 4;
++}
++
++/* ---------------------------------------------------------------- /dev/redwood-audio */
++
++#include <sys/conf.h>
++#include <sys/uio.h>
++#include <sys/ioccom.h>
++#include <miscfs/devfs/devfs.h>
++
++struct redwood_audio_volume_arg { uint32_t below, muted; };
++#define REDWOOD_AUDIO_SET_VOLUME  _IOW('r', 1, struct redwood_audio_volume_arg)
++
++static int
++ra_open(dev_t, int, int, struct proc *)
++{
++	return 0;
++}
++
++static int
++ra_close(dev_t, int, int, struct proc *)
++{
++	return 0;
++}
++
++static int
++ra_write(dev_t, struct uio *uio, int)
++{
++	int16_t buf[1024 * 2];
++
++	while (uio_resid(uio) >= 4) {
++		user_ssize_t n = MIN(uio_resid(uio), (user_ssize_t)sizeof(buf)) & ~3;
++		int err = uiomove((char *)buf, (int)n, uio);
++		if (err != 0) {
++			return err;
++		}
++		(void)stream_write(buf, (uint32_t)(n / 4));
++	}
++	return 0;
++}
++
++static int
++ra_ioctl(dev_t, u_long cmd, caddr_t data, int, struct proc *)
++{
++	if (cmd != REDWOOD_AUDIO_SET_VOLUME) {
++		return ENOTTY;
++	}
++	const struct redwood_audio_volume_arg *v = (const struct redwood_audio_volume_arg *)data;
++	vol_below = v->below;
++	vol_muted = v->muted;
++	vol_gen++;
++	return 0;
++}
++
++static const struct cdevsw ra_cdevsw = {
++	.d_open = ra_open, .d_close = ra_close, .d_read = eno_rdwrt, .d_write = ra_write, .d_ioctl = ra_ioctl,
++	.d_stop = eno_stop, .d_reset = eno_reset, .d_ttys = NULL, .d_select = eno_select, .d_mmap = eno_mmap,
++	.d_strategy = eno_strat, .d_reserved_1 = eno_getc, .d_reserved_2 = eno_putc, .d_type = 0,
++};
++
++/* At spes_audio_init: the plug-in opens the node once, when mediaserverd loads it, maybe before the DSP is up. */
+ static void
++audio_dev_init(void)
++{
++	int major = cdevsw_add(-1, &ra_cdevsw);
++	void *node = major < 0 ? NULL :
++	    devfs_make_node(makedev(major, 0), DEVFS_CHAR, UID_ROOT, GID_WHEEL, 0666, "redwood-audio");
++	LOG("/dev/redwood-audio: %s", node != NULL ? "ready (frames dropped until the stream is open)" : "not created");
++}
++
++static void
+ cdc_vote(uint32_t block, const char *client)
+ {
+ 	struct { uint32_t block; char client[8]; } __attribute__((packed)) req = { block, { 0 } };
+@@ -1814,8 +2114,10 @@
+ 	    cdc_r(CDC_VA_SWR + 0x1090), cdc_r(CDC_RX_SWR + 0x538), cdc_r(CDC_VA_SWR + 0x538));
+ 	if (wanted >= 2 && cdc_r(CDC_VA_SWR + 0x1090) != 0) {
+ 		cdc_stage2();
+-		if (wanted >= 3) {
++		if (wanted == 3) {
+ 			cdc_stage3();
++		} else if (wanted >= 4) {
++			stream_open();
+ 		}
+ 	}
+ 	cdc_step = 3;
+@@ -1873,6 +2175,7 @@
+ 		gpr_poll();
+ 		apr_poll();
+ 		codec_poll();
++		stream_poll();
+ 		if (*adsp_state & 1) {
+ 			LOG("t=%u.%03u *** ADSP FATAL (slave-kernel %08x) ***", T, *adsp_state);
+ 			crash_reason();
+@@ -1905,6 +2208,7 @@
+ 		return;
+ 	}
+ 	started = true;
++	audio_dev_init();
+ 	if (kernel_thread_start(spes_audio_thread, NULL, &thread) == KERN_SUCCESS) {
+ 		thread_deallocate(thread);
+ 	}
