@@ -1,3 +1,27 @@
+# Wallpaper: why the database lacks posters; diagnostic all17ls + restore all17r, 2026-10-25
+
+- User: "get the wallpaper working before building".
+- installd never runs (all15, all16: no "exec installd"); its job is
+  on-demand (MachService com.apple.mobile.installd, not disabled).
+  /private/var/installd/Library/MobileInstallation/MigrationInfo.plist and
+  /private/var/mobile/Library/Preferences/com.apple.migration.plist
+  (LastSystemVersion 20H392) say the migration for this build is done.
+- Read-only look at the root image's LaunchServices stores: apps are there
+  (com.apple.PosterBoard 11, PaperBoard 4, mobileslideshow 17 strings), but
+  the only registered .appex is AuthenticationServicesUI's
+  AccountAuthenticationModificationExtensionHelper.appex (ExtensionKit).
+  Poster providers live in framework PlugIns (WallpaperKit.framework/PlugIns/
+  CollectionsPoster.appex), which lsd registers itself during a full
+  rebuild, not installd. So the rebuild is the right fix; it hangs (all15).
+- Diagnostic image (kernel out-0135, incl. 0135 amp reset):
+  shim/out/spes-ios-graphics-all17ls.img (sweetlsreset=1
+  sweetsample=lsd,SpringBoard,pkd) SHA256
+  4878223c84c4883678ffe0f5e8d778a795927811bf34f44e9576badca9985dde: wait
+  ~15 min (rebuild slow vs stuck), samples every 120 s from 90 s.
+  Restore image shim/out/spes-ios-graphics-all17r.img (sweetlsrestore=1)
+  SHA256 d1ea9511a3a7e9644b66014a0c8762cd114368c86221010451d73dbd258d33d9.
+  Neither booted.
+
 # all16 restored the LaunchServices database; all17 built (amp reset pulse), 2026-10-25
 
 - User on all16: "ios booted the ui showed but no wallpaper". Log
