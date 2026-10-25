@@ -1,0 +1,60 @@
+Display off flips the scanout to a ready black frame instead of blackening panel memory
+with the processor while it is scanned (the dark crept down the screen).
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -146,6 +146,8 @@
+ 	uint64_t      fScanPhys;      /* what VIG0 fetches now */
+ 	SweetSurface *fScanned[2];    /* the surface on screen and the one before (the MDP may still read it) */
+ 	uint32_t      fDirectFrames, fCopiedFrames;
++	IOBufferMemoryDescriptor *fBlack;       /* a black panel frame in contiguous RAM: display off is a flip */
++	uint64_t      fBlackPhys;
+ 	void          scanFrom(uint64_t pa, uint32_t stride, SweetSurface *s);
+ 	bool          directPresent(const uint8_t *rec, SweetSurface **surfaces);
+ 	/*
+@@ -256,6 +258,28 @@
+ 		    fBootSrc, fBootStride, fPhys, fRowBytes, fDirect ? "on" : "off");
+ 		if (fDirect) {
+ 			sweet_scanout_set_geometry(fLogicalW, fLogicalH);
++			/*
++			 * Display off used to blacken panel memory with the processor while the pipe scanned
++			 * it: the dark visibly crept down the screen. A ready black frame is shown instead.
++			 */
++			fBlack = IOBufferMemoryDescriptor::inTaskWithPhysicalMask(kernel_task,
++			    kIODirectionInOut | kIOMemoryPhysicallyContiguous, (uint64_t)fRowBytes * fHeight,
++			    0x00000000fffff000ull);
++			IOByteCount run = 0;
++			fBlackPhys = fBlack != NULL ? fBlack->getPhysicalSegment(0, &run, kIOMemoryMapperNone) : 0;
++			if (fBlack != NULL && (fBlackPhys == 0 || run < (uint64_t)fRowBytes * fHeight ||
++			    fBlackPhys + (uint64_t)fRowBytes * fHeight > (1ull << 32))) {
++				OSSafeReleaseNULL(fBlack);
++				fBlackPhys = 0;
++			}
++			if (fBlack != NULL) {
++				uintptr_t va = (uintptr_t)fBlack->getBytesNoCopy();
++				bzero((void *)va, (size_t)fRowBytes * fHeight);
++				for (uintptr_t line = va & ~(uintptr_t)63; line < va + (uint64_t)fRowBytes * fHeight; line += 64) {
++					__asm__ volatile ("dc cvac, %0" : : "r" (line));
++				}
++				__asm__ volatile ("dsb sy" ::: "memory");
++			}
+ 		}
+ 	}
+ 	{
+@@ -404,6 +428,16 @@
+ 		client->notify(SWEET_FB_NOTIFY_VSYNC, values, 6);
+ 	}
+ 	if (fb->fPowerOff) {
++		if (fb->fDirect && fb->fBlackPhys != 0) {
++			if (fb->fScanPhys != fb->fBlackPhys) {
++				fb->scanFrom(fb->fBlackPhys, fb->fRowBytes, NULL);    /* black at the next vsync */
++			}
++			fb->fPresentReady = fb->fDirty;
++			IOLockWakeup(fb->fLock, &fb->fPresentReady, true);
++			IOLockUnlock(fb->fLock);
++			sender->setTimeoutUS(SWEET_FB_VSYNC_US);
++			return;
++		}
+ 		if (fb->fDirect && fb->fScanPhys != fb->fBootSrc) {
+ 			fb->scanFrom(fb->fBootSrc, fb->fBootStride, NULL);    /* the fade draws in panel memory */
+ 			/*
