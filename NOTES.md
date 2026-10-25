@@ -1,3 +1,33 @@
+# all19 result: WebKit tiles are empty; PosterBoard still traps; GPIO35 on 0xd00000; all20 built, 2026-10-25
+
+- User on all19: no wallpaper; picker opens with none, only "add new"
+  (gray empty panel). Safari: google black; apple.com shows the page for a
+  moment when switching tabs, then fades to black (same every switch).
+  Log research/spes-all19-boot.txt (702258 B, flush #27). No panic (0138 ok).
+- Safari (observed): every com.apple.WebKit.GPU unlock of its tiles
+  (1125x1536, 1125x1905, 1125x105 ...): "0 of 1024 sampled pixels not
+  zero"; backboardd looks each up by port (so they are shown, empty).
+  MobileSafari's own 433x433 surface has pixels (the tab snapshot that
+  shows before the fade). WebKit's GPU process draws nothing into tiles.
+  Topaz fixed blank Safari with sRGB alone (3eacb48), which we have; no
+  MobileGestalt cache file in the 10-24 root image. 0139: logs the format
+  WebKit asked for (before w30r -> BGRA) and its first 12 requests whole.
+- Wallpaper (observed): PosterBoard still traps in
+  _stateLock_setupSwitcherConfigurationForFirstTime and relaunches even on
+  the rebuilt database (all17ls only had not reached it yet). all20 adds
+  PosterBoard to sweetscan (heap text at the trap = assertion text) and
+  sweetnull (its /dev/null writes).
+- Sound (observed): GPIO 32/33/36 read only on 0xd00000 (GPIO36 0x3c3; so
+  the old vib probe's tile was right and the motor needs its PWM); GPIO35
+  reads 0 everywhere. 0140: a pin reading 0 everywhere takes the tile its
+  neighbours all share.
+- Commit 69e8d6e (0139, 0140). CI 40211140629 SUCCESS: kernel
+  xnu/out-0140 SHA256
+  88c7a2bd587eeebdafa647b29fb929c8ab081ba86bb3d795e2f33b286fedc6ec;
+  shim/out/spes-ios-graphics-all20.img (sweetpanel=1 spesamp=1
+  sweetscan/sweetnull=backboardd,SpringBoard,PosterBoard) SHA256
+  7670d7c0e6997fd366ed3891002730f2dd46ac5f1f4c8848796dc1c55849440e. Not booted.
+
 # Codec port plan (spes = Topaz codec + HackiOS APR), 2026-10-25
 
 - spes live DT: wcd937x-codec supplies cdc-vdd-rxtx/cdc-vddpx = L9 1.8 V
