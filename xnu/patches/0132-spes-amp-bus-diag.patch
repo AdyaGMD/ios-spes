@@ -1,0 +1,54 @@
+Amplifier bus diagnosis: SDA/SCL pad levels and the always-powered chips on SE1.
+
+All chips NACKed with the pins already on qup1 (all12, all13), the LED driver too. The live DT
+puts the max77729 charger/fuel gauge (0x66) and sc8551 charger (0x65) on the same bus; both run
+off the battery, so they tell a dead bus from unpowered amplifiers. The pad levels of GPIO 4/5
+are logged before any transfer (idle I2C is high), and the pin config is only changed when
+the function is not qup1 (0130 dropped the pull-up).
+
+--- a/bsd/dev/spes_amp.c
++++ b/bsd/dev/spes_amp.c
+@@ -28,8 +28,9 @@
+ #define AMP_RCG         0x1f278u        /* QUP0 S1 CMD; CFG +4, branch -4 */
+ #define AMP_SE_PA       0x04a84000u
+ /*
+- * SE1's SDA/SCL are GPIO 4/5 with function qup1 (live DT qupv3_se1_i2c_active, 2 mA, no
+- * bias); left as plain GPIOs every chip NACKed (all12). Same tile and function number as the
++ * SE1's SDA/SCL are GPIO 4/5 with function qup1 (live DT qupv3_se1_i2c_active). They already
++ * read 0x207 (function 1, pull-up) and every chip still NACKed (all12, all13), so the function
++ * is set only if it is not 1 and the pull-up is kept. Same tile and function number as the
+  * touch driver's qup2 pins GPIO 6/7 (WEST 0x500000, mux 1).
+  */
+ #define AMP_WEST_PA     0x00500000u
+@@ -242,18 +243,25 @@
+ 		return;
+ 	}
+ 	for (uint32_t pin = 4; pin <= 5; pin++) {
+-		uint32_t cfg = amp_rd(west, pin * 0x1000u), want = (cfg & ~0x3ffu) | (1u << 2);
+-		if (cfg & (1u << 11)) {
+-			want |= 1u << 12;               /* EGPIO enable when present (khaje) */
++		uint32_t cfg = amp_rd(west, pin * 0x1000u);
++		if (((cfg >> 2) & 0xfu) != 1u) {
++			uint32_t want = (cfg & ~0x3cu) | (1u << 2) | 3u;   /* qup1, pull-up */
++			if (cfg & (1u << 11)) {
++				want |= 1u << 12;       /* EGPIO enable when present (khaje) */
++			}
++			amp_wr(west, pin * 0x1000u, want);
+ 		}
+-		amp_wr(west, pin * 0x1000u, want);
+-		printf("SPES AMP: GPIO%u cfg %#x -> %#x (qup1)\n", pin, cfg, amp_rd(west, pin * 0x1000u));
++		/* An idle I2C line is high: a low pad means no pull-up or no bus supply. */
++		printf("SPES AMP: GPIO%u (%s) cfg %#x -> %#x, pad %s\n", pin, pin == 4 ? "SDA" : "SCL", cfg,
++		    amp_rd(west, pin * 0x1000u), (amp_rd(west, pin * 0x1000u + 4u) & 1u) ? "high" : "LOW");
+ 	}
+ 	if (!amp_se_setup(se, rx)) {
+ 		return;
+ 	}
++	/* 0x66 and 0x65 run off the battery: they answer whenever the bus works. */
+ 	static const struct { uint8_t addr; const char *what; } chips[] = {
+-		{ 0x64, "aw2016 LED driver" }, { 0x58, "amplifier (reset GPIO 106)" }, { 0x5b, "amplifier (reset GPIO 35)" },
++		{ 0x66, "max77729 charger/fuel gauge" }, { 0x65, "sc8551 charger" }, { 0x64, "aw2016 LED driver" },
++		{ 0x58, "amplifier (reset GPIO 106)" }, { 0x5b, "amplifier (reset GPIO 35)" },
+ 	};
+ 	static const char *const how[] = { "id", "NACK (absent or held in reset)", "bus error", "engine stuck" };
+ 	for (unsigned i = 0; i < sizeof(chips) / sizeof(chips[0]); i++) {

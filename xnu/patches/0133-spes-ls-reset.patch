@@ -1,0 +1,63 @@
+Wallpaper: boot-arg sweetlsreset=1 moves the LaunchServices database aside once.
+
+The csstore on the root lists no app extensions, so PosterBoard finds no poster provider and
+traps in -[PBFPosterExtensionDataStore _stateLock_setupSwitcherConfigurationForFirstTime]: no
+wallpaper. HackiOS has a fresh /private/var each boot, so its database is always rebuilt. Both
+stores are renamed to .bak (not removed) before launchd starts, and lsd builds new ones.
+
+--- a/bsd/kern/bsd_init.c
++++ b/bsd/kern/bsd_init.c
+@@ -1043,6 +1043,12 @@
+ 	bsd_init_kprintf("calling siginit\n");
+ 	siginit(kernproc);
+ 
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++	{
++		extern void sweet_ls_reset(void);       /* bsd/vfs/vfs_syscalls.c (sweetlsreset=1), before launchd */
++		sweet_ls_reset();
++	}
++#endif
+ 	bsd_init_kprintf("calling bsd_utaskbootstrap\n");
+ 	bsd_utaskbootstrap();
+ 
+--- a/bsd/vfs/vfs_syscalls.c
++++ b/bsd/vfs/vfs_syscalls.c
+@@ -14578,4 +14578,38 @@
+ 	}
+ 
+ 	return error;
++}
++
++#if defined(ARM64_BOARD_CONFIG_SWEET)
++/*
++ * boot-arg sweetlsreset=1: move LaunchServices' database aside once, so lsd builds it again.
++ * The one on the root was built when no app extension registered: it lists none, so PosterBoard
++ * finds no poster provider and traps in -[PBFPosterExtensionDataStore
++ * _stateLock_setupSwitcherConfigurationForFirstTime] and there is no wallpaper. HackiOS has a
++ * fresh /private/var every boot, so its database is always new. The files are renamed to .bak,
++ * not removed; a rename that finds nothing (already moved) is reported and harmless.
++ */
++void sweet_ls_reset(void);
++void
++sweet_ls_reset(void)
++{
++	static const char *const stores[] = {
++		"/private/var/mobile/Containers/Data/InternalDaemon/E440478E-94EE-4C07-A184-35F73711651B/"
++		"Library/Caches/com.apple.LaunchServices-4035-v2.csstore",
++		"/private/var/mobile/Containers/Data/InternalDaemon/E440478E-94EE-4C07-A184-35F73711651B/"
++		"Library/Caches/SystemDataOnly-com.apple.LaunchServices-4035-v2.csstore",
++	};
++	int on = 0;
++	if (!PE_parse_boot_argn("sweetlsreset", &on, sizeof(on)) || on != 1) {
++		return;
++	}
++	for (unsigned i = 0; i < sizeof(stores) / sizeof(stores[0]); i++) {
++		char to[256];
++		snprintf(to, sizeof(to), "%s.bak", stores[i]);
++		int err = renameat_internal(vfs_context_kernel(), AT_FDCWD, CAST_USER_ADDR_T(stores[i]),
++		    AT_FDCWD, CAST_USER_ADDR_T(to), UIO_SYSSPACE, 0);
++		printf("SWEET LS: %s -> .bak: %s (%d)\n", strrchr(stores[i], '/') + 1,
++		    err == 0 ? "moved aside, lsd rebuilds it" : err == ENOENT ? "not there" : "failed", err);
++	}
+ }
++#endif
