@@ -13,6 +13,7 @@
 - Test image all7nodirect = all7 (sRGB) + sweetfb_direct=0 (CPU copies
   each frame into panel memory): shim/out/spes-ios-graphics-all7nodirect.img
   SHA256 96bcf43a6ce7b8e2dd18df2fb8a163a7463a83f43ec96db5ae49c419e09cb106.
+  Temp-booted 2026-10-25 (hash verified).
   UI visible (slower) -> direct scanout after panel commands is the fault.
 
 # all7 result: no reset (0121 works), fades work, but the iOS UI is black, 2026-10-25
