@@ -1,3 +1,31 @@
+# all11 result: GPU address space ran out (fast, then slow); amp SE1 has I2C firmware; all12 built, 2026-10-25
+
+- User on all11: fast, then black, then laggy (thought the GPU crashed).
+  Log research/spes-all11-boot.txt (460398 B, flush #13).
+- Observed: "SPES CPUFREQ: silver .. 1516 -> 1900 MHz; gold .. 300 -> 2400
+  MHz" (0127 step-up fine, no reset). No "backend stopped", no refusals.
+  From line 4553: "RedwoodGPU: no addresses left for a buffer of 13893632
+  bytes", then "redwood-gl: glFlush: error 0x505" (GL_OUT_OF_MEMORY) and
+  frames "1 picture copied out, 0 drawn in place" (~10.8 MB CPU copy each):
+  the slowdown. Kept buffers were 80-92 MB; up to 11 screen surfaces at
+  13.9 MB each plus those fill/fragment 256 MiB.
+- Observed: "SPES AMP: se1 fw 0x303 proto 3 .. tx 0x20102864 rx 0x20104800:
+  I2C firmware with 32-bit FIFOs" (gcc vote was 0x4be0, branch on).
+- Observed: EXIT com.apple.WebKit[279/285/288/289] status 0 reason 0
+  (clean exits). Safari test postponed by the user until GPU is stable.
+- Commit (this): spes_gpu_backend.h (in 0100) SPES_GPU_SIZE 512 MiB
+  (L2 entries 256-511 of the first GiB; start checks they are empty),
+  2048 buffer slots; tests/test_gpu_backend OK. 0129: SE1 set up as SE2
+  is, register 0 read from 0x64 (aw2016 LED, not reset-gated), 0x58, 0x5b;
+  amp reset GPIOs untouched (no khaje pin->tile table; vib probe's GPIO36
+  at 0xd00000 may have been the wrong tile: touch uses 0x900000 for GPIO98).
+- CI 40198727164 SUCCESS: kernel xnu/out-0130 SHA256
+  f0cc73cdd14972df1e07fccf699889af1b7805e5b4135147a50485581f3d3eef.
+  shim/out/spes-ios-graphics-all12.img (sweetpanel=1 spesamp=1, CPU on)
+  SHA256 78cbcbbae654dfa1b4d80ff6fc3a396139c2ae8727fb88d7f09234e75bf5c321;
+  shim/out/spes-ios-graphics-all12bl.img (+ sweetbacklight=2) built from the
+  same kernel. Not booted.
+
 # all10 result: fades fixed; all11 / all11bl built (Safari diag, backlight service, CPU step, amp probe), 2026-10-25
 
 - User on all10: "okay fixed" (0124: lock/wake fades show the UI). Next
