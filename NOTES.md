@@ -1,3 +1,43 @@
+# Wi-Fi iOS layer (0113), per-phone MAC, vibration probe (0114), 2026-10-25
+
+- 0113 (commit 20ae079) = Topaz 0900 (HackiOS darwin-redwood) on our radio:
+  bsd/dev/redwood_apple80211.c (Apple80211 ioctls SIOCGA80211/SIOCSA80211
+  answered in the kernel), redwood_net.c (en0 via the BSD interface KPI,
+  starts RedwoodWLAN registry entries), redwood_sta.c (station boundary,
+  scan/join requests on a thread), spes_sta.c (= topaz_sta.c renamed onto
+  spes_wlan_*: same struct spes_wlan_bss and signatures; on radio-ready it
+  sets the MAC, rx/link hooks, attaches en0 + station), bsd/sys/redwood_*.h,
+  iokit RedwoodWLAN.cpp (IO80211InterfaceRole=Infrastructure, no user client
+  -> IO80211 falls back to ioctls) and MiniIONetworkStack.cpp (configd's
+  interface namer otherwise waits 5 min). spes_modem_init starts
+  spes_sta_init. Also AKS kAKSWrapKey/kAKSUnwrapKey handlers (keychain items,
+  wifid passwords) from 0900. Skipped 0900's SweetSurface hunk (BGRA
+  collapse, already ours). SpesModem.cpp already had topaz_wlan_* function
+  aliases but not the hook variables, hence the rename. Objects checked:
+  unmangled C symbols match between SpesModem.o and spes_sta.o.
+- MAC: our_mac was the fixed 02:54:4F:50:41:5A ("TOPAZ") on every phone.
+  Now boot-arg wlan_mac=XX:XX:XX:XX:XX:XX (validated locally administered
+  unicast, else fixed kept); tools/spes_wlan_mac.py derives a stable one
+  from SHA-256 of androidboot.serialno in the live FDT (serial never
+  printed); the graphics builder adds it automatically. Host test
+  tests/test_spes_wlan_mac.py. Do not record the derived MAC here.
+- Vibration: DT qcom,lct-pwm-vibrator, enable TLMM GPIO 36 (EAST tile),
+  PWM = PM6125 (SPMI SID 1) qcom,pwm-lpg at 0xb300, 1 channel. Topaz has no
+  vibrator support; HackiOS's is an I2C AW86927 (different), but shows iOS
+  plays haptics via an "Actuator" CoreAudio HAL device (audio_plugin.c ->
+  /dev/redwood-haptic). 0114 (commit faf33c6): spesvib=1 raises GPIO 36 for
+  300 ms at boot and restores it (touch driver's pin handling): buzz =
+  enable alone suffices; none = LPG PWM (PMIC write) needed.
+- Sound plan: port Topaz 0144 (TopazAudio.cpp 1295 lines: ADSP PAS boot,
+  SMP2P, GLINK lpass edge, QRTR + pd-mapper, GPR state) onto SpesModem's
+  helpers (smem_partition/get/alloc, pool_alloc, scm, fw from modem_a);
+  learn whether spes ADSP speaks APR (stock apr_audio_svc) or GPR; then codec
+  (WCD937x/SoundWire), aw87559 amps, and the userland HAL plug-in (root
+  write, needs approval) for both sound and the haptics Actuator device.
+- CI40173247338 (0113 only) cancelled by CI40173500857 (0113+0114); image
+  spes-ios-graphics-wifi4.img = modem=1 wifi=1 spesvib=1 + wlan_mac.
+- Later (user): 60 fps, using HackiOS's GPU implementation as reference.
+
 # Wi-Fi radio works under XNU: firmware ready, scan hears 38 networks, 2026-10-25
 
 - wifi2 boot log pulled after the phone reappeared: research/spes-wifi2-boot.txt
