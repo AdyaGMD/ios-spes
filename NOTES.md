@@ -27,9 +27,16 @@
   qcom,mdss_dsi_panel_k7_38_0c_0a_fhdp_video: OLED, bl_ctrl_dcs, max 0x7ff,
   bl-inverted-dbv. Topaz notes its DCS commands "do not reach the panel yet
   (video mode)", hence opt-in. Compile 0/1 failed.
-- CI40149295874 (0110 only) cancelled by CI40149642020 (0110+0111). Images
-  to build: spes-ios-graphics-wifi2.img (modem=1 wifi=1) and
-  spes-ios-graphics-wifi2-panel.img (+ sweetpanel=1).
+- CI40149295874 (0110 only) cancelled by CI40149642020 (0110+0111) SUCCESS:
+  kernel xnu/out-0115 SHA256
+  31ec39eac46fb31ba0720494262ef00745a15caa553023f0fa77bc60708bb080. Images
+  (cmdline: sweetkeys=1, no sweetfb_stayon, modem=1 wifi=1):
+  spes-ios-graphics-wifi2.img SHA256
+  aa3e7477c9ad14bccf8650ccc0abdd424ed89b3f96df8a109b261d13788e7783;
+  spes-ios-graphics-wifi2-panel.img (+ sweetpanel=1) SHA256
+  7625833954789a3238372422a9cf4ddf0d328cd22b9ce518c43a5fb094aede00.
+  Neither booted. Boot wifi2 first (safe display-off); the panel variant can
+  leave the screen dark until reboot if sleep-out is not accepted.
 - Wallpaper cause found: the CRASH line's "slide" IS the shared-cache slide
   (exception.c sweet_crash_log prints sr_slide); earlier guessing was wrong.
   PosterBoard SIGTRAP at unslid 0x1c1778268 =
