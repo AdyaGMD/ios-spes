@@ -1,0 +1,47 @@
+Amplifier probe: mux SE1's pins (GPIO 4/5, function qup1) before the reads.
+
+all12: SE1 has I2C firmware but every chip NACKed, the LED driver at 0x64 too: the pins were
+plain GPIOs (DT sleep state). The touch driver muxes its qup2 pins GPIO 6/7 the same way.
+
+--- a/bsd/dev/spes_amp.c
++++ b/bsd/dev/spes_amp.c
+@@ -27,6 +27,12 @@
+ #define AMP_GCC_BITS    0x0bc0u
+ #define AMP_RCG         0x1f278u        /* QUP0 S1 CMD; CFG +4, branch -4 */
+ #define AMP_SE_PA       0x04a84000u
++/*
++ * SE1's SDA/SCL are GPIO 4/5 with function qup1 (live DT qupv3_se1_i2c_active, 2 mA, no
++ * bias); left as plain GPIOs every chip NACKed (all12). Same tile and function number as the
++ * touch driver's qup2 pins GPIO 6/7 (WEST 0x500000, mux 1).
++ */
++#define AMP_WEST_PA     0x00500000u
+ 
+ /* GENI registers and I2C packing as bsd/dev/sweet_touch.c (i2c-qcom-geni.c). */
+ #define SE_STATUS       0x040u
+@@ -227,9 +233,25 @@
+ 	    amp_rd(se, 0x040), tx, rx,
+ 	    i2c ? "I2C firmware with 32-bit FIFOs" :
+ 	    "no usable I2C firmware: the amplifiers need the SE firmware loaded first");
+-	if (!i2c || !amp_se_setup(se, rx)) {
++	if (!i2c) {
++		return;
++	}
++	vm_offset_t west = ml_io_map(AMP_WEST_PA, 0x6000);
++	if (west == 0) {
++		printf("SPES AMP: no TLMM mapping\n");
+ 		return;
+ 	}
++	for (uint32_t pin = 4; pin <= 5; pin++) {
++		uint32_t cfg = amp_rd(west, pin * 0x1000u), want = (cfg & ~0x3ffu) | (1u << 2);
++		if (cfg & (1u << 11)) {
++			want |= 1u << 12;               /* EGPIO enable when present (khaje) */
++		}
++		amp_wr(west, pin * 0x1000u, want);
++		printf("SPES AMP: GPIO%u cfg %#x -> %#x (qup1)\n", pin, cfg, amp_rd(west, pin * 0x1000u));
++	}
++	if (!amp_se_setup(se, rx)) {
++		return;
++	}
+ 	static const struct { uint8_t addr; const char *what; } chips[] = {
+ 		{ 0x64, "aw2016 LED driver" }, { 0x58, "amplifier (reset GPIO 106)" }, { 0x5b, "amplifier (reset GPIO 35)" },
+ 	};
