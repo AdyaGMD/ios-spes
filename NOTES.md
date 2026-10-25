@@ -26,7 +26,8 @@
   xnu/out-0121 SHA256 9acb1a39ef54c6bce4bda3a1124c60413fa095186845d68285e821039856fda9;
   image shim/out/spes-ios-graphics-all3.img (modem=1 wifi=1 adsp=1 +
   wlan_mac; ADT has /arm-io/wlan) SHA256
-  dabf61a2f5e9a17cbfc83615abfd4a24c56baff0500551c3ad671c703bde99c6. Not booted.
+  dabf61a2f5e9a17cbfc83615abfd4a24c56baff0500551c3ad671c703bde99c6. Temp-booted 2026-10-25 send0.407s/boot0.287s/total0.698s (from
+  OrangeFox; product spes).
 
 # Hardware result — all1: scanout works, Wi-Fi iOS layer up, ADSP firmware lookup bug, 2026-10-25
 
