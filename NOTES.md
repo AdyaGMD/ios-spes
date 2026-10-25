@@ -15,7 +15,8 @@
   8cc03b8dbb211f3f703f6d5955350adee87776212ea55999717ac6df85752c54 (0135,
   0136 Safari tile diag, 0137). shim/out/spes-ios-graphics-all18.img
   (sweetpanel=1 spesamp=1) SHA256
-  6a27e4799e206764f6ef5a452ce3fa8e874f49c9fd237b8fabe5cd7b567d93f6. Not booted.
+  6a27e4799e206764f6ef5a452ce3fa8e874f49c9fd237b8fabe5cd7b567d93f6.
+  Temp-booted 2026-10-25 (hash verified).
   Checks: wallpaper on the first normal-speed boot with the new database;
   Safari tile pixels/lookups; GPIO35's tile from its neighbours.
 
