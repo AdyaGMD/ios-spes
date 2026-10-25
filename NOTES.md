@@ -30,8 +30,9 @@
 - tools/build-spes-ios-graphics.sh: new SWEET_EXTRA_ARGS for diagnostic
   boot-args. Built shim/out/spes-ios-graphics-wifi.img = scanout kernel
   out-0114 + "modem=1 wifi=1", SHA256
-  d5b4c606838555a00a3de987289fec10b1a61d71868cba021ad59d94d925f727. Not
-  booted. Modem firmware is read from modem_a only; no partition writes.
+  d5b4c606838555a00a3de987289fec10b1a61d71868cba021ad59d94d925f727.
+  Temp-booted 2026-10-25 send0.409s/boot0.288s/total0.700s (phone was in
+  Fastboot; product spes). This overwrote the scanout boot's log. Modem firmware is read from modem_a only; no partition writes.
 
 # Hardware result — scanout image: ~20 fps, freeze in Settings > General, 2026-10-25
 
