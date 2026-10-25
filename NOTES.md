@@ -30,8 +30,9 @@
   de6fc0bdb2a3e1fa086d7f74cba368ed60074cee63f9803cec8ed44ed5567473; image
   shim/out/spes-ios-graphics-all1.img (modem=1 wifi=1 spesvib=1 adsp=1 +
   wlan_mac; 0112-0116 + this) SHA256
-  0885ede307951212304355425f9b6d9b88f5feca3d93e255f0ff31e8e26e4d4f. Not
-  booted. Check: "screen surface ... scanout slot", "frame N shown
+  0885ede307951212304355425f9b6d9b88f5feca3d93e255f0ff31e8e26e4d4f.
+  Temp-booted 2026-10-25 send0.407s/boot0.287s/total0.698s (from OrangeFox;
+  product spes). Check: "screen surface ... scanout slot", "frame N shown
   directly", fewer KB out of the cache, SPES VIB / SPES WIFI / SpesAudio.
 - Next speed levers to measure after this boot: GPU wait 16.5 ms (GPU at
   300 MHz nominal; Topaz 0922 has stock OPPs above 600 MHz via the GPU PLL
