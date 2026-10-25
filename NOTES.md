@@ -1,3 +1,32 @@
+# ios-sailfish (Pixel 1, iPhone 8 userland): wallpaper and brightness answers, 2026-10-25
+
+- research/ios-sailfish (joranv1/ios-sailfish @6f27e41, same ios-sweet lineage).
+- Wallpaper: README: "No hardware video decoder: HEIC images and video do
+  not decode. The stock wallpapers' HEIC layers are converted to PNG"
+  (tools/wallpaper-heic2png.sh: sips PNG twin per HEIC under
+  /Library/Wallpaper/Collections/*/Wallpapers/*.wallpaper/*.ca/assets/,
+  main.caml repointed; HEICs kept). Copied to our tools/ (credited). On spes:
+  48 HEIC, 18 main.caml, 7.2 MB -> 62 MB with PNGs. Delta prepared on the
+  first snapshot (research/spes-wallpaper-png-delta, 78 MiB) but stale: the
+  phone booted since (block 0 differs; no writes). Fresh snapshot
+  research/spes-phone-root-20261025b.img in progress; redo the conversion
+  on a clone of it. Applying is a root write: ask the user first.
+- Brightness: sailfish 0168 AppleARMBacklight: CoreBrightness takes the
+  backlight-control service of class AppleARMBacklight, reads
+  IODisplayParameters brightness {min,max,value} and sets {brightness,
+  FadePeriod, backlight-level}; DCS 0x51 from a 16 ms fade. Our tries had
+  the wrong class/keys (and stalled). Patch 0145 ports it
+  (sweetbacklight=2) onto setPanelLevel (0..255 -> 1..0x7ff, updates
+  fPanelLevel). mkadt MKADT_OLED=0 makes /product oled-display 0 (sailfish is
+  LCD iPhone 8; OLED may route iOS to frame-synchronous IOMFB brightness).
+- Commit 5d0c69f; CI 40219133532 dispatched; images all25 (iPhone X OLED)
+  and all25o (MKADT_OLED=0), both spescodec=2 sweetbacklight=2
+  sweetsample=PosterBoard,SpringBoard.
+- all24 (spescodec=2, sweetsample) was built (kernel out-0144 SHA256
+  9dae9b337e41a5036590e2a21d2b30a28f93d36d90e4ae4a936f77018f8cc02e, image
+  SHA256 cda753bdbc293df990b29dd572cbefed21aa47d9cdd7ed1b3e92a82945f21bb5),
+  superseded by all25 before booting.
+
 # Charging plan (not started), 2026-10-25
 
 - Exists: SweetBattery (0062), an IOPMPowerSource (status bar shows a green
