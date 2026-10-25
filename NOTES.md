@@ -1,3 +1,26 @@
+# all3 result: wifid starts; GPU stopped on a refused submission; APR client (0117), 2026-10-25
+
+- User on all3: "fast in the beginning then screen goes black for a few
+  seconds and it's slow". Log research/spes-all3-boot.txt (479755 B,
+  flush #35): "exec wifid" appears (ADT wlan node works). Then
+  "SPES GPU: backend stopped: the ring is full fence=2426 tail=942" with
+  SUBMIT_STATUS rptr=942 wptr=942 (ring EMPTY), no fault bits; then
+  backboardd SIGSEGV far 0x18 in our injected GL code, restart, slow (no GPU).
+- Cause: the queued backend returned 0 for a refused submission as well as
+  for a full ring, and RedwoodGPU took every 0 for a stopped core and
+  stopped the GPU for good. Commit dee840d: backend refusals set
+  redwood_gpu_rejected() and log the reason (count / size / no buffer /
+  unmapped page, first 8); RedwoodGPU fails only that submission. Limit
+  64 -> 128 command buffers per submission. tests/test_gpu_backend.py
+  checks refusals keep the GPU ready. Which refusal it was is unknown
+  until the next log ("SPES GPU: submission refused (...)").
+- Sound step 2, 0117 (commit 357ae5e): APR client in SpesAudio on
+  apr_audio_svc: AVCS_CMD_ADSP_EVENT_GET_STATE every 500 ms until 1, then
+  AVCS_GET_VERSIONS, logs "APR: ADSP audio services state = N" and the
+  service ids/versions. Port of HackiOS redwood_adsp.c step 11.
+- CI40182352085 (refusal fix) cancelled by CI40182473187 (both) -> image
+  spes-ios-graphics-all4.img (modem=1 wifi=1 adsp=1 + wlan_mac).
+
 # all2 result: ADSP boots and speaks APR; wifid never started (no ADT wlan node); still slow, 2026-10-25
 
 - User on all2: "no wifi no sound no vibration still slow"; "the wifi toggle in
