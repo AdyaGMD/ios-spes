@@ -35,7 +35,8 @@
   aa3e7477c9ad14bccf8650ccc0abdd424ed89b3f96df8a109b261d13788e7783;
   spes-ios-graphics-wifi2-panel.img (+ sweetpanel=1) SHA256
   7625833954789a3238372422a9cf4ddf0d328cd22b9ce518c43a5fb094aede00.
-  Neither booted. Boot wifi2 first (safe display-off); the panel variant can
+  wifi2 temp-booted 2026-10-25 send0.404s/boot0.287s/total0.695s (from
+  OrangeFox; product spes). Panel variant not booted. Boot wifi2 first (safe display-off); the panel variant can
   leave the screen dark until reboot if sleep-out is not accepted.
 - Wallpaper cause found: the CRASH line's "slide" IS the shared-cache slide
   (exception.c sweet_crash_log prints sr_slide); earlier guessing was wrong.
