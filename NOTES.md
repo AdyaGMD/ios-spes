@@ -34,8 +34,14 @@
   learn whether spes ADSP speaks APR (stock apr_audio_svc) or GPR; then codec
   (WCD937x/SoundWire), aw87559 amps, and the userland HAL plug-in (root
   write, needs approval) for both sound and the haptics Actuator device.
-- CI40173247338 (0113 only) cancelled by CI40173500857 (0113+0114); image
-  spes-ios-graphics-wifi4.img = modem=1 wifi=1 spesvib=1 + wlan_mac.
+- CI40173247338 (0113 only) cancelled by CI40173500857 (0113+0114) SUCCESS
+  (links: no undefined symbols): kernel xnu/out-0117 SHA256
+  e570d4864cccefedcf431bfe295d4f1c40c970112179e07709b21962681efd62; image
+  shim/out/spes-ios-graphics-wifi4.img (modem=1 wifi=1 spesvib=1 wlan_mac=)
+  SHA256 ab2108f3f495f045ada9ac238ff455039f11c32e5ade6401f940da50e7ffbea9.
+  Also includes 0112 (instant black display off). Not booted. Expect:
+  "SPES VIB:" lines and a 300 ms buzz (or not) during boot; "SPES WIFI: en0
+  and the station are up for iOS" after WLAN ready; Wi-Fi in Settings.
 - Later (user): 60 fps, using HackiOS's GPU implementation as reference.
 
 # Wi-Fi radio works under XNU: firmware ready, scan hears 38 networks, 2026-10-25
