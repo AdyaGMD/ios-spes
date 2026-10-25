@@ -5,18 +5,51 @@ to **Redmi Note 11 (`spes`, SM6225 / Snapdragon 680)**. Target handset: 6 GB
 physical RAM, unlocked bootloader. The Android “+2 GB” expansion is not RAM
 available to this kernel.
 
-**Status (2026-10-23): iOS 16.7.16 boots to its interface on spes.**
-The user confirmed the UI, touchscreen and volume buttons on the test handset.
-Startup and interaction are very slow. The verified GPU diagnostic uses one Gold
-CPU. GPU acceleration of the iOS interface and Wi-Fi are not working; additional
-CPUs and the power button remain unverified here. This is an experimental port, not a daily-use ROM.
+**Status (2026-10-25): iOS 16.7.16 runs its interface on the Adreno 610 GPU.**
+CoreAnimation draws through Mesa freedreno and the HackiOS EAGL bridge, on six
+CPU cores with a 60 Hz panel timer. Full-screen frames go straight to the
+display controller (MDP scanout) instead of being copied by the CPU. On the test
+handset this runs at roughly 20 frames a second (the user's estimate), with
+stutters between operations. Touchscreen and volume buttons work.
+
+Known problems: the system froze once after opening Settings > General; the
+wallpaper does not appear (PosterBoard finds no wallpaper provider, a root and
+userland issue that also affects Topaz); app icons were missing in earlier
+builds and have not been rechecked since the latest IOSurface fixes. Wi-Fi and
+sound are not working yet. This is an experimental port, not a daily-use ROM.
 
 The iOS HFS+ root is installed in the existing `userdata` partition after
 explicit approval to erase Android data. Boot images are still loaded with
 `fastboot boot`; bootloaders, recovery, modem and persist are preserved.
 Apple filesystem images and device-specific dumps are not distributed here.
 
-## GPU bring-up milestone (2026-10-23)
+## Graphics (2026-10-25)
+
+The GPU stack follows [HackiOS](https://github.com/oosexgang/hackios-xnu-kernel)
+(RedwoodGPU service, MiniIOSurface/MiniIOMobileFramebuffer designs, EAGL bridge
+over Mesa) and [Topaz](https://github.com/MakrSas/ios-topaz), which runs the same
+SM6225 SoC and Adreno 610. Main pieces, all patches in `xnu/patches`:
+
+- **0100/0102**: persistent A610 backend with queued submissions (the caller waits
+  for ring space, not for the GPU) and per-surface GPU fences; the framebuffer
+  waits for a frame's fence before showing it.
+- **0046/0104/0108**: built-in IOSurface with client-memory surfaces, values,
+  bulk attachments, and Topaz's release semantics (trap 4 detaches, trap 5 releases).
+- **0105/0106**: presenter thread with frame backpressure; published 60 Hz modes.
+- **0107**: GPU clock from GPLL0 (nominal 300 MHz); `SPES_GPU_MHZ=19` selects the
+  original 19.2 MHz clock.
+- **0109**: direct MDP scanout of full-screen surfaces from contiguous RAM
+  (SSPP VIG0/CTL0, as in Topaz). It is only enabled when VIG0 is found scanning the
+  boot framebuffer; boot-arg `sweetfb_direct=0` turns it off.
+- `tools/eagl-attach-gpu.patch`: EAGL fills attached display targets on the GPU
+  instead of copying them on the CPU.
+
+`tools/build-spes-ios-graphics.sh KERNEL LIVE_FDT` builds the full graphics image
+(defaults: `SWEET_CPUS=6`, `SWEET_FB_HZ=60`, `SPES_GPU_MHZ=300`). The Mesa/EAGL
+libraries are installed into the iOS root separately. Development history and
+logs are in `NOTES.md`.
+
+### GPU bring-up milestone (2026-10-23)
 
 All three stages of GPU initialization and execution are verified on the test handset:
 1. **Command Processor execution**: `CP_ME_INIT` retires at RPTR/WPTR `16/16`, followed by `CP_MEM_WRITE` at `32/32`. The GPU writes `0xcafe0001` to its reserved scratch buffer with zero CP errors and zero SMMU fault bits.
@@ -29,7 +62,9 @@ The subsequent `gpu-bridge` test (kernel `89f2b42`, [CI 39951466519](https://git
 
 The user also reports a successful `gpu-repeat` test (kernel `7546dd5`): its pass criteria require 512 serialized submissions, at least two ring wraps, and matching data and completion fences. Raw counters were not captured.
 
-Shader rendering and iOS UI acceleration are still unimplemented. The next integration work covers persistent submission, dynamic GPU mappings and the HackiOS Mesa/IOSurface interface. See the [A610 audit](docs/SPES-GPU-A610-AUDIT-20261023.md) for architectural evidence and register details.
+Those diagnostics led to the persistent backend and accelerated UI described
+above. See the [A610 audit](docs/SPES-GPU-A610-AUDIT-20261023.md) for
+architectural evidence and register details.
 
 ## Changes
 
@@ -178,12 +213,11 @@ python3 -m unittest discover -s tests -v
 bash -n shim/build.sh
 ```
 
-Eight host tests cover memory selection, reserved regions, malformed input,
-stock-map rejection, spes ADT contents and preservation of the topaz profile.
+42 host tests cover memory selection, reserved regions, malformed input,
+stock-map rejection, spes ADT contents, the GPU backend against mocked hardware,
+framebuffer handoff and audio/Wi-Fi profile checks.
 All shim C/assembly translation units cross-compile with Clang for Cortex-A53.
-All 89 port patches apply to the pinned XNU tree and the full kernel builds in CI.
-The RAM-only phone boot reached PID 1 and repeated heartbeat messages;
-this does not establish a working iOS interface or full hardware support.
+All 109 port patches apply to the pinned XNU tree and the full kernel builds in CI.
 
 On 2026-10-20, patch 0093 enabled the advertised extended-GPIO feature on
 GPIO98. A photo confirms chip ID 54:52 and changing HID touch events and
