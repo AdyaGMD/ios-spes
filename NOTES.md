@@ -19,7 +19,8 @@
   a4aa533ab80ca28745a69bbebceb7bf1599b1aea0d3807e5acacfa16e43ab908;
   shim/out/spes-ios-graphics-all22.img (sweetpanel=1 spesamp=1 spescodec=1)
   SHA256 abb29105b41e75c581cb1bef7dd5c3f4bf89543e536702a657efe0b979ae2f38.
-  Not booted.
+  Temp-booted 2026-10-25 (hash verified), first boot with the launchd.plist
+  logging change.
 - Wallpaper: launchd.plist labels com.apple.PosterBoard and
   com.apple.pluginkit.pkd. launchd.plist's AppExtensions cache (421
   entries) lists all nine posterkit.provider appexes (CollectionsPoster,
