@@ -16,7 +16,11 @@
   45d50e0056551392d850f35df4ef7f1be6acb0686fd86134f74f1581560c0cf0;
   image shim/out/spes-ios-graphics-all7.img (modem=1 wifi=1 adsp=1
   sweetpanel=1 spescpufreq=0 + wlan_mac) SHA256
-  5b4c85894ab7ee1bf3386ea6bde5d4d265279b1f3e30072526d82f87e9a2ed06. Not booted.
+  5b4c85894ab7ee1bf3386ea6bde5d4d265279b1f3e30072526d82f87e9a2ed06.
+  Temp-booted 2026-10-25 (hash verified).
+- all6nocpu log research/spes-all6nocpu-boot.txt (79140 B, flush #2): same
+  early end (~9 s modem time, scan 1 done), "DSI0 ... panel commands on",
+  no brightness / panel level line flushed, no panic text.
 - Fallbacks if all7 still resets: all6safe (out-0124, no sweetpanel,
   spescpufreq=0; differs from all6nocpu only by sweetpanel) SHA256
   6ed1b8e66adc62b919319b920c513a230ff945ebb1762fe155304e25818b55fd.
