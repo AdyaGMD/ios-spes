@@ -75,7 +75,7 @@ mappings, SMEM, pool, SCM and firmware reader (spes_* calls) under a lock.
  	return v;
  }
  
-@@ -6191,42 +6214,132 @@
+@@ -6191,42 +6214,133 @@
  	return ok;
  }
  
@@ -142,11 +142,10 @@ mappings, SMEM, pool, SCM and firmware reader (spes_* calls) under a lock.
  	apcs = (volatile uint8_t *)ml_io_map(APCS_PA, 0x1000);
  	tcsr_mutex = (volatile uint8_t *)ml_io_map(TCSR_MUTEX_PA, 0x4000);
 -	if (smem_map == NULL || pool_map == NULL || apcs == NULL || tcsr_mutex == NULL) {
--		LOG("mappings failed");
++	if (smem_map == NULL || pool_map == NULL || apcs == NULL || tcsr_mutex == NULL || soc_lock == NULL) {
+ 		LOG("mappings failed");
 -		thread_terminate(current_thread());
 -		return;
-+	if (smem_map == NULL || pool_map == NULL || apcs == NULL || tcsr_mutex == NULL || soc_lock == NULL) {
-+		LOG("mappings failed");
 +		IOLockUnlock(once);
 +		return false;
  	}
@@ -199,22 +198,23 @@ mappings, SMEM, pool, SCM and firmware reader (spes_* calls) under a lock.
 +	return pool_alloc(size, pa);
 +}
 +
-+/* A file of the firmware partition by its path ("image/adsp.mdt"): size, or -1. */
++/*
++ * A file of the firmware partition by its path ("image/adsp.mdt"): size, or -1. From fw_all,
++ * the whole partition's files with their extents (fw_files holds only the modem's own).
++ */
 +extern "C" int64_t
 +spes_part_fw_size(const char *path)
 +{
-+	return fw_size(path);
++	int i = fw_all_find(path);
++	return i < 0 ? -1 : (int64_t)fw_all[i].size;
 +}
 +
-+/* n bytes from offset off of that file (the table's extents; no crc for a part of a file). */
++/* n bytes from offset off of that file, extent by extent. */
 +extern "C" bool
 +spes_part_fw_read(const char *path, uint64_t off, void *dst, uint64_t n)
 +{
-+	int i = fw_find(path);
-+	if (i < 0 || off > fw_files[i].size || n > fw_files[i].size - off) {
-+		return false;
-+	}
-+	return sweet_ufs_read_part(fw_part, fw_files[i].off + off, dst, n) == 0;
++	int i = fw_all_find(path);
++	return i >= 0 && off <= fw_all[i].size && n <= fw_all[i].size - off && fw_all_read(i, off, dst, n);
 +}
 +
 +static void
@@ -230,7 +230,7 @@ mappings, SMEM, pool, SCM and firmware reader (spes_* calls) under a lock.
  	if (wifi_enabled() && !smmu_identity(WLAN_SID, WLAN_SID_MASK, "WLAN")) {
  		LOG("wifi: no SMMU stream for WLAN, the radio stays off");
  		wifi_on = 0;
-@@ -6234,13 +6347,13 @@
+@@ -6234,13 +6348,13 @@
  	if (modem_boot()) {
  		modem_watch(smem_partition(0, 1), watch);
  	}
@@ -245,7 +245,7 @@ mappings, SMEM, pool, SCM and firmware reader (spes_* calls) under a lock.
  extern "C" void
  spes_modem_init(void)
  {
-@@ -6249,6 +6362,7 @@
+@@ -6249,6 +6363,7 @@
  	thread_t thread;
  
  	spes_audio_survey_init();
