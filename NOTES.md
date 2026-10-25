@@ -53,8 +53,14 @@
   on/off"); boot-arg sweetfb_direct=0 disables. fOffX aligned to 4 px
   (20 instead of 22) in SweetFramebuffer and SweetHID (Topaz 0114).
   Compile 0/4 failed (research/scanout-compile.log); series replays; 42/42
-  host tests. CI40147298718 -> image shim/out/spes-ios-graphics-scanout.img
-  (0108+0109). Not booted.
+  host tests. CI40147298718 SUCCESS (the 0108-only run 40146908485 was
+  cancelled by it): kernel xnu/out-0114 SHA256
+  e62871396b7b25de0e0a9e77346d22d93bcf736f65ada60aebed0f6c5f3cff9c; image
+  shim/out/spes-ios-graphics-scanout.img (0108+0109, cpus=6 sweetfb_hz=60
+  spesgpu_mhz=300) SHA256
+  d831a9d7d69e4848114d8b354cb3a6909bf5aab05d566eea9eb6aa4fb93d3d48. Not
+  booted. If the screen misbehaves, rebuild with sweetfb_direct=0 (no CI)
+  to separate 0109 from 0108; SPES_GPU_MHZ=19 tests GPT's 300 MHz clock.
 - Not ported yet (Topaz): GPU memory pool / SMMU pass-through (0909-0912),
   GPU pool write-combined user mappings (0917), screen surfaces drawn in
   place without EAGL's mirror (0924/0937, eagl binds contiguous surfaces),
