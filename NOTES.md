@@ -1,3 +1,33 @@
+# Bluetooth plan (not started), 2026-10-25
+
+- Hardware (live DT): bt_wcn3990 (qca,wcn3990; the WCN3988's BT core), HCI
+  over 4-wire UART on QUP0 SE3 (pins qupv3_se3_4uart: GPIO 8/9/11 CTS/RTS/RX,
+  GPIO 10 TX), qca,bt-sw-ctrl-gpio GPIO 87; supplies L9 (vdd-io 1.7-1.9 V),
+  L17 (core 1.304 V), L23 (pa 3.0-3.3 V), L16 (xtal 1.7-1.9 V): RPM votes
+  through spes_rpm_kvp (0142). BT audio over SLIMbus (slim@a5c0000,
+  btfmslim_slave) - later.
+- iOS side (root image strings): BlueTool opens a UART at /dev/cu.bluetooth
+  (or /dev/cu.BLTH) and uses /dev/btreset, /dev/btwake, /dev/btpoweroff; it
+  downloads Broadcom firmware (/etc/bluetool/*.hcd,
+  /usr/share/firmware/bluetooth/BCM43xx-*.hex). bluetoothd then talks HCI
+  over that transport and sends Apple/Broadcom vendor commands (HCI_VSC_*).
+  Our ADT has no uart/bluetooth nodes; bluetoothd and fairplayd relaunch.
+- Steps:
+  1. Kernel power-up: RPM L9/L16/L17/L23 on, sw-ctrl; GENI UART driver on SE3
+     (pins to qup3; 115200 then 3 Mbaud, RTS/CTS), HCI_Reset -> read local
+     version (logs the controller's answer). No iOS changes.
+  2. Qualcomm firmware download in the kernel (Linux btqca.c: rampatch TLV +
+     NVM over vendor command 0xFC00), files from Android's bluetooth/firmware
+     partition (find the WCN3988 names, e.g. apbtfw*.tlv / apnv*.bin), read
+     like the modem firmware (spes_part_fw_*).
+  3. /dev/cu.bluetooth (+ btreset/btwake/btpoweroff stubs) as a raw H4 byte
+     channel; answer Broadcom/Apple vendor commands BlueTool/bluetoothd send
+     (patchram, baud change, HCI_VSC_*) with success events from a shim, and
+     keep BlueTool from flashing Broadcom files (its boot script, or the shim).
+  4. ADT bluetooth node if bluetoothd looks for one; then pairing, LE.
+- Risk/size: large (UART driver, vendor-command shim, firmware); no reference
+  port (Topaz/HackiOS have no Bluetooth).
+
 # all23 result: CODEC UP (SoundWire slaves answer); PosterBoard/pkd print nothing, 2026-10-25
 
 - User: booted, opened the wallpaper picker twice (still empty). Log
