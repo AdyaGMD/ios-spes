@@ -986,6 +986,14 @@ RedwoodGPUUserClient::submit(struct msm_gem_submit * request)
 		if (b == NULL) {
 			continue;
 		}
+		if (b->surface != NULL && b->surface->mapCache == kIOMapWriteCombineCache) {
+			/*
+			 * Every mapping of it is write-combined (the scanout pool, the panel): no line of
+			 * it is in this processor's cache, so nothing to push. Pushing a screen-sized one
+			 * cost 6-16 ms a submission.
+			 */
+			continue;
+		}
 		if (b->surface != NULL) {
 			uint32_t seed = *(volatile uint32_t *)((uint8_t *)b->surface->state->getBytesNoCopy() + 0xc);
 

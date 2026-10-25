@@ -365,7 +365,7 @@ diff --git a/iokit/Kernel/arm/RedwoodGPU.cpp b/iokit/Kernel/arm/RedwoodGPU.cpp
 new file mode 100644
 --- /dev/null
 +++ b/iokit/Kernel/arm/RedwoodGPU.cpp
-@@ -0,0 +1,1293 @@
+@@ -0,0 +1,1301 @@
 +/* Adapted for spes from oosexgang/hackios-xnu-kernel commit
 + * 8e61187098f2c26c5daee8f9f72b6416aa64b9ab. Upstream APSL-2.0; see LICENSE.
 + * The spes backend queues submissions; surfaces carry their last fence.
@@ -1352,6 +1352,14 @@ new file mode 100644
 +		struct gpu_buffer * b = buffer(bos[i].handle);
 +
 +		if (b == NULL) {
++			continue;
++		}
++		if (b->surface != NULL && b->surface->mapCache == kIOMapWriteCombineCache) {
++			/*
++			 * Every mapping of it is write-combined (the scanout pool, the panel): no line of
++			 * it is in this processor's cache, so nothing to push. Pushing a screen-sized one
++			 * cost 6-16 ms a submission.
++			 */
 +			continue;
 +		}
 +		if (b->surface != NULL) {
