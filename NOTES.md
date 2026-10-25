@@ -1,3 +1,27 @@
+# Wallpaper cause found: AMFI request 0x60 unanswered, no extension points; 0151, all29 building, 2026-10-25
+
+- Snapshot research/spes-phone-root-20261025c.img (after all27; device and
+  host SHA256 c67551a19d8e63320dfe18f14eb11745b0ba9e89dc1680287d0e0d38147e000a).
+- Observed (read-only clone): the all26 rebuild changed both LS stores
+  (hashes differ from .bak/.bak2) but they still hold no PlugInKit appex:
+  only the six ExtensionKit points (DeviceAccess, Safari content-blocker /
+  web-extension, authentication-services x3). Host apps AegirProxyApp,
+  Weather placeholder, PaperBoard are registered without their PlugIns;
+  framework-hosted posters (CollectionsPoster in WallpaperKit, Gradient,
+  Emoji, Pride, Unity, Extragalactic, PhotosPosterProvider) absent too.
+- Cause (HackiOS kern_minimac.c comment, matches every symptom): ExtensionKit
+  calls __mac_syscall("AMFI", 0x60) "query boot-arg state"; unless bits 0x86
+  come back it wants extensions.plist.sig verified by AMFI's IOKit service,
+  which does not exist, so no extension point is known and LS refuses every
+  extension. Our policy was registered as "SWEET AMFI": every
+  __mac_syscall("AMFI") got ENOPOLICY.
+- Commit cd6c8d9, patch 0151: policy renamed "AMFI", mpo_policy_syscall
+  answers 0x60 with 0x86, other requests keep ENOPOLICY (dyld unchanged),
+  logs the first 16 requests ("SWEET AMFI: <proc> request 0x60 ...");
+  sweetlsreset=3 moves the stores to .bak3 (.bak/.bak2 kept). Compile-check
+  OK; CI 40242288715 running. all29 = all28 args + sweetlsreset=3 (one
+  rebuild, about 15 min to the home screen). Later images must drop it.
+
 # all28 built: aw87559 amplifiers switched on (0150, spesamp=2), 2026-10-25
 
 - Commit 3930c6f, patch 0150 (bsd/dev/spes_amp.c): 2-byte I2C write; after
