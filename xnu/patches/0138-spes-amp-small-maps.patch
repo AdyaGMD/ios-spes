@@ -1,0 +1,127 @@
+Amplifier probe: map single pages; it used up io_map's 8 MB and the GPU probe panicked.
+
+all18 panic: kmem_alloc(io_submap, 589824 = 0x90000, ...) failed with 3 (KERN_NO_SPACE) in
+ml_io_map(0x05900000, 0x90000) of the GPU probe. io_submap is 8 MB on arm and its maps are never
+given back; the probe mapped every tile from its base up to the pin (3 x 107 pages for GPIO106),
+seven neighbours more in 0137, and 512 KB of GCC. Now one page per pin look and two GCC pages.
+
+--- a/bsd/dev/spes_amp.c
++++ b/bsd/dev/spes_amp.c
+@@ -90,17 +90,30 @@
+  */
+ static const uint32_t amp_tiles[3] = { 0x00500000u, 0x00900000u, 0x00d00000u };
+ 
++/*
++ * One pin's page of a tile (config at +0, in/out at +4). io_map's region is only 8 MB and its
++ * maps are never given back (ml_io_unmap frees from kernel_map, not io_submap): mapping from a
++ * tile's base up to the pin, three tiles and seven neighbours at a time, used it up and the GPU
++ * probe's 576 KB map panicked (all18). One 16 KB page per look costs ~430 KB in all.
++ */
++static uint32_t
++amp_pin_peek(uint32_t tile_pa, uint32_t pin)
++{
++	vm_offset_t page = ml_io_map(tile_pa + pin * 0x1000u, 0x1000u);
++	return page != 0 ? amp_rd(page, 0) : 0;
++}
++
++/* The pin's page on the one tile that owns it (kept mapped), or 0. */
+ static vm_offset_t
+ amp_reset_tile(uint32_t pin)
+ {
+-	vm_offset_t found = 0;
++	uint32_t found = 0;
+ 	unsigned hits = 0;
+ 	uint32_t seen[3];
+ 	for (unsigned i = 0; i < 3; i++) {
+-		vm_offset_t tile = ml_io_map(amp_tiles[i], (pin + 1) * 0x1000u);
+-		seen[i] = tile != 0 ? amp_rd(tile, pin * 0x1000u) : 0;
++		seen[i] = amp_pin_peek(amp_tiles[i], pin);
+ 		if (seen[i] != 0 && seen[i] != 0xffffffffu) {
+-			found = tile;
++			found = amp_tiles[i];
+ 			hits++;
+ 		}
+ 	}
+@@ -111,34 +124,32 @@
+ 		for (uint32_t n = pin > 3 ? pin - 3 : 0; n <= pin + 3; n++) {
+ 			uint32_t v[3];
+ 			for (unsigned i = 0; i < 3; i++) {
+-				vm_offset_t tile = ml_io_map(amp_tiles[i], (n + 1) * 0x1000u);
+-				v[i] = tile != 0 ? amp_rd(tile, n * 0x1000u) : 0;
++				v[i] = amp_pin_peek(amp_tiles[i], n);
+ 			}
+ 			printf("SPES AMP:   GPIO%u: %#x %#x %#x\n", n, v[0], v[1], v[2]);
+ 		}
+ 	}
+-	return hits == 1 ? found : 0;
++	return hits == 1 ? ml_io_map(found + pin * 0x1000u, 0x1000u) : 0;
+ }
+ 
+ /* Linux aw87xxx: reset low 2 ms, high, 2 ms. The amplifier then sits powered down (no output). */
+ static bool
+ amp_reset_pulse(uint32_t pin)
+ {
+-	vm_offset_t tile = amp_reset_tile(pin);
+-	if (tile == 0) {
++	vm_offset_t pg = amp_reset_tile(pin);
++	if (pg == 0) {
+ 		return false;
+ 	}
+-	uint32_t cfg = amp_rd(tile, pin * 0x1000u), out = (cfg & ~0x3ffu) | 0x200u;   /* GPIO, output */
++	uint32_t cfg = amp_rd(pg, 0), out = (cfg & ~0x3ffu) | 0x200u;   /* GPIO, output */
+ 	if (cfg & (1u << 11)) {
+ 		out |= 1u << 12;
+ 	}
+-	amp_wr(tile, pin * 0x1000u + 4u, amp_rd(tile, pin * 0x1000u + 4u) & ~2u);
+-	amp_wr(tile, pin * 0x1000u, out);
++	amp_wr(pg, 4u, amp_rd(pg, 4u) & ~2u);
++	amp_wr(pg, 0, out);
+ 	delay(2000);
+-	amp_wr(tile, pin * 0x1000u + 4u, amp_rd(tile, pin * 0x1000u + 4u) | 2u);
++	amp_wr(pg, 4u, amp_rd(pg, 4u) | 2u);
+ 	delay(2000);
+-	printf("SPES AMP: GPIO%u reset pulsed, now cfg %#x io %#x\n", pin, amp_rd(tile, pin * 0x1000u),
+-	    amp_rd(tile, pin * 0x1000u + 4u));
++	printf("SPES AMP: GPIO%u reset pulsed, now cfg %#x io %#x\n", pin, amp_rd(pg, 0), amp_rd(pg, 4u));
+ 	return true;
+ }
+ 
+@@ -262,25 +273,27 @@
+ 	if (!PE_parse_boot_argn("spesamp", &on, sizeof(on)) || on != 1) {
+ 		return;
+ 	}
+-	vm_offset_t gcc = ml_io_map(AMP_GCC_PA, 0x80000);
+-	if (gcc == 0) {
++	/* the vote register's page and the S1 clock's page: not 512 KB of io_map's 8 MB */
++	vm_offset_t vpg = ml_io_map(AMP_GCC_PA + (AMP_GCC_VOTE & ~0xfffu), 0x1000u);
++	vm_offset_t rpg = ml_io_map(AMP_GCC_PA + (AMP_RCG & ~0xfffu), 0x1000u);
++	if (vpg == 0 || rpg == 0) {
+ 		printf("SPES AMP: no GCC mapping\n");
+ 		return;
+ 	}
+-	uint32_t vote = amp_rd(gcc, AMP_GCC_VOTE);
++	uint32_t vote = amp_rd(vpg, AMP_GCC_VOTE & 0xfffu);
+ 	printf("SPES AMP: gcc vote %#x rcg %#x cfg %#x branch %#x before\n", vote,
+-	    amp_rd(gcc, AMP_RCG), amp_rd(gcc, AMP_RCG + 4u), amp_rd(gcc, AMP_RCG - 4u));
+-	amp_wr(gcc, AMP_GCC_VOTE, vote | AMP_GCC_BITS);
+-	if ((amp_rd(gcc, AMP_RCG + 4u) & 0x71fu) != 1u) {
+-		amp_wr(gcc, AMP_RCG + 4u, 1u);  /* XO, divider 1: 19.2 MHz */
+-		amp_wr(gcc, AMP_RCG, amp_rd(gcc, AMP_RCG) | 1u);
+-		if (!amp_wait_clear(gcc, AMP_RCG, 1u)) {
++	    amp_rd(rpg, (AMP_RCG & 0xfffu)), amp_rd(rpg, (AMP_RCG & 0xfffu) + 4u), amp_rd(rpg, (AMP_RCG & 0xfffu) - 4u));
++	amp_wr(vpg, AMP_GCC_VOTE & 0xfffu, vote | AMP_GCC_BITS);
++	if ((amp_rd(rpg, (AMP_RCG & 0xfffu) + 4u) & 0x71fu) != 1u) {
++		amp_wr(rpg, (AMP_RCG & 0xfffu) + 4u, 1u);  /* XO, divider 1: 19.2 MHz */
++		amp_wr(rpg, (AMP_RCG & 0xfffu), amp_rd(rpg, (AMP_RCG & 0xfffu)) | 1u);
++		if (!amp_wait_clear(rpg, (AMP_RCG & 0xfffu), 1u)) {
+ 			printf("SPES AMP: RCG update timeout\n");
+ 			return;
+ 		}
+ 	}
+-	if (!amp_wait_clear(gcc, AMP_RCG - 4u, 1u << 31)) {
+-		printf("SPES AMP: SE1 branch halted (%#x); SE registers not read\n", amp_rd(gcc, AMP_RCG - 4u));
++	if (!amp_wait_clear(rpg, (AMP_RCG & 0xfffu) - 4u, 1u << 31)) {
++		printf("SPES AMP: SE1 branch halted (%#x); SE registers not read\n", amp_rd(rpg, (AMP_RCG & 0xfffu) - 4u));
+ 		return;
+ 	}
+ 	vm_offset_t se = ml_io_map(AMP_SE_PA, 0x4000);
