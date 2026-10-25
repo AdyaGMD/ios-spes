@@ -1,0 +1,23 @@
+backlight-control only with sweetbacklight=1: with it backboardd stopped drawing after the
+first wake and never set a brightness level (all8).
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -307,8 +307,15 @@
+ 				IOLog("SWEET FB: DSI0 ctrl %#x: panel commands on (sleep, brightness), buffer %#llx\n",
+ 				    *(volatile uint32_t *)(fDsi + 0x004), fDsiBufPhys);
+ 				setProperty("IOMFBBrightnessLevel", (unsigned long long)(250u << 16), 32);
+-				/* backboardd's CoreBrightness only drives a service that says this (all7: 0 found) */
+-				setProperty("backlight-control", kOSBooleanTrue);
++				/*
++				 * backboardd's CoreBrightness only drives a service that says this (all7: 0 found),
++				 * but given it, backboardd stopped drawing after the first wake and never set a
++				 * level (all8): opt-in with sweetbacklight=1 until we know what it waits for.
++				 */
++				int backlight = 0;
++				if (PE_parse_boot_argn("sweetbacklight", &backlight, sizeof(backlight)) && backlight) {
++					setProperty("backlight-control", kOSBooleanTrue);
++				}
+ 				/* the bootloader's level is unknown: start from the one the fades assume */
+ 				setPanelLevel(fPanelLevel);
+ 			}
