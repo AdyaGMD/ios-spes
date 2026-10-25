@@ -24,7 +24,8 @@
   dee5fc79793dc6cd1fd024cfdafb53de37ef1eecb0442a95b31259c3b25e39f4;
   shim/out/spes-ios-graphics-all26.img (spescodec=3 sweetlsreset=2,
   AppleARMBacklight default) SHA256
-  858fd7f4026c88d1459baedf9c154e875900b145bef55a7b3744dc05142394e8. Not booted.
+  858fd7f4026c88d1459baedf9c154e875900b145bef55a7b3744dc05142394e8.
+  Temp-booted 2026-10-25 (hash verified): the .bak2 rebuild runs on this boot.
   First boot ~15 min (LS rebuild). Next image must NOT pass sweetlsreset.
 
 # all25 result: BRIGHTNESS WORKS; codec stage 2 clean; wallpaper: almost no app extensions registered, 2026-10-25
