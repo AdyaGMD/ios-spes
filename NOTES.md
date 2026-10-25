@@ -21,7 +21,7 @@
   5f8ee67a02965be2c8f7ef506676efbc4050293d590ad8fee6841cdc0d52bca5;
   image shim/out/spes-ios-graphics-all5.img (modem=1 wifi=1 adsp=1 +
   wlan_mac) SHA256 451c4f4ef1388111a934c15082b96366dd4491dec732e90bb289ddc0cd4dd978.
-  Not booted. Next: boot, open Wi-Fi settings, check the log for no
+  Temp-booted 2026-10-25 (fastboot boot, hash verified). Next: open Wi-Fi settings, check the log for no
   0xe00002bd creates and scanout slots being reused.
 
 # all3 result: wifid starts; GPU stopped on a refused submission; APR client (0117), 2026-10-25
