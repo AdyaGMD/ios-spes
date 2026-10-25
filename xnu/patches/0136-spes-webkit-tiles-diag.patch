@@ -1,0 +1,98 @@
+Safari diagnostics 2: do WebKit's tiles get pixels, and does anyone pick them up?
+
+all12: com.apple.WebKit.GPU creates the page tiles (BGRA, 1125x1536 ...) and every create
+succeeds, yet pages show black. Surfaces made by WebKit/Safari are marked by id; at each
+writing unlock by their owner 16 rows x 64 words are sampled and the count of non-zero pixels
+logged, and a lookup of one by another process (backboardd, Safari's UI) is logged.
+
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -87,6 +87,37 @@
+  * Safari's pages are black and the first 64 creates of a boot are long gone when it starts:
+  * WebKit's and Safari's own surface calls are logged apart (128 lines).
+  */
++/*
++ * Surfaces WebKit or Safari made, by id: whether WebKit draws pixels into its tiles (sampled
++ * at its unlocks) and whether another process ever looks them up (backboardd, to show them).
++ */
++static uint8_t       sweet_surface_web_ids[SWEET_SURFACE_MAX_ID / 8];
++static uint32_t      sweet_surface_web_unlocks, sweet_surface_web_lookups;
++
++static bool
++sweet_proc_web(const char *name)
++{
++	return strncmp(name, "com.apple.WebKi", 15) == 0 || strcmp(name, "MobileSafari") == 0;
++}
++
++static bool
++sweet_surface_is_web(uint32_t id)
++{
++	return id < SWEET_SURFACE_MAX_ID && (sweet_surface_web_ids[id / 8] & (1u << (id % 8)));
++}
++
++/* Another process looked up a WebKit surface: logged (64 lines). */
++static void
++sweet_surface_web_lookup(SweetSurface *s, const char *how)
++{
++	char name[32];
++	proc_selfname(name, sizeof(name));
++	if (s != NULL && sweet_surface_is_web(s->id) && !sweet_proc_web(name) && sweet_surface_web_lookups < 64) {
++		sweet_surface_web_lookups++;
++		IOLog("SWEET SURF: %s looks up WebKit's surface %u %ux%u (%s)\n", name, s->id, s->width, s->height, how);
++	}
++}
++
+ static bool
+ sweet_surf_web(char *name, size_t len)
+ {
+@@ -941,6 +972,9 @@
+ 	}
+ 	char name[32];
+ 	bool web = sweet_surf_web(name, sizeof(name));
++	if (ret == kIOReturnSuccess && sweet_proc_web(name) && s->id < SWEET_SURFACE_MAX_ID) {
++		sweet_surface_web_ids[s->id / 8] |= (uint8_t)(1u << (s->id % 8));
++	}
+ 	if (ret != kIOReturnSuccess || sweet_surface_creates_logged < 64 || web) {
+ 		sweet_surface_creates_logged++;
+ 		sweet_surface_web_logged += web;
+@@ -1279,6 +1313,7 @@
+ 		SweetSurface *s = sweet_surface_copy((uint32_t)arg0);
+ 		IOReturn ret = kIOReturnNotFound;
+ 		if (s != NULL) {
++			sweet_surface_web_lookup(s, "by id");
+ 			ret = sweet_surface_get(s) ? returnSurface(s, args) : kIOReturnNotFound;
+ 			s->release();
+ 		}
+@@ -1292,6 +1327,7 @@
+ 		if (ret == kIOReturnSuccess) {
+ 			ret = (s != NULL && sweet_surface_get(s)) ? returnSurface(s, args) : kIOReturnBadArgument;
+ 		}
++		sweet_surface_web_lookup(s, "by port");
+ 		char name[32];
+ 		if (sweet_surf_web(name, sizeof(name))) {
+ 			sweet_surface_web_logged++;
+@@ -1485,6 +1521,24 @@
+ 	}
+ 	IOReturn ret = sweet_surface_seed_out(s, seedOut,
+ 	    !((uintptr_t)options & kIOSurfaceLockReadOnly));
++	/* WebKit wrote into one of its tiles: are there pixels? 16 rows, 64 words each. */
++	if (sweet_surface_is_web(s->id) && !((uintptr_t)options & kIOSurfaceLockReadOnly) &&
++	    sweet_surface_web_unlocks < 64 && s->height != 0 && s->bytesPerRow >= 256) {
++		uintptr_t va = s->kernelAddress();
++		uint32_t nonzero = 0, total = 0;
++		for (uint32_t r = 0; va != 0 && r < 16; r++) {
++			const volatile uint32_t *row = (const volatile uint32_t *)(va + s->offset +
++			    (uint64_t)(r * s->height / 16) * s->bytesPerRow);
++			for (uint32_t w = 0; w < 64; w++, total++) {
++				nonzero += row[w] != 0;
++			}
++		}
++		char name[32];
++		proc_selfname(name, sizeof(name));
++		sweet_surface_web_unlocks++;
++		IOLog("SWEET SURF: %s unlocked its surface %u %ux%u: %u of %u sampled pixels not zero\n",
++		    name, s->id, s->width, s->height, nonzero, total);
++	}
+ 	s->release();
+ 	return ret;
+ }
