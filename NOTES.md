@@ -25,9 +25,14 @@
   6-16 ms each (surfaces the client mapped were pushed every submission).
 - Commit 98b9954 (0100 regenerated from xnu/graphics/RedwoodGPU.cpp): skip
   the push for surfaces whose mapCache is write-combined (scanout pool,
-  panel). Barrier after the loop kept. CI40175736416 -> image
-  spes-ios-graphics-all1.img (modem=1 wifi=1 spesvib=1 adsp=1 + wlan_mac;
-  all of 0112-0116 + this).
+  panel). Barrier after the loop kept. CI40175736416 SUCCESS: kernel
+  xnu/out-0119 SHA256
+  de6fc0bdb2a3e1fa086d7f74cba368ed60074cee63f9803cec8ed44ed5567473; image
+  shim/out/spes-ios-graphics-all1.img (modem=1 wifi=1 spesvib=1 adsp=1 +
+  wlan_mac; 0112-0116 + this) SHA256
+  0885ede307951212304355425f9b6d9b88f5feca3d93e255f0ff31e8e26e4d4f. Not
+  booted. Check: "screen surface ... scanout slot", "frame N shown
+  directly", fewer KB out of the cache, SPES VIB / SPES WIFI / SpesAudio.
 - Next speed levers to measure after this boot: GPU wait 16.5 ms (GPU at
   300 MHz nominal; Topaz 0922 has stock OPPs above 600 MHz via the GPU PLL
   but without GX voltage votes - needs RPM votes first); EAGL non-target
