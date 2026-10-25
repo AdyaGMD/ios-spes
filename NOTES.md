@@ -1,3 +1,22 @@
+# Hardware result — wifi2: icons work, volume works, display off slow, 2026-10-25
+
+- User on spes-ios-graphics-wifi2.img (kernel out-0115, 0110+0111, keys on,
+  no stayon): APP ICONS WORK (0108 release semantics); volume buttons work;
+  power button dims/locks, but display off was slow with visible scanlines
+  getting darker; brightness slider does nothing (expected: DSI brightness
+  is only in the sweetpanel=1 variant).
+- Cause of the scanlines: display off blackened panel memory with the CPU,
+  row by row, while VIG0 scanned it (0111 skipped the 7-step fade but still
+  wrote every pixel). Patch 0112 (commit 10700ba): with direct scanout, a
+  contiguous black panel frame is allocated at start and display off points
+  VIG0 at it (one flip at the next vsync); display on returns through the
+  normal present path. Compile 0/1 failed. CI40172451100 -> wifi3 images.
+- Wi-Fi log NOT pulled: after the user's report the phone was visible
+  neither in Fastboot nor adb (fastboot getvar waited); the wifi2 boot's
+  log is still on the phone until the next iOS boot.
+- README updated: icons, volume, power/display off, Wi-Fi progress,
+  wallpaper cause, brightness, 0111/0112.
+
 # Wi-Fi first boot, MSA fix, keys, panel sleep, wallpaper cause, 2026-10-25
 
 - First Wi-Fi boot (spes-ios-graphics-wifi.img, kernel out-0114, modem=1

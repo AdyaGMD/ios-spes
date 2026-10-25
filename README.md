@@ -10,13 +10,18 @@ CoreAnimation draws through Mesa freedreno and the HackiOS EAGL bridge, on six
 CPU cores with a 60 Hz panel timer. Full-screen frames go straight to the
 display controller (MDP scanout) instead of being copied by the CPU. On the test
 handset this runs at roughly 20 frames a second (the user's estimate), with
-stutters between operations. Touchscreen and volume buttons work.
+stutters between operations. Home-screen app icons draw (since the IOSurface
+release fix, patch 0108). Touchscreen and volume buttons work; the power button
+locks the phone and display off dims the screen (being changed to an instant
+black frame, patch 0112).
 
 Known problems: the system froze once after opening Settings > General; the
-wallpaper does not appear (PosterBoard finds no wallpaper provider, a root and
-userland issue that also affects Topaz); app icons were missing in earlier
-builds and have not been rechecked since the latest IOSurface fixes. Wi-Fi and
-sound are not working yet. This is an experimental port, not a daily-use ROM.
+wallpaper does not appear (iOS's LaunchServices database on this root has no
+app extensions registered, so PosterBoard finds no poster provider and stops);
+the brightness slider does nothing yet (opt-in DSI brightness, `sweetpanel=1`,
+untested). Wi-Fi: the modem boots, the WLAN firmware loads and its WLFW service
+answers (`modem=1 wifi=1`), but no network can be used from iOS yet. Sound is not
+working yet. This is an experimental port, not a daily-use ROM.
 
 The iOS HFS+ root is installed in the existing `userdata` partition after
 explicit approval to erase Android data. Boot images are still loaded with
@@ -41,8 +46,15 @@ SM6225 SoC and Adreno 610. Main pieces, all patches in `xnu/patches`:
 - **0109**: direct MDP scanout of full-screen surfaces from contiguous RAM
   (SSPP VIG0/CTL0, as in Topaz). It is only enabled when VIG0 is found scanning the
   boot framebuffer; boot-arg `sweetfb_direct=0` turns it off.
+- **0111/0112**: display off shows black (a flip to a ready black frame with direct
+  scanout); opt-in DSI panel sleep and brightness (`sweetpanel=1`, Topaz 0104/0143).
 - `tools/eagl-attach-gpu.patch`: EAGL fills attached display targets on the GPU
   instead of copying them on the CPU.
+
+Wi-Fi uses patch 0099 (modem boot through TrustZone PAS, GLINK/QRTR, WLFW, WMI,
+HTT) with 0110 following Topaz on the MSA handover; it is off unless the image
+gets `SWEET_EXTRA_ARGS='modem=1 wifi=1'`. The iOS side (en0 and Apple80211 for
+wifid, Topaz 0900) is not ported yet.
 
 `tools/build-spes-ios-graphics.sh KERNEL LIVE_FDT` builds the full graphics image
 (defaults: `SWEET_CPUS=6`, `SWEET_FB_HZ=60`, `SPES_GPU_MHZ=300`). The Mesa/EAGL
