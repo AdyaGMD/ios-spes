@@ -1,0 +1,115 @@
+Sound stage 4: switch the aw87559 speaker amplifiers on (spesamp=2).
+
+all27: the DSP tone stream now plays fully into the codec (141/140 periods) but nothing is
+audible: the amplifiers sit after their reset pulse with EN_SW off. Their reset values already
+enable charge pump, boost and PA (SYSCTRL 0x38); set the PA gain low (spesampgain, default 6 =
+9 dB instead of the 24 dB reset value) and SYSCTRL 0x78. Adds a 2-byte I2C write.
+
+--- a/bsd/dev/spes_amp.c
++++ b/bsd/dev/spes_amp.c
+@@ -233,19 +233,20 @@
+ }
+ 
+ /*
+- * One message: a 1-byte write (stretch: keep the bus for a repeated START) or a 1-byte read.
++ * One message: a write of len (1 or 2) bytes, packed little-endian in one FIFO word (stretch:
++ * keep the bus for a repeated START), or a 1-byte read.
+  * 0 done, 1 NACK, 2 other error, 3 engine stuck (stop using SE1).
+  */
+ static int
+-amp_msg(vm_offset_t se, uint8_t addr, bool read, uint8_t *byte)
++amp_xfer(vm_offset_t se, uint8_t addr, bool read, uint8_t *byte, uint32_t len, bool stretch)
+ {
+ 	if (!amp_wait_clear(se, SE_STATUS, 1u)) {
+ 		return 3;
+ 	}
+ 	amp_wr(se, SE_IRQ_CLR, 0xffffffffu);
+ 	amp_wr(se, SE_TX_WM, read ? 0u : 1u);
+-	amp_wr(se, read ? SE_RX_LEN : SE_TX_LEN, 1u);
+-	amp_wr(se, SE_CMD, ((read ? 2u : 1u) << 27) | ((uint32_t)addr << 9) | (read ? 0u : 4u));
++	amp_wr(se, read ? SE_RX_LEN : SE_TX_LEN, read ? 1u : len);
++	amp_wr(se, SE_CMD, ((read ? 2u : 1u) << 27) | ((uint32_t)addr << 9) | (stretch ? 4u : 0u));
+ 	bool sent = read, got = !read;
+ 	for (unsigned i = 0; i < 5000; i++) {
+ 		uint32_t irq = amp_rd(se, SE_IRQ);
+@@ -262,7 +263,7 @@
+ 			return amp_abort(se) ? err : 3;
+ 		}
+ 		if (!sent && (irq & SE_TX_WM_IRQ)) {
+-			amp_wr(se, SE_TX, *byte);
++			amp_wr(se, SE_TX, len == 2 ? (uint32_t)byte[0] | ((uint32_t)byte[1] << 8) : *byte);
+ 			amp_wr(se, SE_TX_WM, 0);
+ 			sent = true;
+ 		}
+@@ -278,6 +279,12 @@
+ 		delay(1);
+ 	}
+ 	return amp_abort(se) ? 2 : 3;
++}
++
++static int
++amp_msg(vm_offset_t se, uint8_t addr, bool read, uint8_t *byte)
++{
++	return amp_xfer(se, addr, read, byte, 1, !read);
+ }
+ 
+ /* Register reg of the chip at addr: write the pointer, then read one byte. */
+@@ -286,13 +293,47 @@
+ {
+ 	int err = amp_msg(se, addr, false, &reg);
+ 	return err != 0 ? err : amp_msg(se, addr, true, val);
++}
++
++static int
++amp_write(vm_offset_t se, uint8_t addr, uint8_t reg, uint8_t val)
++{
++	uint8_t b[2] = { reg, val };
++	return amp_xfer(se, addr, false, b, 2, false);
++}
++
++/*
++ * spesamp=2: switch an aw87559 (id 0x5a) on after its reset pulse. Stock Linux loads the register
++ * profile from aw87xxx_acf.bin, which we do not have; the chip's reset values already have the
++ * charge pump, boost and PA enabled (SYSCTRL 0x38, aw87xxx_pid_5a_reg.h), with EN_SW (bit 6) the
++ * master switch off and the PA gain at 0x10 (24 dB). So: gain first (spesampgain, default 6 =
++ * 9 dB, low), then SYSCTRL 0x78. The amplifier stays on: the codec's AUX output is its input,
++ * silent until something plays.
++ */
++static void
++amp_power_on(vm_offset_t se, uint8_t addr)
++{
++	int gain = 6;
++	PE_parse_boot_argn("spesampgain", &gain, sizeof(gain));
++	if (gain < 0 || gain > 0x10) {
++		gain = 6;
++	}
++	uint8_t sys = 0, st = 0, pagr = 0;
++	(void)amp_read(se, addr, 0x01, &sys);
++	int e1 = amp_write(se, addr, 0x06, (uint8_t)gain);
++	int e2 = amp_write(se, addr, 0x01, 0x78);
++	delay(5000);
++	(void)amp_read(se, addr, 0x01, &sys);
++	(void)amp_read(se, addr, 0x06, &pagr);
++	(void)amp_read(se, addr, 0x58, &st);
++	printf("SPES AMP: %#x on: writes %d/%d, sysctrl %#x gain %#x sysst %#x\n", addr, e1, e2, sys, pagr, st);
+ }
+ 
+ void
+ spes_amp_init(void)
+ {
+ 	int on = 0;
+-	if (!PE_parse_boot_argn("spesamp", &on, sizeof(on)) || on != 1) {
++	if (!PE_parse_boot_argn("spesamp", &on, sizeof(on)) || on < 1 || on > 2) {
+ 		return;
+ 	}
+ 	/* the vote register's page and the S1 clock's page: not 512 KB of io_map's 8 MB */
+@@ -380,6 +421,9 @@
+ 		if (err == 3) {
+ 			return;
+ 		}
++		if (on == 2 && err == 0 && id == 0x5a) {
++			amp_power_on(se, amps[i].addr);
++		}
+ 	}
+ }
+ #endif /* ARM64_BOARD_CONFIG_SWEET */
