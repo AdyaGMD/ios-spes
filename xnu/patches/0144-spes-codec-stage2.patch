@@ -1,0 +1,105 @@
+Sound stage 2 (spescodec=2): stock RX macro registers, WCD937x init and AUX DAC.
+
+all23: stage 1 brought the codec up (SoundWire slaves rx/va 4, ids 01170224/01170223). With
+spescodec=2, and only when the VA bus has its slave, the RX macro gets the stock Android table,
+RX0..2 are muted, the WCD937x is initialised over the VA bus (dev 1) with its RX clocks and AUX
+DAC on and RX2's volume set (Topaz 0145 steps 8-9). Still silent until the stream.
+
+--- a/iokit/Kernel/arm/SpesAudio.cpp
++++ b/iokit/Kernel/arm/SpesAudio.cpp
+@@ -1420,8 +1420,76 @@
+ 	cdc_w(m + 0x04, 2); cdc_w(m + 0x208, 0xFFFFFFFF); cdc_w(m + 0x204, 0x1FDFD); cdc_w(m + 0x210, 0x1FDFD);
+ 	cdc_w(m + 0x04, 3); cdc_w(m + 0x314, 0x80000003);
+ }
++
++/* SoundWire command FIFO write: reg | id << 16 | dev << 20 | data << 24 (Topaz swr_wr) */
++static uint32_t cdc_swr_id;
+ 
+ static void
++cdc_swr_wr(uint32_t master, uint32_t dev, uint32_t reg, uint32_t val)
++{
++	cdc_swr_id = (cdc_swr_id % 14) + 1;
++	cdc_w(master + 0x300, (val << 24) | (dev << 20) | (cdc_swr_id << 16) | reg);
++	IOSleep(1);
++}
++
++/* RX macro registers from the stock Android dump while playing (Topaz 0145, topaz-woa rxtab.h) */
++static const uint16_t cdc_rx_stock[][2] = {
++	{ 0x070, 0x11 }, { 0x074, 0x20 }, { 0x080, 0x11 }, { 0x084, 0x20 }, { 0x090, 0x0c }, { 0x094, 0x0c },
++	{ 0x098, 0x0c }, { 0x110, 0x08 }, { 0x144, 0x38 }, { 0x190, 0x07 }, { 0x200, 0x01 }, { 0x204, 0x03 },
++	{ 0x208, 0x02 }, { 0x20c, 0x1c }, { 0x210, 0x39 }, { 0x214, 0x0c }, { 0x218, 0x0c }, { 0x21c, 0x01 },
++	{ 0x228, 0x80 }, { 0x238, 0x07 }, { 0x244, 0x02 }, { 0x248, 0x9a }, { 0x24c, 0x10 }, { 0x284, 0x10 },
++	{ 0x290, 0x04 }, { 0x294, 0xe0 }, { 0x298, 0x01 }, { 0x29c, 0x40 }, { 0x2a0, 0x2a }, { 0x2ac, 0x18 },
++	{ 0x2b0, 0x18 }, { 0x2b4, 0x03 }, { 0x2b8, 0x01 }, { 0x2c4, 0x64 }, { 0x2c8, 0x01 }, { 0x2d8, 0x0c },
++	{ 0x2e0, 0x77 }, { 0x2e4, 0x01 }, { 0x2ec, 0x4b }, { 0x2f4, 0x01 }, { 0x300, 0x04 }, { 0x304, 0x08 },
++	{ 0x308, 0x0c }, { 0x30c, 0xe2 }, { 0x314, 0x04 }, { 0x318, 0x3e }, { 0x360, 0xff }, { 0x380, 0xff },
++	{ 0x408, 0x64 }, { 0x40c, 0x8f }, { 0x410, 0x02 }, { 0x418, 0x04 }, { 0x41c, 0x7e }, { 0x424, 0x08 },
++	{ 0x434, 0x02 }, { 0x438, 0x08 }, { 0x440, 0x08 }, { 0x450, 0x55 }, { 0x454, 0x55 }, { 0x458, 0x55 },
++	{ 0x488, 0x64 }, { 0x48c, 0x8f }, { 0x490, 0x02 }, { 0x498, 0x04 }, { 0x49c, 0x7e }, { 0x4a4, 0x08 },
++	{ 0x4b4, 0x02 }, { 0x4b8, 0x08 }, { 0x4c0, 0x08 }, { 0x4d0, 0x55 }, { 0x4d4, 0x55 }, { 0x4d8, 0x55 },
++	{ 0x504, 0x18 }, { 0x508, 0x64 }, { 0x50c, 0x8f }, { 0x510, 0x02 }, { 0x518, 0x04 }, { 0x51c, 0x7e },
++	{ 0x524, 0x04 }, { 0x528, 0x08 }, { 0x540, 0x02 }, { 0x544, 0x08 }, { 0x54c, 0x01 }, { 0x784, 0x07 },
++	{ 0x788, 0x3c }, { 0x800, 0x60 }, { 0x804, 0xdb }, { 0x808, 0xff }, { 0x80c, 0x35 }, { 0x810, 0xff },
++	{ 0x818, 0x01 }, { 0x81c, 0x28 }, { 0x840, 0x60 }, { 0x844, 0xdb }, { 0x848, 0xff }, { 0x84c, 0x35 },
++	{ 0x850, 0xff }, { 0x858, 0x01 }, { 0x85c, 0x28 }, { 0xa24, 0x40 }, { 0xaa4, 0x40 }, { 0xb40, 0x04 },
++	{ 0xb50, 0x04 }, { 0xc04, 0x01 }, { 0xc44, 0x01 }, { 0xc84, 0x01 }, { 0xd0c, 0xa8 }, { 0xd4c, 0xa8 },
++	{ 0xd8c, 0xa8 }, { 0xf08, 0x62 }, { 0xf0c, 0x96 }, { 0xf88, 0x62 }, { 0xf8c, 0x96 },
++};
++
++/*
++ * Stage 2 (spescodec=2): the RX macro as stock Android has it while playing, the RX0..2 paths
++ * muted, the WCD937x initialised over the VA bus (its TX slave, device 1) with its RX clocks and
++ * AUX DAC on, RX2's volume set (Topaz 0145 steps 8-9). Still silent: the DSP's stream, the
++ * SoundWire data ports, the AUX PA and the amplifiers come after.
++ */
++static void
++cdc_stage2(void)
++{
++	LOG("t=%u.%03u codec: stage 2, SWR irq before rx %08x va %08x", T, cdc_r(CDC_RX_SWR + 0x200),
++	    cdc_r(CDC_VA_SWR + 0x200));
++	for (uint32_t i = 0; i < sizeof(cdc_rx_stock) / sizeof(cdc_rx_stock[0]); i++) {
++		cdc_w(CDC_RX_MACRO + cdc_rx_stock[i][0], cdc_rx_stock[i][1]);
++	}
++	cdc_w(CDC_RX_MACRO + 0x400, 4); cdc_w(CDC_RX_MACRO + 0x480, 4); cdc_w(CDC_RX_MACRO + 0x500, 4);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x3103, 0xD6); IOSleep(2);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x312A, 0x00);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x3029, 0x85);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x3001, 0xC0); IOSleep(10); cdc_swr_wr(CDC_VA_SWR, 1, 0x3001, 0x80);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x30E2, 0xD9);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x30A5, 0xEB);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x3409, 0x08); cdc_swr_wr(CDC_VA_SWR, 1, 0x3408, 0x01); cdc_swr_wr(CDC_VA_SWR, 1, 0x3008, 0x01);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x340D, 0xBC); cdc_swr_wr(CDC_VA_SWR, 1, 0x340E, 0xBC); cdc_swr_wr(CDC_VA_SWR, 1, 0x340F, 0xBC);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x3408, 0x03);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x3408, 0x07); cdc_swr_wr(CDC_VA_SWR, 1, 0x3409, 0x0C); cdc_swr_wr(CDC_VA_SWR, 1, 0x344F, 0x01);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x3009, 0x0C); cdc_swr_wr(CDC_VA_SWR, 1, 0x300A, 0x40); cdc_swr_wr(CDC_VA_SWR, 1, 0x300B, 0x12);
++	cdc_swr_wr(CDC_VA_SWR, 1, 0x3008, 0x41); cdc_swr_wr(CDC_VA_SWR, 1, 0x3008, 0xC1);
++	cdc_w(CDC_RX_MACRO + 0x514, (uint32_t)(int8_t)-30 & 0xFF);     /* RX_RX2_RX_VOL_CTL, s8 dB */
++	IOSleep(5);
++	LOG("t=%u.%03u codec: stage 2 done, SWR irq after rx %08x va %08x, slaves rx %08x va %08x, rx2 vol %02x",
++	    T, cdc_r(CDC_RX_SWR + 0x200), cdc_r(CDC_VA_SWR + 0x200), cdc_r(CDC_RX_SWR + 0x1090),
++	    cdc_r(CDC_VA_SWR + 0x1090), cdc_r(CDC_RX_MACRO + 0x514) & 0xFF);
++}
++
++static void
+ cdc_vote(uint32_t block, const char *client)
+ {
+ 	struct { uint32_t block; char client[8]; } __attribute__((packed)) req = { block, { 0 } };
+@@ -1462,7 +1530,7 @@
+ 		wanted = 0;
+ 		(void)PE_parse_boot_argn("spescodec", &wanted, sizeof(wanted));
+ 	}
+-	if (wanted != 1 || apr_state != 1 || !apr_versions_asked || cdc_step >= 3) {
++	if (wanted < 1 || apr_state != 1 || !apr_versions_asked || cdc_step >= 3) {
+ 		return;
+ 	}
+ 	if (cdc_step == 0) {
+@@ -1518,6 +1586,9 @@
+ 	IOSleep(300);
+ 	LOG("t=%u.%03u codec: SoundWire slaves rx %08x va %08x, ids %08x %08x", T, cdc_r(CDC_RX_SWR + 0x1090),
+ 	    cdc_r(CDC_VA_SWR + 0x1090), cdc_r(CDC_RX_SWR + 0x538), cdc_r(CDC_VA_SWR + 0x538));
++	if (wanted >= 2 && cdc_r(CDC_VA_SWR + 0x1090) != 0) {
++		cdc_stage2();
++	}
+ 	cdc_step = 3;
+ }
+ 
