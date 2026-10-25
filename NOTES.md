@@ -1,3 +1,30 @@
+# all7nodirect result: UI shows; direct pool scanout breaks after DSI fetch from the pool; 0122, all8 built, 2026-10-25
+
+- User on all7nodirect: "ios screen shows", but on a power press the
+  screen "fades in for a split second and fades out". Log
+  research/spes-all7nodirect-boot.txt (337873 B, flush #15): every power
+  key press toggles display off/on once (no stray toggles).
+- Observed: backboardd matches IOPropertyMatch backlight-control=true ->
+  "0 found", so CoreBrightness never sets IOMFBBrightnessLevel (no
+  "SWEET FB: brightness" line in any sweetpanel boot): the slider can't work.
+- Reading: the "fade in" flash is the lock ramp starting at fPanelLevel
+  0x400 (first step 0x384) while the bootloader left the panel dimmer.
+- Reading (guess, consistent with all7/all7p3/all7nodirect): CPU copies of
+  pool slots into panel memory show the UI, but MDP fetching pool slots
+  directly goes black once DSI has DMA'd its command buffer from the pool
+  (0x9bffc000). Mechanism unknown (SMMU/XPU on the MDSS masters?).
+- Commit 0122 (spes-panel-backlight): DSI buffer = last page of the 15 MB
+  splash region (cont_splash_region 0x5c000000+0xf00000; panel frame uses
+  10.3 MB) = 0x5cefc000; AppleCLCD sets backlight-control=true; panel set
+  to 0x3ff (250 nits, the published level) at start. Syntax check OK.
+- CI 40193495366 SUCCESS: kernel xnu/out-0126 SHA256
+  85546b230b92ef7fe29555d548b43475ec267a29302c0417ef99cca444f00115;
+  image shim/out/spes-ios-graphics-all8.img (direct scanout on, sweetpanel=1,
+  spescpufreq=0, sRGB) SHA256
+  5cec8e182111ee4022485da265b2878a3e169b30ed7c307b89647d84b051c670. Not booted.
+  Check: UI visible with direct scanout; "SWEET FB: brightness" lines when
+  the slider moves; lock fade without the bright flash.
+
 # all7p3 result: still black, so the gamut is not the cause; all7nodirect built, 2026-10-25
 
 - User on all7p3 (P3 restored): "same issue". Log
