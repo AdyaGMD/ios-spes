@@ -1,0 +1,21 @@
+WLFW: a refused MSA reassignment is logged, not fatal (as MakrSas/ios-topaz 0122).
+
+--- a/iokit/Kernel/arm/SpesModem.cpp
++++ b/iokit/Kernel/arm/SpesModem.cpp
+@@ -3182,9 +3182,14 @@
+ 		uint8_t sec = e[12];
+ 		static const uint32_t vm[3] = { VMID_MSS_MSA, VMID_WLAN, VMID_WLAN_CE };
+ 		LOG(" MSA region %u: %llx + %x secure %u", i, addr, size, sec);
++		/*
++		 * Topaz (same SM6225 firmware) ignores this result and WLAN comes up. On spes the
++		 * first boot saw ret -2 res 56 for the secure region: the secure side already owns
++		 * it, and the modem still waits for MSA_READY. The region list itself is validated
++		 * above; a refused reassignment changes no ownership, so it is logged, not fatal.
++		 */
+ 		if (scm_assign(addr, size, vm, sec ? 2 : 3) != 0) {
+-			LOG("wlfw: MSA assignment failed; not announcing MSA_READY");
+-			return false; /* Previously assigned regions remain owned; do not retry. */
++			LOG("wlfw: MSA region %u assignment refused (secure %u); announcing MSA_READY as Topaz does", i, sec);
+ 		}
+ 	}
+ 	return true;
