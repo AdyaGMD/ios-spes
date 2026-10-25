@@ -1,3 +1,21 @@
+# all7 result: no reset (0121 works), fades work, but the iOS UI is black, 2026-10-25
+
+- User on all7: screen black; power press fades to the boot console text
+  and fades back to black. Log research/spes-all7-boot.txt (374111 B,
+  flush #22): "panel commands on ..., buffer 0x9bffc000" (16 KB page);
+  every "panel level" / "sleep in" / "sleep out" says done. No
+  "SWEET FB: brightness" line: CoreBrightness never set a level.
+- Observed: backboardd renders steadily (frame 1440, ~40 fps, 21 draws),
+  frames "shown directly from surface .. at 0x9xxxxxxx"; boot console in
+  panel memory (0x5c000000) shows during display-off scanout. So the
+  panel and DSI path work; what iOS draws comes out black.
+- Guess: the sRGB gamut (a80371a) makes our CA/GL path draw black; it is
+  the only content-side change since all5 (frames 1-3 were already shown
+  before any panel command). Test image all7p3 = all7 with P3 restored
+  (mkadt MKADT_GAMUT=P3 override): shim/out/spes-ios-graphics-all7p3.img
+  SHA256 434f70ed539ca62af7697cfd97d613177defc917da03eea5f1ff3f1cdf9a2b1b.
+  If UI shows: revert to P3 default and fix WebKit another way.
+
 # all6nocpu also reset: DSI buffer address truncated (0121); all7 built, 2026-10-25
 
 - User on all6nocpu (sweetpanel=1, spescpufreq=0): "same crash". So 0120

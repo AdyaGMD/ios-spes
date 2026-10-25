@@ -60,7 +60,9 @@ def d22ap_product(path=D22AP_ADT):
             # HasExtendedColorDisplay and WebKit draws page tiles in ten-bit
             # formats that come out black here (HackiOS loader.c). The panel
             # and framebuffer are sRGB.
-            return [(k, b'sRGB\0' if k == 'artwork-display-gamut' else v)
+            # MKADT_GAMUT=P3 keeps the iPhone's value (a test).
+            gamut = os.environ.get('MKADT_GAMUT', 'sRGB').encode() + b'\0'
+            return [(k, gamut if k == 'artwork-display-gamut' else v)
                     for k, f, v in c.props if not f and k not in ('name', 'AAPL,phandle')]
     raise SystemExit(f'{path}: no /product node')
 
