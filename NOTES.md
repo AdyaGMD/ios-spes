@@ -25,8 +25,17 @@
   entries) lists all nine posterkit.provider appexes (CollectionsPoster,
   Gradient, Emoji, Pride, Unity, PhotosPosterProvider, Extragalactic,
   AegirPoster, LegacyPoster): launch side fine, discovery (LS/pkd) is not.
-  Fresh root snapshot research/spes-phone-root-20261025.img.partial in
-  progress from OrangeFox (device-side sha256 recorded next to it).
+- Root snapshot research/spes-phone-root-20261025.img (16 GiB, SHA256
+  ace7cfba89dbd1ccd6c7f32f44619ba82694c3ddd82df165395205ba102e17d4, equal
+  to the device-side hash). APFS clone spes-phone-root-poster-working.img:
+  launchd.plist patched with tools/patch-launchd-plist.py for
+  com.apple.PosterBoard (LaunchAngel) and com.apple.pluginkit.pkd: stdout/
+  stderr /dev/console, OS_ACTIVITY_DT_MODE=YES, CFLOG_FORCE_STDERR=1; only
+  those 2 entries differ. Delta research/spes-poster-log-delta: 14 MiB
+  (blocks 0,5,6,13,35,36,717,747,807,809,818,819,14107,14108); all verified
+  against the phone, then applied with readback (install.log), user-approved.
+  Rollback: tools/apply-ios-root-delta.py research/spes-poster-log-delta
+  --rollback --apply (from OrangeFox).
 
 # HANDOFF (usage limit): audio stage 1 + PosterBoard logging approved, not started on device, 2026-10-25
 
