@@ -29,8 +29,14 @@
   Local syntax check OK.
 - Sound: APR up (all4); the stream path (ASM/ADM/AFE, codec, amps) is the
   next sound step, not started.
-- CI 40189822482 (0119) SUCCESS; CI 40190289547 dispatched (0119+0120).
-  Next image all6: + sweetpanel=1.
+- CI 40189822482 (0119) SUCCESS; CI 40190289547 (0119+0120) SUCCESS:
+  kernel xnu/out-0124 SHA256 158663153f17bd082f4309dd6e1afb42e5da4a7153c233c49be7386a80658029;
+  image shim/out/spes-ios-graphics-all6.img (modem=1 wifi=1 adsp=1
+  sweetpanel=1 + wlan_mac; ADT gamut sRGB) SHA256
+  90e5de10365066fae7bfdcc91c2c345456e5c295a0f14b1c87c2af659402db00. Not booted.
+  Check: Safari renders; brightness slider + lock/wake fade ("SWEET FB:
+  brightness", "panel level", no "DSI cmd ... not done"); "SPES CPUFREQ"
+  MHz and frame times.
 
 # all4 result: no black screen, APR handshake works; Wi-Fi settings freeze = surface leak (0118), 2026-10-25
 
