@@ -1,0 +1,237 @@
+Metal path, kernel side: host-memory import (0x49) and the Metal plug-in names (spesmetal=1).
+
+metal2vulkan requires VK_EXT_external_memory_host, which Turnip's drm layer (iOSPlus10 negronigl
+drm) builds on request 0x49: a buffer over the caller's own pages. Ported from iOSPlus10 0232 onto
+our RedwoodGPU: the pages are wired and mapped for the kernel, pushed out of the cache at import
+and before every submission that names them, never kept for reuse, waited for and unwired on free;
+clientMemoryForType refuses them (the program has its own mapping).
+
+Boot-arg spesmetal=1 names iOSPlus10's NegroniMetal plug-in on IOAcceleratorES (MetalPluginName,
+MetalPluginClassName), which Metal.framework's device registration reads. Off by default.
+
+--- a/iokit/Kernel/arm/RedwoodGPU.cpp
++++ b/iokit/Kernel/arm/RedwoodGPU.cpp
+@@ -94,6 +94,7 @@
+ 	kMsmSubmitQueueNew      = 0x4a,
+ 	kMsmSubmitQueueClose    = 0x4b,
+ 	kMsmSubmitQueueQuery    = 0x4c,
++	kRedwoodUserptr         = 0x49,         /* ours (iOSPlus10 0232; Linux's unused GEM_SVM_NEW): the caller's pages as a buffer */
+ 	kRedwoodGPUWorked       = 0x7d,         /* ours: how long the 3D core itself has worked, and on how many */
+ 	kRedwoodSurface         = 0x7e,         /* ours: an IOSurface's memory as a buffer */
+ 	kRedwoodShow            = 0x7f,         /* ours: pixels of the caller's onto the panel, to see a test's result */
+@@ -161,6 +162,19 @@
+ 	uint32_t offset, rowBytes;              /* where the pixels start in it and how long a row of them is, */
+ 	uint32_t width, height, pixelFormat, planes;    /* and what they are */
+ };
++/*
++ * 0x49: a buffer over the caller's own pages, for Turnip's VK_EXT_external_memory_host (the Metal
++ * path's no-copy buffers and IOSurface-backed textures); the layout of iOSPlus10's
++ * struct redwood_drm_userptr (userland/negronigl/drm/xf86drm.h), which Turnip's drm layer sends.
++ */
++struct redwood_userptr {
++	uint64_t pointer;                       /* in: PAGE_SIZE aligned address in the caller */
++	uint64_t size;                          /* in: bytes, a multiple of PAGE_SIZE */
++	uint32_t flags;                         /* in: kUserptrReadOnly */
++	uint32_t handle;                        /* back: the buffer */
++};
++#define kUserptrReadOnly        0x1u            /* the GPU only reads the pages */
++
+ struct redwood_show {
+ 	uint64_t pixels;
+ 	uint32_t width, height, rowBytes, pad;
+@@ -401,6 +415,8 @@
+ 	uint64_t                        pushed;         /* ... and when that was */
+ 	bool                            seen;           /* by the program: mapped, and from then on written by it */
+ 	uint32_t                        fence;          /* the last submission that names it (0: none has) */
++	bool                            host;           /* the program's own pages (0x49), wired while the buffer lives */
++	IOMemoryMap *                   map;            /* ... and the kernel's mapping of them, to push them out of the cache */
+ };
+ 
+ /*
+@@ -467,6 +483,7 @@
+ 	void reap(void);
+ 	IOReturn gemNew(struct msm_gem_new * request);
+ 	IOReturn surfaceBuffer(struct redwood_surface * request);
++	IOReturn hostBuffer(struct redwood_userptr * request);
+ 	IOReturn gemInfo(struct msm_gem_info * request);
+ 	IOReturn submit(struct msm_gem_submit * request);
+ 	IOReturn show(const struct redwood_show * request);
+@@ -514,10 +531,10 @@
+ 	if (!redwood_gpu_ready()) return; /* Keep descriptors retained after a fault. */
+ 	bool busy = redwood_gpu_ready() && b->fence != 0 && !redwood_gpu_done(b->fence);
+ 
+-	if (busy && fLeftCount == GPU_LEFT) {
+-		busy = !gpuWait(b->fence, 1000);        /* (nowhere to keep it: this one is waited for) */
++	if (busy && (fLeftCount == GPU_LEFT || b->host)) {
++		busy = !gpuWait(b->fence, 1000);        /* (nowhere to keep it, or the program's own pages: waited for) */
+ 	}
+-	if (busy && fLeftCount < GPU_LEFT) {
++	if (busy && fLeftCount < GPU_LEFT && !b->host) {
+ 		struct gpu_left * left = &fLeft[fLeftCount++];
+ 
+ 		left->memory = b->memory;
+@@ -538,13 +555,18 @@
+ 			if (said++ < 8) {
+ 				IOLog("RedwoodGPU: the GPU is not done with what it was given: a buffer of %llu bytes stays its own\n", b->size);
+ 			}
+-		} else if (b->surface == NULL && redwood_gpu_ready() && keep(b->memory, b->kernel, b->address, b->size, b->flags)) {
++		} else if (b->surface == NULL && !b->host && redwood_gpu_ready() &&
++		    keep(b->memory, b->kernel, b->address, b->size, b->flags)) {
+ 			b->memory = NULL;               /* (now the kept one's) */
+ 		} else if (redwood_gpu_ready()) {
+ 			if (!redwood_gpu_unmap(b->address, b->size)) return;
+ 			redwood_gpu_address_free(b->address, b->size);
+ 		}
+ 		if (!redwood_gpu_ready()) return; /* keep() may have faulted while evicting. */
++		if (b->host && !busy) {
++			OSSafeReleaseNULL(b->map);
++			b->memory->complete();          /* the program's pages unwired */
++		}
+ 		if (b->memory != NULL) {
+ 			b->memory->release();
+ 		}
+@@ -686,6 +708,8 @@
+ 	b->seen = false;
+ 	b->fence = 0;
+ 	b->surface = NULL;
++	b->host = false;
++	b->map = NULL;
+ 	fBufferCount++;
+ 	fBufferBytes += size;
+ 	return b;
+@@ -897,7 +921,68 @@
+ 	return kIOReturnSuccess;
+ }
+ 
++/*
++ * 0x49 (iOSPlus10 0232): the caller's pages [pointer, pointer + size) as a buffer. They are wired
++ * while the handle lives, so the GPU keeps the pages that were there even if the program unmaps
++ * the range; read-only ones may be the program's read-only memory and are read-only to the GPU.
++ * The kernel maps them too, to push the program's writes out of the cache before every
++ * submission that names the buffer (as a surface it has mapped); after the GPU writes, the
++ * program drops its own lines (Turnip's vkInvalidateMappedMemoryRanges, or CPU_PREP). Never kept
++ * for another buffer; only the task that opened the connection.
++ */
+ IOReturn
++RedwoodGPUUserClient::hostBuffer(struct redwood_userptr * request)
++{
++	bool readOnly = (request->flags & kUserptrReadOnly) != 0;
++	IOMemoryDescriptor * memory;
++	IOMemoryMap * map;
++	struct gpu_buffer * b;
++
++	if ((request->flags & ~kUserptrReadOnly) != 0 || request->pointer == 0 || request->size == 0 ||
++	    (request->pointer & PAGE_MASK) || (request->size & PAGE_MASK) || request->size > GPU_BUFFER_MAX ||
++	    request->pointer + request->size < request->pointer) {
++		return kIOReturnBadArgument;
++	}
++	if (current_task() != fTask) {
++		return kIOReturnNotPermitted;
++	}
++	memory = IOMemoryDescriptor::withAddressRange((mach_vm_address_t)request->pointer, (mach_vm_size_t)request->size,
++	    readOnly ? kIODirectionOut : kIODirectionInOut, fTask);
++	if (memory == NULL) {
++		return kIOReturnNoMemory;
++	}
++	if (memory->prepare() != kIOReturnSuccess) {
++		memory->release();
++		return kIOReturnVMError;                /* not mapped, or not writable without kUserptrReadOnly */
++	}
++	map = memory->createMappingInTask(kernel_task, 0, kIOMapAnywhere);
++	if (map == NULL) {
++		memory->complete();
++		memory->release();
++		return kIOReturnNoMemory;
++	}
++	redwood_gpu_to_memory((void *)map->getVirtualAddress(), request->size);
++	redwood_gpu_to_memory(NULL, 0);
++	IOLockLock(gGPULock);
++	b = newBuffer(memory, 0, request->size, readOnly ? MSM_BO_GPU_READONLY : 0, &request->handle);
++	if (b != NULL) {
++		b->memory = memory;
++		b->kernel = (uint8_t *)map->getVirtualAddress();
++		b->map = map;
++		b->host = true;
++		b->seen = true;
++	}
++	IOLockUnlock(gGPULock);
++	if (b == NULL) {
++		map->release();
++		memory->complete();
++		memory->release();
++		return kIOReturnNoMemory;
++	}
++	return kIOReturnSuccess;
++}
++
++IOReturn
+ RedwoodGPUUserClient::gemInfo(struct msm_gem_info * request)
+ {
+ 	struct gpu_buffer * b;
+@@ -1009,8 +1094,8 @@
+ 			}
+ 			b->seed = seed;
+ 			b->pushed = began;
+-		} else if (!b->seen || !gGPUCached) {
+-			continue;
++		} else if (!b->host && (!b->seen || !gGPUCached)) {
++			continue;                       /* (the program's own pages, 0x49: every time) */
+ 		}
+ 		redwood_gpu_to_memory(b->kernel, b->size);
+ 		gGPUStat.flushed += b->size;
+@@ -1166,7 +1251,9 @@
+ 
+ 	IOLockLock(gGPULock);
+ 	b = buffer(type);
+-	if (b != NULL) {
++	if (b != NULL && b->host) {
++		ret = kIOReturnUnsupported;             /* the program has its own mapping of these pages */
++	} else if (b != NULL) {
+ 		b->memory->retain();
+ 		b->seen = true;
+ 		*memory = b->memory;
+@@ -1195,6 +1282,7 @@
+ 		struct redwood_surface surface;
+ 		struct redwood_show show;
+ 		struct redwood_worked worked;
++		struct redwood_userptr userptr;
+ 	} r;
+ 	size_t size = args->structureInputSize;
+ 	struct gpu_buffer * b;
+@@ -1292,6 +1380,9 @@
+ 	case kRedwoodSurface:
+ 		ret = surfaceBuffer(&r.surface);
+ 		break;
++	case kRedwoodUserptr:
++		ret = size == sizeof(r.userptr) ? hostBuffer(&r.userptr) : kIOReturnBadArgument;
++		break;
+ 	case kRedwoodShow:
+ 		ret = show(&r.show);
+ 		break;
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -429,9 +429,23 @@
+ 	IOAcceleratorES *accel = accelOn ? OSTypeAlloc(IOAcceleratorES) : NULL;
+ 	if (accel != NULL && accel->init()) {
+ 		accel->setName("sgx");
++		/*
++		 * Boot-arg spesmetal=1: Metal.framework's _MTLRegisterDevices finds IOAcceleratorES
++		 * services and loads /System/Library/Extensions/<MetalPluginName>.bundle, class
++		 * MetalPluginClassName (iOSPlus10 docs/metal-design.md section 2; their 0205). The names
++		 * are iOSPlus10's NegroniMetal (metal2vulkan over Turnip), so their plug-in loads unchanged.
++		 * Off by default: a Metal device that cannot draw leaves CoreAnimation drawing nothing.
++		 */
++		uint32_t metal = 0;
++		(void)PE_parse_boot_argn("spesmetal", &metal, sizeof(metal));
++		if (metal == 1) {
++			accel->setProperty("MetalPluginName", "NegroniMetal");
++			accel->setProperty("MetalPluginClassName", "NegroniMTLDevice");
++		}
+ 		if (accel->attach(this)) {
+ 			accel->registerService();
+-			IOLog("SPES FB: empty IOAcceleratorES published (software rendering)\n");
++			IOLog("SPES FB: IOAcceleratorES published (%s)\n",
++			    metal == 1 ? "Metal plug-in NegroniMetal named" : "no Metal plug-in named");
+ 		}
+ 	}
+ 	OSSafeReleaseNULL(accel);
