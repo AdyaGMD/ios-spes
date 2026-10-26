@@ -1,3 +1,23 @@
+# all35 probe results: VULKAN + METAL PASS on the A610; host import not used (no ABI property) -> 0159, 2026-10-26
+
+- Copy research/spes-phone-root-20261026h.img (17179869184 B, SHA256 5fb18733...);
+  results in research/probe-results-all35/.
+- vkprobe: "Turnip Adreno (TM) 610, API 1.3.305" (noconform), 129 extensions,
+  "PASS requirements for metal2vulkan", "PASS clear: 64x64 pixels 0xffbf8040".
+- metalprobe --bundle: "PASS bundle-register: NativeBridgeMetalDevice", "PASS device:
+  Turnip Adreno (TM) 610", families Apple1 Apple2 Apple3 Common1 Common2,
+  maxThreadgroupMemoryLength 16384, recommendedMaxWorkingSetSize 1536 MiB, "PASS clear:
+  0 of 4096 pixels wrong", "FAIL compute: pipeline: ... native-metal Code=-1 'foreign
+  function'" (MSL source -> library path; open).
+- m2vtest: device, fixture library, compute, render, import steps: "compute bad 0/1000,
+  render bad 0/64, import bad 0/4096"; then "host import of ...: not a noted IOSurface,
+  and no USERPTR (kernel without 0232)" -> "no-copy buffer: Unsupported HostMemory";
+  QuartzCore 0 functions (not reached). Cause [V negroni_drm.c:195-202]: it reads
+  NegroniGPUABI and needs "userptr" in it.
+- Patch 0159 (commit 3f00728): RedwoodGPU sets NegroniGPUABI = "msm 0x09 0x40-0x4c 0x7e,
+  userptr 0x49, va shared". CI 40380269065. Next image all37 = 0159 + all36 args
+  (spesmetal=1).
+
 # all35: METAL DEVICE ON THE A610 + first Metal command buffer completed; sleep/wake = brightness 1; 0158, all36 built, 2026-10-26
 
 - Log research/spes-all35-boot.txt (552014 B). NegroniMetal (metalprobe --bundle):
