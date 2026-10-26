@@ -1,3 +1,15 @@
+# orientprobe: EVERY texture path upright -> the stack does not flip; the carenderprobe flip is CA's texcoords, 2026-10-26
+
+- Copy research/spes-phone-root-20261026m.img (17179869184 B, SHA256 d4fbf768...; 20261026l deleted);
+  research/probe-results-all38c/orientprobe.txt: upload, sample-upload, nocopy, sample-nocopy, buffer,
+  sample-buffer, gpu, sample-gpu all "upright (0 of 64 texels differ)" (linear pitch 32, alignment 16).
+- So frontend + metal2vulkan + Turnip + kernel store, upload, render and sample textures in Metal's
+  orientation. carenderprobe's upside-down image/text = the texture coordinates CoreAnimation chose in
+  that offscreen CARenderer-into-a-bare-texture setup (guess A) or a device answer that makes CA pick
+  another convention (guess B; our A610 answers differ from iOSPlus10's A730 ones). iOSPlus10 runs its UI
+  on this stack (favours A). Decisive test: backboardd on Metal (stage 4: clients += backboardd; the
+  plug-in's dead-man falls back after 2 bad starts; watchdog; removing the line undoes it).
+
 # orientprobe run 1: library refused (multi-entry modules); split + repacked (batch 7b); all38 booted again, 2026-10-26
 
 - Copy research/spes-phone-root-20261026l.img (17179869184 B, SHA256 aea9a588...). orientprobe:
