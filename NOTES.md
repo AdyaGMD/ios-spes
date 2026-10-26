@@ -1,3 +1,15 @@
+# orientprobe run 1: library refused (multi-entry modules); split + repacked (batch 7b); all38 booted again, 2026-10-26
+
+- Copy research/spes-phone-root-20261026l.img (17179869184 B, SHA256 aea9a588...). orientprobe:
+  "FAIL sampled pipeline: ... Compile(InvalidInput(InputError { kind: Abi(ContainerMismatch) ...":
+  each metallib function carried the whole runtime_examples module (5 entries); m2v wants one entry
+  per function's bitcode (Apple's layout).
+- tools/air-split/air-split.py: keeps one define + its !air.<stage> entry node, drops the others;
+  colored_vertex / colored_fragment / sampled_fragment split, assembled, repacked ->
+  orientprobe.metallib 15088 B (SHA256 97a908fa...). Batch 7b (delta research/spes-batch7b-delta,
+  16 MiB) replaced the file and removed the old orientprobe.txt; verified, applied with readback.
+  Deleted 20261026k. all38 temp-booted again.
+
 # Batch 7 (orientprobe) applied; all38 booted again, 2026-10-26
 
 - userland/orientprobe/orientprobe.m (commit "Add orientprobe"): 8x8 RGBA8 pattern unique per row
