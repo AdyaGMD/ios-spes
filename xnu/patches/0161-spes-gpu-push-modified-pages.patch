@@ -1,0 +1,71 @@
+GPU submissions push only the pages the processor wrote (gpu_modpush, default 1).
+
+all38 with backboardd on Metal: "21-55 submissions in ~5 s: ... 33748-47954 KB out of the cache in
+15396-27875 us a submission": every surface and host import a submission named (some 1600 buffers)
+was pushed whole, by seed/every 50 ms for surfaces and every time for host imports. For memory XNU
+manages, each page is now pushed only when pmap's modified bit says the processor wrote it since the
+last push, and the bit is cleared. Unmanaged memory (pools) keeps the old rules; gpu_modpush=0 is
+the old behaviour.
+
+--- a/iokit/Kernel/arm/RedwoodGPU.cpp
++++ b/iokit/Kernel/arm/RedwoodGPU.cpp
+@@ -426,6 +426,49 @@
+ };
+ 
+ extern "C" vm_map_address_t phystokv(uint64_t pa);   /* osfmk/arm pmap (pmap_paddr_t = uint64_t) */
++extern "C" boolean_t pmap_valid_page(ppnum_t pn);
++extern "C" boolean_t pmap_is_modified(ppnum_t pn);
++extern "C" void pmap_clear_modify(ppnum_t pn);
++
++/*
++ * Boot-arg gpu_modpush (default 1): a surface or host buffer in memory XNU manages is pushed out of
++ * the cache page by page, only the pages the processor has written since the last push (pmap's
++ * modified bit, cleared on push). With Metal in backboardd (all38) every submission named some 1600
++ * buffers and pushed 33-48 MB whole, 15-28 ms a submission, about ten submissions a second.
++ * Returns false (nothing pushed) for memory XNU does not manage: the caller pushes it as before.
++ */
++static TUNABLE(uint32_t, gGPUModPush, "gpu_modpush", 1);
++
++static bool
++pushModified(IOMemoryDescriptor * memory, uint64_t size, uint64_t * pushed)
++{
++	IOByteCount first = 0;
++	addr64_t phys = memory->getPhysicalSegment(0, &first, kIOMemoryMapperNone);
++	if (gGPUModPush == 0 || phys == 0 || !pmap_valid_page((ppnum_t)(phys >> PAGE_SHIFT))) {
++		return false;
++	}
++	for (uint64_t offset = 0; offset < size;) {
++		IOByteCount length = 0;
++		phys = memory->getPhysicalSegment(offset, &length, kIOMemoryMapperNone);
++		if (phys == 0 || length == 0) {
++			break;
++		}
++		length = MIN(length, size - offset);
++		for (addr64_t page = trunc_page_64(phys); page < phys + length; page += PAGE_SIZE) {
++			ppnum_t pn = (ppnum_t)(page >> PAGE_SHIFT);
++			if (pmap_valid_page(pn) && !pmap_is_modified(pn)) {
++				continue;
++			}
++			redwood_gpu_to_memory((void *)phystokv(page), PAGE_SIZE);
++			if (pmap_valid_page(pn)) {
++				pmap_clear_modify(pn);
++			}
++			*pushed += PAGE_SIZE;
++		}
++		offset += length;
++	}
++	return true;
++}
+ 
+ /*
+  * The program's pages of a host buffer out of this processor's cache, through the kernel's map of
+@@ -1110,6 +1153,9 @@
+ 			 * cost 6-16 ms a submission.
+ 			 */
+ 			continue;
++		}
++		if ((b->surface != NULL || b->host) && pushModified(b->memory, b->size, &gGPUStat.flushed)) {
++			continue;                       /* only the pages written since the last push */
+ 		}
+ 		if (b->surface != NULL) {
+ 			uint32_t seed = *(volatile uint32_t *)((uint8_t *)b->surface->state->getBytesNoCopy() + 0xc);
