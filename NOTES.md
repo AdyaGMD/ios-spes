@@ -1,5 +1,14 @@
 # all39 temp-booted (0161 kernel, backboardd on Metal), 2026-10-26
 
+- Kernel xnu/out-0161 (CI run 40407344704, artifact 12690934599; SHA256SUMS OK). The single-stream
+  artifact download kept dying at ~30 MB; 8 parallel `curl -r` ranges fetched it in ~2 min.
+  An earlier all39 image built before the kernel existed was discarded; rebuilt image sha256
+  031c1cfa035b40c1e8b29ff861d48c07f5660a946478477657fada79fa328bd8 (all38 args), booted OK 2026-10-26.
+- Phone sat in fastbootd (from recovery: `boot` = unknown command); then bootloader fastboot
+  answered "unknown command" to everything until the user force-rebooted (Power+Vol-).
+- Pending: user tests UI speed; pull log and compare "KB out of the cache in N us a submission"
+  with all38d (33-48 MB, 15-28 ms). Next if still slow: GPU clock above 300 MHz (gpucc-khaje table).
+
 - Kernel xnu/out-0161 (CI run in research/all39-ci-run.txt, linked: pmap_is_modified/clear_modify/
   valid_page resolve); shim/out/spes-ios-graphics-all39.img (all38 args). Compare "KB out of the cache
   in N us a submission" with all38d (33-48 MB, 15-28 ms).
