@@ -1,3 +1,22 @@
+# Image flip: lead = refused no-copy buffers; 0160 + batch 6 (layerprobe), 2026-10-26
+
+- all37b kernel log (carenderprobe): NegroniMetal "no-copy buffer refused: ... HostMemory,
+  NotRepresentable" right after negronigl "USERPTR of 0x103514000 (+32768): errno 12" (=
+  kIOReturnNoMemory, kr_errno). In 0156 hostBuffer only withAddressRange and
+  createMappingInTask(kernel_task) returned NoMemory without a log line. CoreAnimation's
+  images and glyphs go through -[newTextureWithBytesNoCopy:...] (frontend
+  NativeBridgeMetalFrontend.mm:1620) -> newBufferWithBytesNoCopy -> nil on refusal, so CA
+  used another upload path; guess (unverified): that path is where the vertical flip is.
+- Patch 0160 (commit d076300): no kernel mapping; hostPush() cleans each wired segment through
+  phystokv at import and per submit; refusals logged ("host import of ...: no descriptor /
+  not wired for writing / no GPU addresses"). Compile-check OK. CI 40394662349.
+- Batch 6 (user asked: install layerprobe with the flip fix) on copy 20261026j: /redwood/bin/
+  layerprobe (43ea2040...), /usr/local/share/negronimetal/layerprobe.metallib (ee95d403...,
+  tools/metallib-pack), bundle clients "metalprobe m2vtest carenderprobe layerprobe",
+  /private/var/tmp/carender2; jobs: metalprobe removed; carenderprobe at 60 s ->
+  carenderprobe2.txt + carender2/; layerprobe at 120 s -> layerprobe.txt. Delta
+  research/spes-batch6-delta. Next boot: all38 = 0160 kernel + all37 args.
+
 # all37 + batch 5: COREANIMATION RENDERS THROUGH METAL ON THE A610 (7/7 scenes); images/text flipped, 2026-10-26
 
 - Copy research/spes-phone-root-20261026j.img (resumed after an adb stall at 14.96 GB:
