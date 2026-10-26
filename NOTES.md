@@ -1,3 +1,23 @@
+# all38: layerprobe PASS (CAMetalLayer drawable on the A610); flip NOT from the refused import, 2026-10-26
+
+- Copy research/spes-phone-root-20261026k.img (17179869184 B, SHA256 3537a56b...); results
+  research/probe-results-all38/.
+- 0160 works: "RedwoodGPU: host import of 0x105a3c000 (+32768): not wired for writing (0x2):
+  read-only next", then negronigl "read-only pages, the GPU only reads them" (CA image memory is
+  read-only to the app; 0156's ENOMEM was the kernel mapping). No "no-copy buffer refused".
+- layerprobe (hand-built layerprobe.metallib): "nextDrawable: yes, texture NBTexture, iosurface
+  id 31", "command buffer status 4", "PASS layer: IOSurface read back by the CPU: 3664 of 3664
+  checked pixels correct".
+- carenderprobe: identical diffs to all37 (scene 1 18.34, scene 2 7.08, ...): image and text still
+  vertically flipped, so the refused no-copy path was NOT the cause. Ground truth from the probe
+  source: the gradient's green rises upward (CGBitmapContext y up); CPU ref has green at top =
+  correct; Metal has it at the bottom. Geometry (scene 0 red square top-left, clip child
+  bottom-right) correct. Not m2v render-target storage: m2v draws through a negative-height Vulkan
+  viewport so framebuffer rows follow Metal's (render_state.rs, stage_io/mod.rs).
+- Next: an orientation probe (CPU-uploaded asymmetric texture vs GPU-rendered texture, sampled by
+  a full-screen draw, read back; shaders from the m2v fixture: colored_vertex + sampled_fragment,
+  packed with tools/metallib-pack) to locate the flip (upload vs sampling vs CA texcoords).
+
 # all38 temp-booted (0160 kernel + batch 6), 2026-10-26
 
 - Kernel xnu/out-0160 (CI run in research/all38-ci-run.txt); shim/out/spes-ios-graphics-all38.img
