@@ -1,3 +1,30 @@
+# Metal userland built (NegroniMetal for A610) + all34 (0156 kernel) built, 2026-10-26
+
+- User approved: rustup + Rust 1.98.0 (+ aarch64-apple-ios) installed in ~/.cargo,
+  ~/.rustup; research/ios-flame @745c434, research/metal2vulkan @720ef1ce cloned
+  (git-ignored).
+- tools/build-spes-metal-macos.sh (commits ae7fe33, 55dfbdf, 1de22bd): metal2vulkan
+  + flame bridge patches 0001-0005/0100/0101 + iOSPlus10 m2v 0001-0003; flame frontend
+  + iOSPlus10 flame 0001-0007 with 0003 rewritten for the A610 (gpuCoreCount 1,
+  maxComputeThreadgroupMemory fallback 16384; Mesa GPUId(610) num_ccu 1,
+  cs_shared_mem_size 16 KiB); bridge (cargo, 2.5 min); CMake plug-in + probes from a
+  copy of iOSPlus10 userland/metal (metalprobe: recommendedMaxWorkingSetSize asked by
+  key, iOS 16.5 SDK marks it unavailable). Stage research/metal-build/stage:
+  NegroniMetal.bundle/NegroniMetal SHA256 52324f5d..., + libvulkan_freedreno.dylib
+  (our Turnip f736dde2...), Info.plist, clients "metalprobe m2vtest";
+  redwood/bin/metalprobe ed24a380..., m2vtest 6c6210d8.... iOSPlus10
+  check-imports.py vs the 20H392 cache: PASS, 0 missing (421 imports).
+- CI 40335320728 SUCCESS: kernel xnu/out-0156 SHA256
+  a4e333f6de91c5530d41e2b320b9816530a07ed6e8d6e3071ca96eba0dac601b;
+  shim/out/spes-ios-graphics-all34.img (all33 args, spesmetal unset) SHA256
+  807e2d0113f77cdc4ee351cabd8b14b2687f8706f697e43292a4b5131ca65e8e. Not booted.
+- Next (root batch 3, needs OK): NegroniMetal.bundle in /System/Library/Extensions,
+  metalprobe + m2vtest + spesrun (-o) in /redwood/bin, /var/db/negronimetal (clients,
+  strikes, cache), jobs: vkprobe info + clear -> /private/var/tmp/vkprobe-*.txt,
+  metalprobe --bundle -> /private/var/tmp/metalprobe.txt (in-process device, no
+  system-wide Metal: spesmetal stays off). Boot all34; read the files from the next
+  snapshot.
+
 # Metal step 2 (kernel): 0156 host import 0x49 + spesmetal=1 plug-in names; CI 40335320728; userland plan, 2026-10-26
 
 - Patch 0156 (commit 9962147), RedwoodGPU.cpp: request 0x49 struct redwood_userptr
