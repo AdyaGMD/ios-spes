@@ -1,3 +1,22 @@
+# all32 result: 90 Hz switched (89.997) but UI stalled + glitches + touch dead; all33 = 60 Hz built, 2026-10-26
+
+- User (all32): "weird gpu glitches". Log research/spes-all32-boot.txt (206386 B,
+  flush #10, ~80 s of boot).
+- Observed: "rate: frame cut to 2432 lines: 89.997 frames/s", "modes published:
+  ... at 90 Hz"; backboardd then drew 3 GL frames (SWEET FB frame 4) and stopped
+  (all31: frame 3740); touch "frames=7499 errors=7499 down=0" all boot (all31:
+  errors only until ~1728, then 469 downs). vkprobe exec'd at t~46 s (after the
+  stall), opened RedwoodGPU, printed nothing else in 30+ s (stdout fully
+  buffered to /dev/console: lost unless it exits; guess: stuck on its first
+  GPU job, as probably in all31 too).
+- Guesses (unverified): MDP core clock / bandwidth votes left by the firmware
+  for 60 Hz (underruns = glitches); Focaltech touch tied to panel timing; CA at
+  a 90 Hz mode. 90 Hz shelved: sweetfb_rate=0 keeps the panel-paced vsync.
+- all33 = kernel out-0155, all32 args + sweetfb_rate=0, SHA256 see build log
+  (shim/out/spes-ios-graphics-all33.img). Not booted yet.
+- Next for vkprobe: rebuild with unbuffered stdout and run without --clear
+  first (root write: ask).
+
 # all32 temp-booted: 90 Hz rounding (0155) + mediaserverd console logging + vkprobe captured, 2026-10-26
 
 - CI 40249616738 SUCCESS: kernel xnu/out-0155 SHA256
