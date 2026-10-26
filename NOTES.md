@@ -1,3 +1,19 @@
+# Batch 2 applied (HackiOS audio plug-in layout + spesrun console); all33 temp-booted, 2026-10-26
+
+- User APPROVED batch 2. Snapshot research/spes-phone-root-20261026e.img SHA256
+  958e93e7... (device = host). tools/root-audio-hackios-layout.py on the clone:
+  VirtualAudio.plugin -> /Library/Audio/Plug-Ins/HAL/; AirPlayHalogen,
+  AppleAOPAudioPlugin, AppleTimeSyncAudioClock, AppleUSBAudio, BTAudioHALPlugin,
+  BasebandVoice, CarPlayHalogen, NetworkUplinkClock, OctaviaHalogen ->
+  /System/Library/Audio/Plug-Ins/HAL.disabled/ (HAL keeps only RedwoodAudio);
+  /redwood/bin/spesrun f83d5fd9... (opens /dev/console itself). Delta
+  research/spes-batch2-delta 21 MiB, verified, applied with readback. Deleted
+  20261026d + clone (323 GB free). Rollback: tools/apply-ios-root-delta.py
+  research/spes-batch2-delta --rollback --apply (or the tool's --undo on a clone).
+- all33 temp-booted. Watch for: plug-in "the volume is", "playing", SpesAudio
+  "stream: playing/stopped", mediaserverd crash loop (the reason VirtualAudio was
+  disabled in v12), "|vkprobe|" / "spesrun:" lines.
+
 # Sound cause found: VirtualAudio.plugin disabled since root v12 (2026-10-20); batch 2 proposed, 2026-10-26
 
 - HackiOS [V userland/src/init.c, build.sh, ios165/select-system.py]: keeps
