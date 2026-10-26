@@ -1,3 +1,10 @@
+# all37 temp-booted (0159 + 0158 + spesmetal=1), 2026-10-26
+
+- CI 40380269065 SUCCESS: kernel xnu/out-0159; shim/out/spes-ios-graphics-all37.img (all35
+  args + spesmetal=1). Temp-booted. Probe jobs unchanged (their -o files are appended:
+  this boot's results follow a new "spesrun:" header in each). The copy
+  research/spes-phone-root-20261026h.img is the base for the next root change.
+
 # all35 probe results: VULKAN + METAL PASS on the A610; host import not used (no ABI property) -> 0159, 2026-10-26
 
 - Copy research/spes-phone-root-20261026h.img (17179869184 B, SHA256 5fb18733...);
