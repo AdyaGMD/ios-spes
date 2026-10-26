@@ -1,3 +1,21 @@
+# Batch 3 (Metal test kit) applied; all34 (0156 kernel) temp-booted, 2026-10-26
+
+- Snapshot research/spes-phone-root-20261026f.img, host SHA256 efeb1791...
+  (device-side hash skipped at the user's request: the apply tool verifies every
+  block first anyway). Clone: /System/Library/Extensions/NegroniMetal.bundle
+  (staged build), /redwood/bin/{metalprobe,m2vtest,spesrun(-o)},
+  /private/var/db/negronimetal (0777). launchd.plist jobs (534): com.spes.vkprobe
+  (60 s, --all-ext, env NEGRONIGL_LOG=stderr TU_DEBUG=startup) ->
+  /private/var/tmp/vkprobe-info.txt; com.spes.vkprobe-clear (120 s, --clear) ->
+  vkprobe-clear.txt; com.spes.metalprobe (180 s, --bundle NegroniMetal.bundle
+  --clear --compute) -> metalprobe.txt; com.spes.m2vtest (260 s, Turnip from the
+  bundle, cache /private/var/db/negronimetal/m2v-cache) -> m2vtest.txt. Delta
+  research/spes-batch3-delta 88 MiB, verified, applied with readback. Deleted
+  20261026e + clone. Rollback: tools/apply-ios-root-delta.py
+  research/spes-batch3-delta --rollback --apply.
+- all34 temp-booted (spesmetal unset: no system-wide Metal). Results: read the four
+  /private/var/tmp files from the next snapshot (or a read-only clone of it).
+
 # Metal userland built (NegroniMetal for A610) + all34 (0156 kernel) built, 2026-10-26
 
 - User approved: rustup + Rust 1.98.0 (+ aarch64-apple-ios) installed in ~/.cargo,
