@@ -1,3 +1,30 @@
+# all31 + Turnip probe prepared (root change approved), 2026-10-26
+
+- CI 40247343127 SUCCESS: kernel xnu/out-0154 SHA256
+  c0c657e15b7188a7451b8084257086e5c017f390f4fd8f9b6afdc5e5be6cc72e.
+  shim/out/spes-ios-graphics-all31.img (all30 args; 90 Hz default) SHA256
+  90ba3e64920056b4d27806f187955aa5f02d2b2dc995cae52fcc69016e2d9455;
+  all31s (+ sweetfb_rate=0) SHA256
+  48f30be40058ba2e2f989ca95693a30857e7c7c3448ca077846fd212e23ac121.
+- Metal step 1 (built, not run): tools/build-spes-turnip-macos.sh (Mesa
+  25.0.7 + HackiOS b4c5513 freedreno-darwin/ir3-* + iOSPlus10 c0a451f
+  negronigl drm + turnip patches 0001/0002 + spes bank bit 14) ->
+  research/turnip-build/libvulkan_freedreno.dylib SHA256 f736dde2...
+  (12.7 MB; chained fixups; exports vk_icdGetInstanceProcAddr,
+  vkGetInstanceProcAddr, redwood_drm_note_surface; 4222 weak lookups).
+  vkprobe (iOSPlus10 probes, MIT) and userland/spesrun.c built in
+  research/turnip-build/probe/. Turnip's msm backend falls back to kernel
+  IOVAs without VA_START (tu_knl_drm_msm.cc:1115) [V source]; selectors of
+  negroni_drm.c match our RedwoodGPU (0x40-0x4c, 0x09, 0x7e) [V]; 0x49
+  USERPTR absent in our kernel (host import fails, not needed for vkprobe).
+- User APPROVED (chat): boot all31 without asking; the root change (Turnip +
+  vkprobe + a run-once launchd job). Plan: snapshot
+  research/spes-phone-root-20261026a.img, clone, /redwood/lib/
+  libvulkan_freedreno.dylib, /redwood/bin/{vkprobe,spesrun}, launchd.plist
+  job com.spes.vkprobe = spesrun 60 /redwood/bin/vkprobe --clear --icd
+  /redwood/lib/libvulkan_freedreno.dylib (tools/add-launchd-job.py),
+  delta, verify, apply, then boot all31.
+
 # all30 dark (brightness race); 0154 = fix + 90 Hz + vsync from panel + touch 1/4 ms; all31 CI building, 2026-10-26
 
 - User (all30): display lit only during the power-button fade, then dark.
