@@ -1,3 +1,28 @@
+# Sound cause found: VirtualAudio.plugin disabled since root v12 (2026-10-20); batch 2 proposed, 2026-10-26
+
+- HackiOS [V userland/src/init.c, build.sh, ios165/select-system.py]: keeps
+  Library/Audio/Plug-Ins/ (iOS's virtual audio device, "a plug-in that all of
+  mediaserverd's audio goes through"), Library/Audio/Tunings/D22 + Generic,
+  UISounds, and binds /System/Library/Audio/Plug-Ins/HAL to a folder holding only
+  RedwoodAudio.driver ("our audio device, not Apple's plug-ins").
+- Ours [V snapshot 20261026d]: /Library/Audio/Plug-Ins/HAL is EMPTY;
+  VirtualAudio.plugin sits in /Library/Audio/Plug-Ins/HAL.disabled/ (moved by
+  tools/sweet-root-tweaks.py audio(), image v12, to stop a mediaserverd SIGSEGV
+  loop when there was no audio device); /System/Library/Audio/Plug-Ins/HAL has 9
+  Apple plug-ins (AirPlayHalogen, AppleAOPAudioPlugin, AppleTimeSyncAudioClock,
+  AppleUSBAudio, BTAudioHALPlugin, BasebandVoice, CarPlayHalogen,
+  NetworkUplinkClock, OctaviaHalogen) + RedwoodAudio. Tunings D22/D221/Generic
+  present. That tweak also set StartRecorderServer=false in MediaToolbox
+  SubServerConfiguration.plist.
+- Explains all33: the plug-in is loaded but no virtual audio device exists to take
+  the Speaker, so no volume and no IO ever.
+- Old note (v12, 2026-10-20) also explains the all32/all33 hang: "pointing jobs
+  at /dev/console stops them launching: EACCES" (StandardOut/ErrorPath).
+- Batch 2 (needs approval): (1) VirtualAudio.plugin back to
+  /Library/Audio/Plug-Ins/HAL/; (2) Apple's 9 /System/Library/Audio/Plug-Ins/HAL
+  plug-ins moved to .../HAL.disabled/ (HackiOS: ours only); (3) spesrun that
+  writes to /dev/console itself (f83d5fd9...).
+
 # all33 (second boot) result: UI fine at 60 Hz; still no sound; vkprobe output not captured; video crash = bad plane base, 2026-10-26
 
 - User: "still no sound". Log research/spes-all33b-boot.txt (1259758 B, flush #27).
