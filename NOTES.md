@@ -1,3 +1,26 @@
+# all34 result: TURNIP RUNS ON THE A610; Metal device refused (Turnip reports Vulkan 1.0); probe files lost, 2026-10-26
+
+- Log research/spes-all34-boot.txt (1726223 B, flush #54): UI fine (frame 3940);
+  spesrun x4, vkprobe x2, metalprobe x1, m2vtest x1 exec'd, no crashes, no GPU hang.
+- NegroniMetal (its own /dev/console lines, captured): "native-metal: device refused:
+  device: Unsupported { feature: VulkanVersion, needs: ApiVersion 1.2 }", "device
+  refused in 179 ms (turnip .../NegroniMetal.bundle/libvulkan_freedreno.dylib, cache
+  /var/db/negronimetal/cache/metalprobe, self-test on)", "images NegroniMetal
+  0x103b3c000 ... turnip 0x107fb4000 (m2v policy compositor (default))". So Turnip
+  loaded, opened RedwoodGPU and enumerated the A610.
+- Cause [V Mesa 25.0.7 tu_device.cc:1082]: apiVersion = (has_hw_multiview ||
+  TU_DEBUG(NOCONFORM)) ? 1.3 (chip 6) : 1.0; A610 (a6xx_gen1_low) has no hw multiview.
+  Fix without rebuild: TU_DEBUG=noconform in /private/var/db/negronimetal/env
+  (NegroniMetal.mm load_env() runs before the device opens; it setenv()s KEY=VALUE).
+- Probe result files: /private/var/tmp/{vkprobe-info 8730 B, vkprobe-clear 3113 B,
+  metalprobe 397 B, m2vtest 475 B}.txt exist in the copy, but reads give EIO and
+  their text is nowhere in the raw image: data never flushed (phone forced into
+  Fastboot). spesrun now opens -o files O_SYNC (SHA256 see build).
+- Copy research/spes-phone-root-20261026g.img (host hash only) = current root (phone
+  stayed in recovery since): base for batch 4 without a new copy.
+- Batch 4 (needs OK): /private/var/db/negronimetal/env "TU_DEBUG=noconform"; vkprobe
+  jobs env TU_DEBUG=startup,noconform; spesrun O_SYNC.
+
 # Batch 3 (Metal test kit) applied; all34 (0156 kernel) temp-booted, 2026-10-26
 
 - Snapshot research/spes-phone-root-20261026f.img, host SHA256 efeb1791...

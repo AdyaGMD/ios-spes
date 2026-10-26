@@ -27,7 +27,8 @@ main(int argc, char **argv)
 	 * Output straight to the console: launchd's StandardOutPath=/dev/console output never reached
 	 * the kernel's console tee (all33), while a process's own open() of /dev/console does.
 	 */
-	int fd = out ? open(out, O_WRONLY | O_CREAT | O_APPEND, 0644) : open("/dev/console", O_WRONLY | O_NOCTTY);
+	/* O_SYNC: every line on disk at once; a phone forced into Fastboot loses unflushed file data (all34) */
+	int fd = out ? open(out, O_WRONLY | O_CREAT | O_APPEND | O_SYNC, 0644) : open("/dev/console", O_WRONLY | O_NOCTTY);
 	if (fd >= 0) {
 		dup2(fd, 1);
 		dup2(fd, 2);
