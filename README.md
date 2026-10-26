@@ -5,23 +5,30 @@ to **Redmi Note 11 (`spes`, SM6225 / Snapdragon 680)**. Target handset: 6 GB
 physical RAM, unlocked bootloader. The Android “+2 GB” expansion is not RAM
 available to this kernel.
 
-**Status (2026-10-25): iOS 16.7.16 runs its interface on the Adreno 610 GPU.**
-CoreAnimation draws through Mesa freedreno and the HackiOS EAGL bridge, on six
-CPU cores with a 60 Hz panel timer. Full-screen frames go straight to the
-display controller (MDP scanout) instead of being copied by the CPU. On the test
-handset this runs at roughly 20 frames a second (the user's estimate), with
-stutters between operations. Home-screen app icons draw (since the IOSurface
-release fix, patch 0108). Touchscreen and volume buttons work; the power button
-locks the phone and display off dims the screen (being changed to an instant
-black frame, patch 0112).
+**Status (2026-10-26): iOS 16.7.16 runs on the phone with a GPU-drawn interface,
+touch, Wi-Fi, Safari, wallpapers and speaker sound.** Images are still loaded with
+`fastboot boot` (nothing is flashed to `boot`). This is an experimental port, not
+a daily-use ROM.
 
-Known problems: the system froze once after opening Settings > General; the
-wallpaper does not appear (iOS's LaunchServices database on this root has no
-app extensions registered, so PosterBoard finds no poster provider and stops);
-the brightness slider does nothing yet (opt-in DSI brightness, `sweetpanel=1`,
-untested). Wi-Fi: the modem boots, the WLAN firmware loads and its WLFW service
-answers (`modem=1 wifi=1`), but no network can be used from iOS yet. Sound is not
-working yet. This is an experimental port, not a daily-use ROM.
+| Feature | Status | Notes |
+| --- | --- | --- |
+| Boot to the home screen | Works | iOS 16.7.16 (20H392, iPhone X identity) from an HFS+ root in `userdata`; about a minute or two to the home screen |
+| GPU-drawn interface | Works | Adreno 610 through Mesa freedreno (OpenGL ES) and the HackiOS EAGL bridge; full-screen frames go straight to the display controller |
+| Frame pacing | Works, 60 Hz | Vsync follows the panel's own frame counter (patch 0154) |
+| 90 Hz | Not working | The panel switches to 90 Hz (patch 0154/0155), but the interface stops drawing and touch fails; images pass `sweetfb_rate=0` |
+| Touchscreen | Works | FocalTech `54:52`; read on its interrupt line every 1 ms, every 4 ms while touched (patch 0154) |
+| Power and volume buttons | Work | Lock and unlock with display fades |
+| Brightness | Works | Slider and fades through an AppleARMBacklight service (patches 0145, 0146, 0154) |
+| Wi-Fi | Works | Modem and WLAN firmware boot through TrustZone; iOS joins networks (`modem=1 wifi=1`) |
+| Safari / WebKit | Works | Pages render on the GPU |
+| Speaker sound | Works | ADSP stream into the WCD937x codec and the two aw87559 amplifiers (patches 0142-0153); HackiOS's RedwoodAudio HAL plug-in with iOS's virtual audio device. Volume is limited on purpose (`spesvol`, default -12 dB) |
+| Video playback | Not working | YouTube and other video crash `mediaserverd` in the software H.264 decoder |
+| Wallpapers | Partly | Most wallpapers show (patch 0151); the Earth wallpapers need Metal; some library thumbnails look wrong |
+| Metal | Not working | No Metal device yet. Turnip (Vulkan) for iOS builds and opens the GPU; the Metal translation layer (metal2vulkan) is the next step |
+| Microphone | Not tested | |
+| Bluetooth | Not working | Planned |
+| Battery and charging | Not working | A placeholder battery service (SweetBattery) satisfies iOS; the real level and charging control are planned |
+| Cellular, camera, vibration, USB | Not working | Not started (the USB driver is disabled on spes) |
 
 The iOS HFS+ root is installed in the existing `userdata` partition after
 explicit approval to erase Android data. Boot images are still loaded with
@@ -229,7 +236,7 @@ bash -n shim/build.sh
 stock-map rejection, spes ADT contents, the GPU backend against mocked hardware,
 framebuffer handoff and audio/Wi-Fi profile checks.
 All shim C/assembly translation units cross-compile with Clang for Cortex-A53.
-All 109 port patches apply to the pinned XNU tree and the full kernel builds in CI.
+All 155 port patches apply to the pinned XNU tree and the full kernel builds in CI.
 
 On 2026-10-20, patch 0093 enabled the advertised extended-GPIO feature on
 GPIO98. A photo confirms chip ID 54:52 and changing HID touch events and
