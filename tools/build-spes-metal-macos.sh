@@ -12,7 +12,7 @@ root=$(cd "$(dirname "$0")/.." && pwd); b="$root/research/metal-build"
 git -C "$flame" cat-file -e 745c4341af86089efb0df851fa8a27fb8face624^{commit}
 git -C "$m2vrepo" cat-file -e 720ef1ce9ae2a2068999a8675717418b9416283e^{commit}
 export PATH="$HOME/.cargo/bin:/opt/homebrew/opt/llvm/bin:$PATH"
-m2v="$b/src/metal2vulkan"; fs="$b/src/flame"; met="$ip10/userland/metal"
+m2v="$b/src/metal2vulkan"; fs="$b/src/flame"; met="$b/src/metal"
 if [[ ! -f "$b/src/.patched" ]]; then
   rm -rf "$b/src"; mkdir -p "$m2v" "$fs"
   git -C "$m2vrepo" archive 720ef1ce9ae2a2068999a8675717418b9416283e | tar -x -C "$m2v"
@@ -22,6 +22,17 @@ if [[ ! -f "$b/src/.patched" ]]; then
     case "$(basename "$p")" in 0006-*) continue ;; esac        # UniXNU and iOSPlus10 leave 0006 out too
     git -C "$m2v" apply --whitespace=nowarn "$p"; echo "m2v: flame $(basename "$p")"
   done
+  # iOSPlus10's userland/metal, copied: metalprobe reads recommendedMaxWorkingSetSize, which the iOS 16.5 SDK marks
+  # unavailable on iOS (they build with a newer SDK); asked by key instead
+  cp -R "$ip10/userland/metal" "$met"
+  python3 - "$met/probes/metalprobe.m" <<'PY'
+import sys
+from pathlib import Path
+p=Path(sys.argv[1]); s=p.read_text()
+a='(unsigned long long)(d.recommendedMaxWorkingSetSize >> 20)'
+assert s.count(a)==1
+p.write_text(s.replace(a,'(unsigned long long)([[(id)d valueForKey:@"recommendedMaxWorkingSetSize"] unsignedLongLongValue] >> 20)'))
+PY
   for p in "$met"/patches/m2v/*.patch; do git -C "$m2v" apply --whitespace=nowarn "$p"; echo "m2v: iOSPlus10 $(basename "$p")"; done
   # A610 (Mesa freedreno_devices.py GPUId(610): num_ccu 1, cs_shared_mem_size 16 KiB) instead of the A730's 4 and 32 KiB
   sed -e 's/A730 answers/A610 answers/; s/Adreno 730/Adreno 610/; s/FD730: num_ccu 4 = num_sp_cores/FD610: num_ccu 1 = num_sp_cores/' \
