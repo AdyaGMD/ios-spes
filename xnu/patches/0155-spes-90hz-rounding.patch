@@ -1,0 +1,19 @@
+90 Hz: round the new frame length.
+
+all31: "panel sent 59.999 frames/s: 3648 lines (2400 shown)", then "90 Hz not set (target 2431
+lines, active 2400 ...)": 3648 * 59.999 / 90 truncated to 2431, one under 2400 + 32. Rounded it is
+2432, the DT's 90 Hz timing.
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -768,7 +768,9 @@
+ 	uint32_t mhz = measureRate(vtotal);
+ 	IOLog("SWEET FB: rate: panel sent %u.%03u frames/s: %u lines (%u shown), %u clocks a line; DSI total %#x\n",
+ 	    mhz / 1000, mhz % 1000, vtotal, active, line, dsiTotal);
+-	uint32_t target = (want != 0 && mhz != 0) ? (uint32_t)((uint64_t)vtotal * mhz / (want * 1000ull)) : 0;
++	/* rounded: all31 measured 59.999 Hz over 3648 lines and truncated to 2431, one under the DT's 2432 */
++	uint32_t target = (want != 0 && mhz != 0) ?
++	    (uint32_t)(((uint64_t)vtotal * mhz + want * 500ull) / (want * 1000ull)) : 0;
+ 	bool dsiMatches = fDsi != NULL && (dsiTotal >> 16) + 1 == vtotal;
+ 	if (want != 0 && mhz != 0 && mhz + 5000 < want * 1000 && target >= active + 32 && dsiMatches && fCtl0 != NULL) {
+ 		uint32_t oldDsi = dsiTotal;
