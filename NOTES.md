@@ -1,3 +1,18 @@
+# Batch 7 (orientprobe) applied; all38 booted again, 2026-10-26
+
+- userland/orientprobe/orientprobe.m (commit "Add orientprobe"): 8x8 RGBA8 pattern unique per row
+  and column; paths upload (replaceRegion -> getBytes), sample-upload, nocopy / sample-nocopy
+  (newTextureWithBytesNoCopy, CA's image path), buffer / sample-buffer (texture over buffer at the
+  device's linear pitch), gpu (clear blue, top half clip y 0..1 red) / sample-gpu; each "upright",
+  "FLIPPED (rows reversed)" or "other". Sampling = the m2v fixture's sampled_fragment
+  (position.xy / 8 into an 8x8 target: texel (x, y) -> pixel (x, y), no texcoords). Library
+  /usr/local/share/negronimetal/orientprobe.metallib (25696 B; colored_vertex, colored_fragment,
+  sampled_fragment from runtime_examples.air via tools/metallib-pack). check-imports PASS.
+- Batch 7 on copy 20261026k: orientprobe in /redwood/bin, the metallib, bundle clients + orientprobe,
+  jobs: carenderprobe and layerprobe removed, com.spes.orientprobe at 60 s ->
+  /private/var/tmp/orientprobe.txt. Delta research/spes-batch7-delta, verified, applied with
+  readback. Deleted 20261026j. all38 temp-booted.
+
 # all38: layerprobe PASS (CAMetalLayer drawable on the A610); flip NOT from the refused import, 2026-10-26
 
 - Copy research/spes-phone-root-20261026k.img (17179869184 B, SHA256 3537a56b...); results
