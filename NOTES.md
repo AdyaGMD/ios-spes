@@ -1,3 +1,19 @@
+# all35: METAL DEVICE ON THE A610 + first Metal command buffer completed; sleep/wake = brightness 1; 0158, all36 built, 2026-10-26
+
+- Log research/spes-all35-boot.txt (552014 B). NegroniMetal (metalprobe --bundle):
+  "env TU_DEBUG=noconform"; A610 answers (gpuCoreCount 1, maxComputeThreadgroupMemory
+  16384, ...); "device Turnip Adreno (TM) 610 in 526 ms (... self-test on)"; "dead-man:
+  strike cleared (first command buffer completed 282 ms after the device opened)" (the
+  plug-in's IOSurface clear self-test ran on the GPU). No crashes, no GPU fault; UI fine.
+  Detailed results in /private/var/tmp/*.txt (copy 20261026h in progress).
+- User: "phone doesn't wake after sleep". Observed: every power press turns the panel
+  off/on in the kernel ("panel sleep out, display on: done"); backboardd sets "brightness
+  1" on each wake. Earlier a Control Center swipe (touch at 947,6) and a ramp 89 -> 1:
+  the slider went to the bottom; level 1/255 -> panel 8/0x7ff = black on this OLED.
+- Patch 0158 (commit 3528d18): 1..255 -> spesblmin (default 48)..0x7ff; 0 -> 1.
+  CI SUCCESS. all36 = 0158 kernel + all35 args + spesmetal=1 (MetalPluginName on
+  IOAcceleratorES; NegroniMetal still gives a device only to clients metalprobe m2vtest).
+
 # all35 temp-booted (0157 kernel + batch 4), 2026-10-26
 
 - CI 40376263528 SUCCESS: kernel xnu/out-0157; shim/out/spes-ios-graphics-all35.img
