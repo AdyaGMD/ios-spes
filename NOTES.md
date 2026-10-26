@@ -1,3 +1,38 @@
+# all30 dark (brightness race); 0154 = fix + 90 Hz + vsync from panel + touch 1/4 ms; all31 CI building, 2026-10-26
+
+- User (all30): display lit only during the power-button fade, then dark.
+  Log research/spes-all30-boot.txt (858898 B, flush #24). Observed: all29
+  "brightness 0.00 nits -> level 0x1" (IOMFBBrightnessLevel) THEN
+  AppleARMBacklight 28 -> "panel level 0xe1"; all30 the other order, so
+  the panel stayed at level 1. Not the 0153 alignment dict (failed
+  fmt-0 IOSurface creates exist in all29 too).
+- QuartzCore has the strings DisplayPipePlaneBaseAlignment,
+  DisplayPipeStrideRequirements, StrideLinearHorizontal but not
+  PlaneBaseAlignmentLinear [V ipsw dyld str]; guess: CA reads the
+  alignment as a number. VideoToolbox's getH3clcdService matches
+  AppleCLCD, then AppleCLCD2, AppleRGBOUT [V disassembly]. Watch CA for
+  effects of the dict.
+- Sound (all30): "/dev/redwood-audio: ready after 2 tries", mediaserverd
+  "the speaker is with the HAL (/dev/redwood-audio: open)"; nothing
+  played (UI dark). Untested still.
+- AegirPoster (observed, symbolicated): NSInvalidArgumentException
+  "insertObject:atIndex: object cannot be nil" in -[NUNIAegirRenderer
+  _renderOffscreenSceneWithScene:viewport:commandBuffer:...] <- NUNIQuad
+  <- CLKUIMetalQuadView snapshot <- PRRenderer: needs a Metal device.
+- Commit 142f922, patch 0154: (1) IOMFBBrightnessLevel ignored while
+  AppleARMBacklight is published; (2) setupRate(): INTF_1 0x05e6b800
+  (HSYNC_CTL[31:16] clocks/line, VSYNC_PERIOD clocks/frame, FRAME_COUNT
+  0xac, LINE_COUNT 0xb0) measured over 200 ms; sweetfb_rate (default 90,
+  0 = off): if slower and DSI0 VIDEO_MODE_TOTAL (0x2c) agrees, cut the frame
+  to vtotal*rate/want lines in both + CTL_INTF_FLUSH(0x110)=bit1,
+  CTL_FLUSH bits 31|17, re-measure, revert if not want +-3 Hz; publish the
+  measured rate; vsync armed at the next frame start from LINE_COUNT
+  (else absolute timer chain). Panel bc-90hz command not sent. (3) touch:
+  IRQ line every 1 ms (read when low, else every 8 ms), 4 ms while down;
+  sweettouchpoll=10 = old. (4) "SWEET FB: touch -> next swap N ms" (40).
+  Compile-check OK. CI 40247343127 running. Images planned: all31
+  (default 90 Hz) and all31s (sweetfb_rate=0).
+
 # all30 temp-booted (0153: video alignment dict + /dev/redwood-audio after devfs), 2026-10-26
 
 - CI 40246105110 SUCCESS: kernel xnu/out-0153 SHA256
