@@ -1,3 +1,18 @@
+# all41 pending (0163: real GPU clock + DDR vote spesddr_khz=2133000), 2026-10-26
+
+- all40 result (log research/spes-all40-boot.txt): THE METAL UI IS GPU-BOUND. "the GPU worked
+  75191-91821 us on each of 17-35" submissions per 5 s in use; ~60 ms even for idle redraws (2/min);
+  105 ms avg in a later burst. CPU-side push ~1-4 ms. => 8-12 fps ceiling from GPU time alone.
+- Suspects: (1) clock not really 300 MHz (0107 never measured); (2) no DDR vote at all: live FDT
+  fab-bimc bus_clk is RPM clock; kgsl grp3d pairs GPU 320 MHz with bus level 2 (4.4 GB/s), 1115 MHz
+  with level 7 (16.7 GB/s). GPU pwrlevels: 1114.8/1025/785/600/465/320 MHz. DDR OPPs 1525..15960 MB/s.
+- 0163: RBBM_PERFCTR_RBBM_0 cycles stamped with the always-on counter -> "SPES GPU: core clock measured
+  N MHz"; spesddr_khz=N -> RPM "clk2"/0 "KHz"=N, active set (Linux QCOM_SMD_RPM_MEM_CLK bimc id 0;
+  khaje id assumed same as sm6115). CI run 40421199803; background job builds all41 (all40 args +
+  spesddr_khz=2133000) and boots it. Check "SPES RPM: request set 0 0x326b6c63/0" acked/NO ACK.
+- Next: if clock measures ~300 and DDR helps little -> program GPU_CC_PLL0 for 600+ MHz with a CX
+  corner raise (rwcx vlvl, currently 64 = LOW_SVS).
+
 # all40 temp-booted (0162: GPU times each submission), 2026-10-26
 
 - all39 result (log research/spes-all39-boot.txt): user "still slow". 0161 works: cache push fell to
