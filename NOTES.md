@@ -1,3 +1,19 @@
+# all40 temp-booted (0162: GPU times each submission), 2026-10-26
+
+- all39 result (log research/spes-all39-boot.txt): user "still slow". 0161 works: cache push fell to
+  0.3-1.2 MB / ~1 ms a submission (all38d 33-48 MB / 15-28 ms), but only 5-10 submissions/s and
+  touch -> next swap median 167 ms (6-441, n=30; all38d median 190). Scanout is direct (no copy),
+  CPUs 6 at max clock, GPU nominal 300 MHz. "the GPU worked 0 us" was a stub: redwood_gpu_worked()
+  never measured anything.
+- 0162: CP_REG_TO_MEM of CP_ALWAYS_ON_COUNTER (0x980) before the IBs and after CP_WAIT_FOR_IDLE into the
+  fence page (GPU 0x011f0800, 64 slots); spesgputime=0 disables. Compile-checked (xnu-cc needs
+  XNU_CC_CLANG=/usr/bin/clang XNU_CC_CI_DXB=/Users/runner/work/ios-spes/ios-spes/dxb and a run log
+  from ios-spes, e.g. research/run-40407344704.log). CI run 40415940053, artifact 12695172896,
+  xnu/out-0162 SHA OK. all40 = all38 args, sha256 e9c3c1d3...; booted OK.
+- Artifact downloads: single stream dies at ~30 MB; scratchpad fetch-kernel.sh fetches 8 ranges.
+- Read next: "the GPU worked N us on each" vs submission rate. GPU-bound -> raise the clock (gpucc-khaje
+  table to 1260 MHz, needs GPU_CC_PLL0 + CX vote); CPU-bound -> profile metal2vulkan/Turnip in backboardd.
+
 # all39 temp-booted (0161 kernel, backboardd on Metal), 2026-10-26
 
 - Kernel xnu/out-0161 (CI run 40407344704, artifact 12690934599; SHA256SUMS OK). The single-stream
