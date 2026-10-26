@@ -1,3 +1,16 @@
+# STAGE 4: THE iOS UI RUNS ON METAL (backboardd, all38 + batch 8); slow -> 0161, 2026-10-26
+
+- User: "works, blur, the red gradient in the lock screen is gone, visually pretty good, some glitches
+  (probably unimplemented metal2vulkan calls), but very slow ... still laggy" after compiling shaders.
+  Images/text upright in the real UI (so the carenderprobe flip was that test's setup).
+- Log research/spes-all38d-boot.txt: backboardd "dead-man: strike 1 armed", "GPU watchdog on: 60 s";
+  RedwoodGPU every ~5 s: 21-55 submissions, 175-586 command buffers, 28694-92260 buffers named,
+  "33748-47954 KB out of the cache in 15396-27875 us a submission". The cache pushes are the
+  bottleneck (CPU, under gGPULock), not the GPU.
+- Patch 0161 (pushModified: pmap_is_modified per page, push + pmap_clear_modify; unmanaged memory keeps
+  the old rules; gpu_modpush=0 = old). Compile-check OK; CI run in research/all39-ci-run.txt. all39 =
+  0161 + all38 args. Other suspects for later: GPU clock 300 MHz (spesgpu_mhz), metal2vulkan CPU cost.
+
 # Batch 8: backboardd on Metal (stage 4); all38 booted, 2026-10-26
 
 - User approved. On copy 20261026m: NegroniMetal.bundle/clients = "metalprobe m2vtest carenderprobe
