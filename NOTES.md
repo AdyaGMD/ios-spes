@@ -1,3 +1,20 @@
+# SOUND WORKS (all33 + batch 2), 2026-10-26; vkprobe output still not captured
+
+- User: "sound works". Log research/spes-all33c-boot.txt (1634769 B, flush #29).
+  Observed: "|mediaserverd| redwood: audio: the volume is 1.000: 0.0 dB under the
+  loudest", "playing"; "SpesAudio: t=25.552 stream: playing at -12 dB", stopped
+  "147456 frames in, 0 dropped, 0 skipped, 172 periods sent, 166 done, 0 short,
+  0 errors, 0 underflows"; later plays alike. Cause was VirtualAudio.plugin
+  disabled (root v12); fixed by batch 2.
+- README status rewritten with a feature table (commit f3a8e4a).
+- vkprobe: exec spesrun x2, exec vkprobe x2 (60 s, 150 s), but neither spesrun's own
+  line (it now opens /dev/console itself, as root) nor anything of vkprobe reached
+  the log, although cons.c's tee logs any listed process's /dev/console write and
+  both names are in sweetnull. Unknown why (negronigl's own open of /dev/console in
+  all32 was captured). Next batch: spesrun -o FILE writes stdout/stderr to
+  /private/var/tmp/vkprobe-N.txt; read it from the next snapshot.
+- Phone: all33 temp-booted again for the user to try (2026-10-26).
+
 # Batch 2 applied (HackiOS audio plug-in layout + spesrun console); all33 temp-booted, 2026-10-26
 
 - User APPROVED batch 2. Snapshot research/spes-phone-root-20261026e.img SHA256
