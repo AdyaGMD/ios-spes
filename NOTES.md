@@ -1,3 +1,12 @@
+# Batch 8: backboardd on Metal (stage 4); all38 booted, 2026-10-26
+
+- User approved. On copy 20261026m: NegroniMetal.bundle/clients = "metalprobe m2vtest carenderprobe
+  layerprobe orientprobe backboardd"; strikes dir empty; env TU_DEBUG=noconform; orientprobe job removed
+  (no com.spes.* jobs left). Delta research/spes-batch8-delta, verified, applied with readback.
+  all38 temp-booted. Safety (NegroniMetal.mm): dead-man strike limit 2 (then no device = GL), the
+  backboardd GPU watchdog (10 s pending without completion -> strikes/gpu-lost). Undo: remove
+  "backboardd" from the clients file (or roll back the delta).
+
 # orientprobe: EVERY texture path upright -> the stack does not flip; the carenderprobe flip is CA's texcoords, 2026-10-26
 
 - Copy research/spes-phone-root-20261026m.img (17179869184 B, SHA256 d4fbf768...; 20261026l deleted);
