@@ -1,0 +1,105 @@
+Host import (0x49) without a kernel mapping of the program's pages; every refusal logged.
+
+all37 (carenderprobe): "negronigl: USERPTR of 0x103514000 (+32768): errno 12" and NegroniMetal "no-copy
+buffer refused": the kernel returned kIOReturnNoMemory with no log line, i.e. from the descriptor or the
+createMappingInTask(kernel_task) of 0156. CoreAnimation's image and glyph memory then took another
+upload path (and came out flipped). The pages are pushed out of the cache through the physical map
+(phystokv of each wired segment) at import and before every submission that names them; no kernel
+mapping is made.
+
+--- a/iokit/Kernel/arm/RedwoodGPU.cpp
++++ b/iokit/Kernel/arm/RedwoodGPU.cpp
+@@ -422,10 +422,33 @@
+ 	bool                            seen;           /* by the program: mapped, and from then on written by it */
+ 	uint32_t                        fence;          /* the last submission that names it (0: none has) */
+ 	bool                            host;           /* the program's own pages (0x49), wired while the buffer lives */
+-	IOMemoryMap *                   map;            /* ... and the kernel's mapping of them, to push them out of the cache */
++	IOMemoryMap *                   map;            /* (unused since 0160: pushed through the physical map) */
+ };
++
++extern "C" vm_map_address_t phystokv(uint64_t pa);   /* osfmk/arm pmap (pmap_paddr_t = uint64_t) */
+ 
+ /*
++ * The program's pages of a host buffer out of this processor's cache, through the kernel's map of
++ * all physical memory (the pages are wired, so their addresses hold). 0156 mapped them into the
++ * kernel instead, and that mapping failed for CoreAnimation's image memory (all37:
++ * "USERPTR ...: errno 12", "no-copy buffer refused"), so images took another upload path.
++ */
++static void
++hostPush(IOMemoryDescriptor * memory, uint64_t size)
++{
++	for (uint64_t offset = 0; offset < size;) {
++		IOByteCount length = 0;
++		addr64_t phys = memory->getPhysicalSegment(offset, &length, kIOMemoryMapperNone);
++		if (phys == 0 || length == 0) {
++			break;
++		}
++		length = MIN(length, size - offset);
++		redwood_gpu_to_memory((void *)phystokv(phys), length);
++		offset += length;
++	}
++}
++
++/*
+  * A buffer given back while the GPU is still at it: its memory and its place in the GPU's
+  * address space are kept until the submission is done, and nobody waits for that. (A window
+  * server that makes a surface for every frame gives the last frame's back while the GPU draws
+@@ -955,32 +978,34 @@
+ 	memory = IOMemoryDescriptor::withAddressRange((mach_vm_address_t)request->pointer, (mach_vm_size_t)request->size,
+ 	    readOnly ? kIODirectionOut : kIODirectionInOut, fTask);
+ 	if (memory == NULL) {
++		IOLog("RedwoodGPU: host import of %#llx (+%llu): no descriptor\n", request->pointer, request->size);
+ 		return kIOReturnNoMemory;
+ 	}
+-	if (memory->prepare() != kIOReturnSuccess) {
++	IOReturn wired = memory->prepare();
++	if (wired != kIOReturnSuccess) {
++		static uint32_t said;
++		if (said++ < 8 && !readOnly) {
++			IOLog("RedwoodGPU: host import of %#llx (+%llu): not wired for writing (%#x): read-only next\n",
++			    request->pointer, request->size, wired);
++		}
+ 		memory->release();
+ 		return kIOReturnVMError;                /* not mapped, or not writable without kUserptrReadOnly */
+ 	}
+-	map = memory->createMappingInTask(kernel_task, 0, kIOMapAnywhere);
+-	if (map == NULL) {
+-		memory->complete();
+-		memory->release();
+-		return kIOReturnNoMemory;
+-	}
+-	redwood_gpu_to_memory((void *)map->getVirtualAddress(), request->size);
++	(void)map;
++	hostPush(memory, request->size);
+ 	redwood_gpu_to_memory(NULL, 0);
+ 	IOLockLock(gGPULock);
+ 	b = newBuffer(memory, 0, request->size, readOnly ? MSM_BO_GPU_READONLY : 0, &request->handle);
+ 	if (b != NULL) {
+ 		b->memory = memory;
+-		b->kernel = (uint8_t *)map->getVirtualAddress();
+-		b->map = map;
++		b->kernel = NULL;
++		b->map = NULL;
+ 		b->host = true;
+ 		b->seen = true;
+ 	}
+ 	IOLockUnlock(gGPULock);
+ 	if (b == NULL) {
+-		map->release();
++		IOLog("RedwoodGPU: host import of %#llx (+%llu): no GPU addresses for it\n", request->pointer, request->size);
+ 		memory->complete();
+ 		memory->release();
+ 		return kIOReturnNoMemory;
+@@ -1103,7 +1128,11 @@
+ 		} else if (!b->host && (!b->seen || !gGPUCached)) {
+ 			continue;                       /* (the program's own pages, 0x49: every time) */
+ 		}
+-		redwood_gpu_to_memory(b->kernel, b->size);
++		if (b->host) {
++			hostPush(b->memory, b->size);
++		} else {
++			redwood_gpu_to_memory(b->kernel, b->size);
++		}
+ 		gGPUStat.flushed += b->size;
+ 	}
+ 	redwood_gpu_to_memory(NULL, 0);                 /* (and what was written last is in memory: a barrier) */
