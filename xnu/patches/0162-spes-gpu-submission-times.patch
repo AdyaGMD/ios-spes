@@ -1,0 +1,94 @@
+GPU submissions carry their own start/end times (spesgputime, default 1).
+
+all39 (0161): the cache push fell from 33-48 MB / 15-28 ms to 0.3-1.2 MB / ~1 ms a submission,
+but the UI is still slow (5-10 submissions a second) and "the GPU worked 0 us" because
+redwood_gpu_worked() never measured anything. As msm's a6xx_submit, CP_REG_TO_MEM copies
+CP_ALWAYS_ON_COUNTER (0x980, 19.2 MHz) before the indirect buffers and after CP_WAIT_FOR_IDLE
+into the fence page (GPU 0x011f0800, CPU dma+0xc800), 64 start/end slots by fence. The
+RedwoodGPU summary line then says how long the 3D core itself took per submission, which
+separates GPU time (clock, 300 MHz) from CPU time in metal2vulkan/Turnip.
+
+--- a/bsd/dev/spes_gpu_backend.h
++++ b/bsd/dev/spes_gpu_backend.h
+@@ -19,7 +19,7 @@
+  uint64_t *l2, *tables[SPES_GPU_TABLES];
+  uint8_t used[SPES_GPU_GRANULES];
+  struct { uint64_t base, size, span; bool unmapped; } buffers[SPES_GPU_BUFFERS];
+- uint32_t submissions;
++ uint32_t submissions, timed_through;
+ } sg;
+ uint32_t gpu_va, gpu_log;
+ extern void RedwoodGPUStart(void);
+@@ -188,10 +188,30 @@
+  return 0;
+ }
+ #define SPES_GPU_MAX_IBS 128u
++/*
++ * How long the GPU itself spent on each submission: CP_REG_TO_MEM copies the always-on counter
++ * (CP_ALWAYS_ON_COUNTER 0x980, 19.2 MHz) before the indirect buffers and after CP_WAIT_FOR_IDLE
++ * into the fence page (GPU 0x011f0000, CPU dma+0xc000), 64 slots of start/end from 0x800, as
++ * msm's a6xx_submit does. spesgputime=0 leaves them out.
++ */
++#define SPES_GPU_TIME_SLOTS 64u
++static volatile uint64_t *spes_gpu_times(void){return (volatile uint64_t *)(sg.dma+0xc000+0x800);}
++static uint32_t spes_gpu_stamp(uint32_t *commands,uint32_t fence,unsigned end){
++ uint32_t gva=0x011f0800u+(fence%SPES_GPU_TIME_SLOTS)*16u+end*8u;
++ commands[0]=0x703e8003;commands[1]=0x980u|(2u<<18)|(1u<<30);commands[2]=gva;commands[3]=0;
++ return 4;
++}
++static int sg_time=-1;
+ uint32_t redwood_gpu_submit(const uint64_t *addresses,const uint32_t *words,uint32_t count) {
+  if(!redwood_gpu_ready() || sg.fence==0xffffffffu)return 0;
+  if(!count || count>SPES_GPU_MAX_IBS)return spes_gpu_reject("count",count,0,0);
+- uint32_t commands[SPES_GPU_MAX_IBS*4+12],n=0;
++ uint32_t commands[SPES_GPU_MAX_IBS*4+20],n=0;
++ if(sg_time<0){uint32_t v=1;(void)PE_parse_boot_argn("spesgputime",&v,sizeof(v));sg_time=v!=0;}
++ if(sg_time){
++  volatile uint64_t *t=spes_gpu_times()+((sg.fence+1)%SPES_GPU_TIME_SLOTS)*2;
++  t[0]=0;t[1]=0;
++  n+=spes_gpu_stamp(commands+n,sg.fence+1,0);
++ }
+  /* The hardware-proven A610 order: indirect buffer(s), CP_WAIT_FOR_IDLE, then
+   * CACHE_FLUSH_TS. Do not prepend EAGL-style invalidate events here. */
+  for(unsigned i=0;i<count;++i){
+@@ -207,6 +227,7 @@
+  }
+  uint32_t fence=sg.fence+1;
+  commands[n++]=0x70268000;
++ if(sg_time)n+=spes_gpu_stamp(commands+n,fence,1);
+  commands[n++]=0x70460004;commands[n++]=4;commands[n++]=0x011f0024;
+  commands[n++]=0;commands[n++]=fence;
+  /* As redwood_adreno.c: up to 2 s for room, 100 us at a time. */
+@@ -234,8 +255,23 @@
+  for(unsigned i=0;i<SPES_GPU_BUFFERS;++i)if(sg.buffers[i].base)++*live;
+  *most=*holes;
+ }
++/* *submissions = how many were timed (done since the last call, at most the 64 slots kept). */
+ void redwood_gpu_worked(uint64_t *us,uint32_t *submissions,uint32_t by[7]){
+- *us=0;*submissions=sg.submissions;memset(by,0,7*sizeof(*by));sg.submissions=0;
++ *us=0;*submissions=0;memset(by,0,7*sizeof(*by));sg.submissions=0;
++ if(!sg.dma || sg_time<=0)return;
++ uint32_t done=((volatile uint32_t *)(sg.dma+0xc000))[9],from=sg.timed_through+1;
++ if(done-sg.timed_through>SPES_GPU_TIME_SLOTS)from=done-SPES_GPU_TIME_SLOTS+1;
++ static const uint32_t limit[6]={100,250,500,1000,2000,4000};
++ for(uint32_t f=from;f!=done+1;++f){
++  volatile uint64_t *t=spes_gpu_times()+(f%SPES_GPU_TIME_SLOTS)*2;
++  uint64_t a=t[0],b=t[1];
++  if(!a || b<a)continue;
++  uint64_t u=(b-a)*10/192;
++  *us+=u;++*submissions;
++  unsigned k=0;while(k<6 && u>=limit[k])++k;
++  ++by[k];
++ }
++ sg.timed_through=done;
+ }
+ /* Only hardware facts from the spes A610 descriptor; do not copy A642L caps. */
+ bool redwood_gpu_parameter(uint32_t which,uint64_t *value){
+@@ -267,6 +303,7 @@
+  for(unsigned i=256;i<256+SPES_GPU_TABLES;++i)if(l2[i])return false;
+  sg.gpu=gpu;sg.smmu=smmu;sg.context=context;sg.dma=dma;sg.l2=l2;sg.tail=tail;
+  sg.fence=((volatile uint32_t *)(dma+0xc000))[9];
++ sg.timed_through=sg.fence;
+  sg.ready=true;
+  RedwoodGPUStart();
+  printf("SPES GPU: persistent backend ready; queued submissions, %llu MiB VA\n", SPES_GPU_SIZE >> 20);
