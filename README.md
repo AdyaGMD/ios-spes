@@ -5,8 +5,8 @@ to **Redmi Note 11 (`spes`, SM6225 / Snapdragon 680)**. Target handset: 6 GB
 physical RAM, unlocked bootloader. The Android “+2 GB” expansion is not RAM
 available to this kernel.
 
-**Status (2026-10-26): iOS 16.7.16 runs on the phone with a GPU-drawn interface,
-touch, Wi-Fi, Safari, wallpapers and speaker sound.** Images are still loaded with
+**Status (2026-10-26): iOS 16.7.16 runs on the phone with a GPU-drawn interface
+(OpenGL, or Metal for the interface itself), touch, Wi-Fi, Safari, wallpapers and speaker sound.** Images are still loaded with
 `fastboot boot` (nothing is flashed to `boot`). This is an experimental port, not
 a daily-use ROM.
 
@@ -24,7 +24,7 @@ a daily-use ROM.
 | Speaker sound | Works | ADSP stream into the WCD937x codec and the two aw87559 amplifiers (patches 0142-0153); HackiOS's RedwoodAudio HAL plug-in with iOS's virtual audio device. Volume is limited on purpose (`spesvol`, default -12 dB) |
 | Video playback | Not working | YouTube and other video crash `mediaserverd` in the software H.264 decoder |
 | Wallpapers | Partly | Most wallpapers show (patch 0151); the Earth wallpapers need Metal; some library thumbnails look wrong |
-| Metal | Not working | No Metal device yet. Turnip (Vulkan) for iOS builds and opens the GPU; the Metal translation layer (metal2vulkan) is the next step |
+| Metal | Partly (opt-in) | The interface (backboardd) renders through Metal: iOSPlus10's NegroniMetal plug-in, ios-flame's frontend and metal2vulkan over Turnip (Vulkan 1.3 with `TU_DEBUG=noconform`) on the A610, with the kernel's GPU host import (patches 0156-0161). Blur works; some glitches; still slow (cache maintenance per submission, being fixed). Only processes on the plug-in's allow-list get a device |
 | Microphone | Not tested | |
 | Bluetooth | Not working | Planned |
 | Battery and charging | Not working | A placeholder battery service (SweetBattery) satisfies iOS; the real level and charging control are planned |
