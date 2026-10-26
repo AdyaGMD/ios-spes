@@ -1,0 +1,43 @@
+Brightness: the slider's bottom is dim, not black (spesblmin, default 48 of 0x7ff).
+
+all35: the slider went down to 1 (Control Center), and every wake after restored "brightness 1":
+1..255 mapped straight onto the panel's 1..0x7ff put 1 at level 8, black on this OLED, so the phone
+seemed not to wake. 1..255 now map onto spesblmin..0x7ff; 0 (the end of the lock fade) stays 1.
+
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -500,14 +500,32 @@
+ 	return true;
+ }
+ 
+-/* fWL gate held. 0..255 -> the panel's 1..0x7ff, kept as the level the lock fade starts from. */
++/*
++ * fWL gate held. 0 -> the panel's 1 (the end of the lock fade); 1..255 -> spesblmin..0x7ff, kept as
++ * the level the lock fade starts from. Straight 1..0x7ff put the slider's bottom at level 8, black
++ * on this OLED: all35 woke "black" after the slider had gone to 1 (an iPhone's lowest is dim, not off).
++ */
++static uint32_t
++sweet_bl_floor(void)
++{
++	static uint32_t floor;
++	if (floor == 0) {
++		uint32_t v = 48;
++		(void)PE_parse_boot_argn("spesblmin", &v, sizeof(v));
++		floor = v < 1 ? 1 : (v > 0x400 ? 0x400 : v);
++	}
++	return floor;
++}
++
+ void
+ AppleARMBacklight::apply(uint32_t level)
+ {
+ 	if (fKnown && level == fLevel) {
+ 		return;
+ 	}
+-	uint32_t panel = level == 0 ? 1 : (level * 0x7ff + SWEET_BL_MAX / 2) / SWEET_BL_MAX;
++	uint32_t lo = sweet_bl_floor();
++	uint32_t panel = level == 0 ? 1 :
++	    lo + ((level - 1) * (0x7ff - lo) + (SWEET_BL_MAX - 1) / 2) / (SWEET_BL_MAX - 1);
+ 	fFB->fPanelLevel = panel;
+ 	if (!fFB->fPowerOff) {
+ 		fFB->setPanelLevel(panel);
