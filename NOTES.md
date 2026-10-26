@@ -1,4 +1,12 @@
-# all41 pending (0163: real GPU clock + DDR vote spesddr_khz=2133000), 2026-10-26
+# all41 temp-booted (0164 kernel: GPU clock measured + DDR vote, 300 MHz), all42 built (600 MHz), 2026-10-26
+
+- 0163 CI run 40421199803 was cancelled (xnu.yml keeps one run; 0164's dispatch replaced it). Kernel
+  xnu/out-0164 = CI run 40421469147, artifact 12699255101, SHA OK (contains 0162-0164).
+- all41 = all40 args + spesddr_khz=2133000, SPES_GPU_MHZ=300; sha256 6fd4ceea...; booted OK.
+- all42 = same + SPES_GPU_MHZ=600 (0164: GPU_CC_PLL0 Zonda, rwcx 192 first); sha256 453076f5...;
+  built, NOT booted yet.
+- In the all41 log check: "SPES RPM: request set 0 0x326b6c63/0 0x7a484b=2133000: acked",
+  "SPES GPU: core clock measured N MHz", and "the GPU worked N us" vs all40 (60-130 ms).
 
 - all40 result (log research/spes-all40-boot.txt): THE METAL UI IS GPU-BOUND. "the GPU worked
   75191-91821 us on each of 17-35" submissions per 5 s in use; ~60 ms even for idle redraws (2/min);
