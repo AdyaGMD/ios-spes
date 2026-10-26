@@ -1,3 +1,10 @@
+# all35 temp-booted (0157 kernel + batch 4), 2026-10-26
+
+- CI 40376263528 SUCCESS: kernel xnu/out-0157; shim/out/spes-ios-graphics-all35.img
+  (all34 args). Temp-booted. Results to read from the next copy:
+  /private/var/tmp/{vkprobe-info,vkprobe-clear,m2vtest,metalprobe}.txt (copy must be
+  17179869184 B). Kernel log: NMTL[...] lines from NegroniMetal.
+
 # all34 probe results (full copy 20261026g): Turnip OK, two blockers found; 0157 + batch 4, 2026-10-26
 
 - Full copy research/spes-phone-root-20261026g.img (17179869184 B, fsck OK, SHA256
