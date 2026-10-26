@@ -1,3 +1,14 @@
+# Batch 1 applied (mediaserverd job back to stock, probe jobs kept); all33 temp-booted again, 2026-10-26
+
+- Snapshot research/spes-phone-root-20261026d.img SHA256 16b6a566... (device =
+  host). launchd.plist: com.apple.mediaserverd job = the stock dict saved before
+  the logging edit (scratchpad launchd.plist.msd.before); only that job changed
+  (532 jobs, com.spes.vkprobe + com.spes.vkprobe-clear kept). Delta
+  research/spes-batch1-delta 9 MiB, verified, applied with readback. Deleted
+  spes-phone-root-20261026c.img and the batch1 clone (157 GB free). Rollback:
+  tools/apply-ios-root-delta.py research/spes-batch1-delta --rollback --apply.
+- all33 (SHA256 ce0a2150...) temp-booted again.
+
 # Disk full on the Mac (2026-10-26): superseded root images deleted; root changes now batched
 
 - The snapshot for the mediaserverd revert failed: Mac disk full (118 MiB free).
