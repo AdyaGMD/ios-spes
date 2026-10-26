@@ -1,3 +1,16 @@
+# Disk full on the Mac (2026-10-26): superseded root images deleted; root changes now batched
+
+- The snapshot for the mediaserverd revert failed: Mac disk full (118 MiB free).
+  User chose to delete superseded images. Deleted (research/): spes-ios-after-boot,
+  spes-phone-root-{20261024,20261025,20261025b,20261025c,20261025d,20261026a,
+  20261026b,audio-hal,eagl-20261024,graphics-working,mediaserverd-log,
+  poster-working,pre-eagl-20261024,turnip,vkprobe2,wallpaper-working}.img and the
+  partial 20261026d. Kept: spes-ios-root.img (original built root),
+  spes-phone-root-20261026c.img (newest full snapshot), all *-delta folders
+  (rollback payloads). 148 GB free after detaching a stale attached image.
+- Process from now on (user): batch root changes, one snapshot per boot cycle;
+  delete the previous snapshot and the edited clone after each verified write.
+
 # all32/all33 hang at the Apple logo: mediaserverd never starts after its console-logging change; reverting, 2026-10-26
 
 - User (all33): Apple logo for 4+ min. Log research/spes-all33-boot.txt (223609 B).
