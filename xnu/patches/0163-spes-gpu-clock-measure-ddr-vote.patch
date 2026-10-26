@@ -1,0 +1,90 @@
+GPU cycles per submission (real core clock) and a DDR (BIMC) vote (spesddr_khz).
+
+all40 (0162) measured the GPU itself: 60-130 ms per UI submission (29-35 per 5 s while in use, about
+60 ms even for an idle redraw), so the Metal UI is GPU-bound at 8-12 fps; CPU-side cache push is
+~1 ms. That is far more than a compositor frame should take at 300 MHz. Two suspects:
+- the clock: 0107 selects GPLL0/2 but never measured it. RBBM_PERFCTR_RBBM_0 (countable 0,
+  ALWAYS_COUNT, enabled with RBBM_PERFCTR_CNTL = 1 as msm a6xx_hw_init) is now stamped next to
+  CP_ALWAYS_ON_COUNTER; "SPES GPU: core clock measured N MHz" each stats period.
+- memory bandwidth: nothing ever voted the BIMC. Live FDT: fab-bimc bus_clk is an RPM clock; kgsl's
+  grp3d table pairs 320 MHz with 4.4 GB/s and 1115 MHz with 16.7 GB/s. spesddr_khz=N sends RPM
+  "clk2"/0 "KHz"=N on the active set over the GPU probe's link (spes_rpm_kvp); 0 = no vote.
+
+--- a/bsd/dev/spes_gpu_backend.h
++++ b/bsd/dev/spes_gpu_backend.h
+@@ -192,24 +192,27 @@
+  * How long the GPU itself spent on each submission: CP_REG_TO_MEM copies the always-on counter
+  * (CP_ALWAYS_ON_COUNTER 0x980, 19.2 MHz) before the indirect buffers and after CP_WAIT_FOR_IDLE
+  * into the fence page (GPU 0x011f0000, CPU dma+0xc000), 64 slots of start/end from 0x800, as
+- * msm's a6xx_submit does. spesgputime=0 leaves them out.
++ * msm's a6xx_submit does. spesgputime=0 leaves them out. Each slot also holds the GPU's own clock
++ * cycles (RBBM_PERFCTR_RBBM_0, countable 0 = ALWAYS_COUNT), so the real core clock is measured.
++ * Slot: always-on start, end, cycles start, end (32 bytes).
+  */
+ #define SPES_GPU_TIME_SLOTS 64u
+ static volatile uint64_t *spes_gpu_times(void){return (volatile uint64_t *)(sg.dma+0xc000+0x800);}
+ static uint32_t spes_gpu_stamp(uint32_t *commands,uint32_t fence,unsigned end){
+- uint32_t gva=0x011f0800u+(fence%SPES_GPU_TIME_SLOTS)*16u+end*8u;
++ uint32_t gva=0x011f0800u+(fence%SPES_GPU_TIME_SLOTS)*32u+end*8u;
+  commands[0]=0x703e8003;commands[1]=0x980u|(2u<<18)|(1u<<30);commands[2]=gva;commands[3]=0;
+- return 4;
++ commands[4]=0x703e8003;commands[5]=0x41cu|(2u<<18)|(1u<<30);commands[6]=gva+16u;commands[7]=0;
++ return 8;
+ }
+ static int sg_time=-1;
+ uint32_t redwood_gpu_submit(const uint64_t *addresses,const uint32_t *words,uint32_t count) {
+  if(!redwood_gpu_ready() || sg.fence==0xffffffffu)return 0;
+  if(!count || count>SPES_GPU_MAX_IBS)return spes_gpu_reject("count",count,0,0);
+- uint32_t commands[SPES_GPU_MAX_IBS*4+20],n=0;
++ uint32_t commands[SPES_GPU_MAX_IBS*4+28],n=0;
+  if(sg_time<0){uint32_t v=1;(void)PE_parse_boot_argn("spesgputime",&v,sizeof(v));sg_time=v!=0;}
+  if(sg_time){
+-  volatile uint64_t *t=spes_gpu_times()+((sg.fence+1)%SPES_GPU_TIME_SLOTS)*2;
+-  t[0]=0;t[1]=0;
++  volatile uint64_t *t=spes_gpu_times()+((sg.fence+1)%SPES_GPU_TIME_SLOTS)*4;
++  t[0]=0;t[1]=0;t[2]=0;t[3]=0;
+   n+=spes_gpu_stamp(commands+n,sg.fence+1,0);
+  }
+  /* The hardware-proven A610 order: indirect buffer(s), CP_WAIT_FOR_IDLE, then
+@@ -262,16 +265,22 @@
+  uint32_t done=((volatile uint32_t *)(sg.dma+0xc000))[9],from=sg.timed_through+1;
+  if(done-sg.timed_through>SPES_GPU_TIME_SLOTS)from=done-SPES_GPU_TIME_SLOTS+1;
+  static const uint32_t limit[6]={100,250,500,1000,2000,4000};
++ uint64_t ticks=0,cycles=0;
+  for(uint32_t f=from;f!=done+1;++f){
+-  volatile uint64_t *t=spes_gpu_times()+(f%SPES_GPU_TIME_SLOTS)*2;
++  volatile uint64_t *t=spes_gpu_times()+(f%SPES_GPU_TIME_SLOTS)*4;
+   uint64_t a=t[0],b=t[1];
+   if(!a || b<a)continue;
+   uint64_t u=(b-a)*10/192;
+   *us+=u;++*submissions;
++  if(t[3]>t[2]){ticks+=b-a;cycles+=t[3]-t[2];}
+   unsigned k=0;while(k<6 && u>=limit[k])++k;
+   ++by[k];
+  }
+  sg.timed_through=done;
++ /* cycles per 19.2 MHz tick * 19.2 = MHz */
++ if(ticks)printf("SPES GPU: core clock measured %llu MHz over %u submissions (%llu cycles in %llu us)\n",
++     (unsigned long long)(cycles*192/(ticks*10)),*submissions,(unsigned long long)cycles,
++     (unsigned long long)(ticks*10/192));
+ }
+ /* Only hardware facts from the spes A610 descriptor; do not copy A642L caps. */
+ bool redwood_gpu_parameter(uint32_t which,uint64_t *value){
+@@ -304,6 +313,17 @@
+  sg.gpu=gpu;sg.smmu=smmu;sg.context=context;sg.dma=dma;sg.l2=l2;sg.tail=tail;
+  sg.fence=((volatile uint32_t *)(dma+0xc000))[9];
+  sg.timed_through=sg.fence;
++ /* GPU cycle counter for the submission times (as msm a6xx_hw_init: RBBM_PERFCTR_CNTL = 1). */
++ touch_wr(gpu,0x1400u,1u);            /* RBBM_PERFCTR_CNTL (0x500) */
++ touch_wr(gpu,0x141cu,0u);            /* RBBM_PERFCTR_RBBM_SEL_0 (0x507): ALWAYS_COUNT */
++ /*
++  * DDR: nothing voted the BIMC (RPM "clk2" 0, the fab-bimc bus_clk in the live FDT), and all40 measured
++  * 60-130 ms of GPU time per UI frame. Android pairs its lowest GPU level (320 MHz) with bus level 2
++  * (4.4 GB/s) and 1115 MHz with level 7 (16.7 GB/s). spesddr_khz=N votes the active set to N kHz
++  * (the RPM rounds to a DDR level); 0 = no vote.
++  */
++ uint32_t ddr=0;(void)PE_parse_boot_argn("spesddr_khz",&ddr,sizeof(ddr));
++ if(ddr)(void)spes_rpm_kvp(0,0x326b6c63u /* "clk2" */,0,0x007a484bu /* "KHz" */,ddr);
+  sg.ready=true;
+  RedwoodGPUStart();
+  printf("SPES GPU: persistent backend ready; queued submissions, %llu MiB VA\n", SPES_GPU_SIZE >> 20);
