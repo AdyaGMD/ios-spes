@@ -1,3 +1,19 @@
+# all32 temp-booted: 90 Hz rounding (0155) + mediaserverd console logging + vkprobe captured, 2026-10-26
+
+- CI 40249616738 SUCCESS: kernel xnu/out-0155 SHA256
+  67b59f5408637d85fd73d2c32b2b5981fd4293c382142844327b8a85b248a931;
+  shim/out/spes-ios-graphics-all32.img (all31 args, sweetnull += vkprobe,
+  spesrun) SHA256 bd3595bf3472c8e0d7d977ce73ca580ebed0e07c1b63321123ca1ed1f0f3be05.
+- User APPROVED (chat): mediaserverd console logging. Snapshot
+  research/spes-phone-root-20261026b.img SHA256 803284df... (device = host).
+  Clone research/spes-phone-root-mediaserverd-log.img: tools/patch-launchd-plist.py
+  com.apple.mediaserverd (stdout/stderr /dev/console, OS_ACTIVITY_DT_MODE=YES,
+  CFLOG_FORCE_STDERR=1); only that job changed, vkprobe job kept. Delta
+  research/spes-mediaserverd-log-delta: 15 MiB, verified, applied with readback.
+  Rollback: tools/apply-ios-root-delta.py research/spes-mediaserverd-log-delta
+  --rollback --apply (from OrangeFox).
+- all32 temp-booted (hash verified).
+
 # all31 result: vsync paced (user: "90 Hz seems to work"), 90 Hz NOT set (rounding); audio silent; Turnip opened the GPU; 0155 building, 2026-10-26
 
 - User (all31): "90hz seems to work, audio doesnt". Log research/spes-all31-boot.txt
