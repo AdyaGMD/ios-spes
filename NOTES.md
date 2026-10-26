@@ -1,3 +1,16 @@
+# Batch 5 (metalprobe on the system device + carenderprobe) applied; all37 booted again, 2026-10-26
+
+- User approved batch 5. Base copy research/spes-phone-root-20261026i.img (phone stayed
+  in recovery). Clone: /redwood/bin/carenderprobe (3bfbc78d...), NegroniMetal.bundle/clients
+  "metalprobe m2vtest carenderprobe", /private/var/tmp/carender (0777), old result files
+  removed; launchd.plist: removed com.spes.{vkprobe,vkprobe-clear,m2vtest}; com.spes.metalprobe
+  = spesrun -o /private/var/tmp/metalprobe.txt 60 metalprobe --clear --iosurface --render (no
+  --bundle: system device); added com.spes.carenderprobe = spesrun -o
+  /private/var/tmp/carenderprobe.txt 120 carenderprobe /private/var/tmp/carender (scene*.ppm
+  Metal vs ref*.ppm CPU). layerprobe left out: its metallib needs Apple's metal compiler (no
+  Xcode here). Delta research/spes-batch5-delta, verified, applied with readback. all37
+  temp-booted.
+
 # all37: iOS's own Metal lookup returns the A610 device; m2vtest runs CoreAnimation shaders, 2026-10-26
 
 - Log research/spes-all37-boot.txt; copy research/spes-phone-root-20261026i.img
