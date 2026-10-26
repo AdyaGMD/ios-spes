@@ -1,0 +1,21 @@
+RedwoodGPU publishes NegroniGPUABI, so Turnip's drm layer uses host import (0x49).
+
+all35 (m2vtest): "host import of ...: not a noted IOSurface, and no USERPTR (kernel without
+0232)", then metal2vulkan "no-copy buffer: Unsupported HostMemory": negroni_drm.c sends 0x49 only
+when the service's NegroniGPUABI text names "userptr". Our kernel has 0x49 since 0156.
+
+--- a/iokit/Kernel/arm/RedwoodGPU.cpp
++++ b/iokit/Kernel/arm/RedwoodGPU.cpp
+@@ -365,6 +365,12 @@
+ 		return false;
+ 	}
+ 	setProperty(kIOUserClientClassKey, "RedwoodGPUUserClient");
++	/*
++	 * What Turnip's libdrm stand-in (iOSPlus10 negronigl drm/negroni_drm.c) reads to learn the
++	 * requests here: no "userptr" in it and it never sends 0x49 (all35: "no USERPTR (kernel without
++	 * 0232)", so metal2vulkan's no-copy buffers were refused). msm requests only, one address space.
++	 */
++	setProperty("NegroniGPUABI", "msm 0x09 0x40-0x4c 0x7e, userptr 0x49, va shared");
+ 	setName("RedwoodGPU");
+ 	registerService();
+ 	return true;
