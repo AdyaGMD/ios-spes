@@ -1,3 +1,15 @@
+# all33 temp-booted (60 Hz, paced vsync) with vkprobe v2 jobs, 2026-10-26
+
+- all33 = kernel out-0155 + sweetfb_rate=0 (SHA256 ce0a2150...). Temp-booted.
+- User APPROVED (chat, "both"): vkprobe rebuilt with userland/unbuffered.c
+  (stdout/stderr unbuffered; SHA256 fea8fa20...), jobs: com.spes.vkprobe =
+  spesrun 60 vkprobe --all-ext (no GPU job), com.spes.vkprobe-clear = spesrun 150
+  vkprobe --clear --quiet; both env NEGRONIGL_LOG=stderr TU_DEBUG=startup.
+  Snapshot research/spes-phone-root-20261026c.img SHA256 ffc08475... (device =
+  host); delta research/spes-vkprobe2-delta 12 MiB, verified, applied with
+  readback. Rollback: tools/apply-ios-root-delta.py research/spes-vkprobe2-delta
+  --rollback --apply (from OrangeFox).
+
 # all32 result: 90 Hz switched (89.997) but UI stalled + glitches + touch dead; all33 = 60 Hz built, 2026-10-26
 
 - User (all32): "weird gpu glitches". Log research/spes-all32-boot.txt (206386 B,
