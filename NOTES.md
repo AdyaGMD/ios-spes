@@ -1,3 +1,28 @@
+# all34 probe results (full copy 20261026g): Turnip OK, two blockers found; 0157 + batch 4, 2026-10-26
+
+- Full copy research/spes-phone-root-20261026g.img (17179869184 B, fsck OK, SHA256
+  72089f8a...). Probe files readable; saved in research/probe-results-all34/.
+- vkprobe (info): "device 0: Turnip Adreno (TM) 610, API 1.0.305, ... device
+  0x6010001"; 127 device extensions incl. external_memory_host, timeline_semaphore,
+  dynamic_rendering, synchronization2, buffer_device_address, push_descriptor,
+  descriptor_indexing, rasterization_order_attachment_access,
+  dynamic_rendering_local_read, robustness2, graphics_pipeline_library; missing
+  optional 16bit_storage, 8bit_storage; heap 1536 MiB; one queue family (0x7).
+  "MISSING required Vulkan 1.2 + timelineSemaphore (API 1.0.305, timelineSemaphore 1)".
+- vkprobe --clear: "tu_knl_drm_msm.cc:212: Failed to get initial fault count: -22",
+  vkCreateDevice = -3 -> kernel lacked MSM_PARAM_FAULTS.
+- metalprobe --bundle: IOAcceleratorES has no MetalPluginName (expected, spesmetal
+  unset); "FAIL bundle-init: initWithAcceleratorPort: returned nil" (= the VulkanVersion
+  refusal in its log). m2vtest: same refusal ("compute bad 0/1000 ..." are zeros of
+  tests not run; QuartzCore 0 functions).
+- Patch 0157 (commit 13a91f9): GET_PARAM 4 MAX_FREQ 300 MHz, 5 TIMESTAMP
+  mach_absolute_time, 9 FAULTS (sg.faulted), 0x0a SUSPENDS 0, 0x11 RAYTRACING 0.
+  Compile-check OK; CI 40376263528.
+- Batch 4 (user approved) on copy g: /private/var/db/negronimetal/env TU_DEBUG=noconform;
+  vkprobe jobs TU_DEBUG=startup,noconform; m2vtest job TU_DEBUG=noconform; old result
+  files removed; spesrun O_SYNC (9bfe39f7...). Delta research/spes-batch4-delta. Next
+  boot: all35 = all34 args on the 0157 kernel.
+
 # Correction: the all34 root copy was TRUNCATED (3.4 GB of 17.2), not the phone; 2026-10-26
 
 - research/spes-phone-root-20261026g.img was 3438786560 bytes: `adb exec-out dd`
