@@ -1,3 +1,23 @@
+# Metal step 2 (kernel): 0156 host import 0x49 + spesmetal=1 plug-in names; CI 40335320728; userland plan, 2026-10-26
+
+- Patch 0156 (commit 9962147), RedwoodGPU.cpp: request 0x49 struct redwood_userptr
+  {u64 pointer, u64 size, u32 flags (1 = read-only), u32 handle} = iOSPlus10 0232 /
+  their xf86drm.h layout. hostBuffer(): withAddressRange(fTask) + prepare, kernel
+  mapping (createMappingInTask kernel_task) for cache pushes, pushed at import and in
+  every submit that names it, newBuffer() maps 4K pages into the GPU VA; never keep()'d;
+  freeBuffer waits up to 1 s for its fence, then map release + complete(); still busy
+  = leaked on purpose; clientMemoryForType refuses host buffers. SweetFramebuffer.cpp:
+  spesmetal=1 sets MetalPluginName=NegroniMetal, MetalPluginClassName=NegroniMTLDevice
+  on the IOAcceleratorES ("sgx"). Compile-check OK; CI running. Not booted.
+- spesrun -o FILE (commit 62c3c99, SHA256 5ba9d5a2...): next batch runs vkprobe with
+  output to /private/var/tmp/vkprobe-{info,clear}.txt, read from the next snapshot.
+- Userland plan (iOSPlus10 scripts/metal/fetch-sources.sh, env.sh): metal2vulkan
+  720ef1ce + ios-flame 745c434 phone/metal2 bridge patches (except 0006) + their
+  m2v patches 0001-0003 + flame patches 0001-0007 (0003 = A730 device answers:
+  needs A610 values), Rust 1.98.0 + aarch64-apple-ios via rustup, CMake/Ninja
+  (userland/metal/cmake/ios-arm64.cmake). Needs user OK: install rustup/Rust and
+  clone metal2vulkan (~220 MB) + ios-flame.
+
 # SOUND WORKS (all33 + batch 2), 2026-10-26; vkprobe output still not captured
 
 - User: "sound works". Log research/spes-all33c-boot.txt (1634769 B, flush #29).
