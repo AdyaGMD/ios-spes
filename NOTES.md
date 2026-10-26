@@ -1,3 +1,24 @@
+# all37: iOS's own Metal lookup returns the A610 device; m2vtest runs CoreAnimation shaders, 2026-10-26
+
+- Log research/spes-all37-boot.txt; copy research/spes-phone-root-20261026i.img
+  (17179869184 B, SHA256 6f0e9fd1...; 20261026h deleted); results
+  research/probe-results-all37/ (2nd "spesrun:" block in each file = this boot).
+- spesmetal=1: backboardd, SpringBoard, PosterBoard, AegirPoster, PridePosterExtension
+  loaded NegroniMetal via Metal.framework and were refused by the allow-list ("not
+  listed in ... clients: no Metal device"): system-wide lookup works, UI stays on GL.
+- metalprobe (system path): "default device before: Turnip Adreno (TM) 610" =
+  MTLCreateSystemDefaultDevice returned our device; then --bundle registered a second
+  one and "MTLCreateSystemDefaultDevice returned nil" (Metal refuses >1 device). Next:
+  run metalprobe without --bundle (--clear --iosurface --render).
+- m2vtest (0159 ABI property: kernel ABI "msm 0x09 0x40-0x4c 0x7e, userptr 0x49, va
+  shared"): compute bad 0/1000, render bad 0/64, import bad 0/4096 (no-copy buffer
+  now via host import), "QuartzCore: 141 functions, kernels 3 ok 4 failed,
+  vertex/fragment pairs 13 ok 8 failed (1.4 s)". iOSPlus10's host estimate for the
+  A730 was kernels 7/7, fragments 93/95 with real constants; m2vtest's pairing is
+  naive (no function constants), so the failures need a closer look.
+- vkprobe: API 1.3.305, PASS requirements, PASS clear.
+- Brightness: wakes at the user's saved 1 (now visible with the 0158 floor).
+
 # all37 temp-booted (0159 + 0158 + spesmetal=1), 2026-10-26
 
 - CI 40380269065 SUCCESS: kernel xnu/out-0159; shim/out/spes-ios-graphics-all37.img (all35
