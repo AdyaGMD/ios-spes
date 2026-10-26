@@ -1,0 +1,5 @@
+layerprobe's two shaders (iOSPlus10 userland/metal/probes/layerprobe.metal: bg_vs, bg_fs_color) written by hand as
+AIR, because this Mac has no Apple metal compiler. Build:
+  llvm-as bg_vs.ll -o bg_vs.air; llvm-as bg_fs_color.ll -o bg_fs_color.air
+  cargo +1.98.0 run --release --manifest-path tools/metallib-pack/Cargo.toml -- layerprobe.metallib \
+    vertex:bg_vs:bg_vs.air fragment:bg_fs_color:bg_fs_color.air

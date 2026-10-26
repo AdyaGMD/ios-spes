@@ -1,0 +1,14 @@
+[package]
+name = "metallib-pack"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+description = "Package hand-written AIR modules into a .metallib without Apple's metal tool (spes, layerprobe)"
+
+[workspace]
+
+[dependencies]
+# metal2vulkan's own test writer and container parser (steelbrain/metal2vulkan 720ef1ce, GPL-2.0+/LGPL-3.0+)
+metal2vulkan-devtools = { path = "../../research/metal-build/src/metal2vulkan/crates/metal2vulkan-devtools" }
+metal2vulkan-air = { path = "../../research/metal-build/src/metal2vulkan/crates/metal2vulkan-air" }
