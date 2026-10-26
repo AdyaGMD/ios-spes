@@ -1,3 +1,15 @@
+# Correction: the all34 root copy was TRUNCATED (3.4 GB of 17.2), not the phone; 2026-10-26
+
+- research/spes-phone-root-20261026g.img was 3438786560 bytes: `adb exec-out dd`
+  stopped early and still exited 0 (the phone-side hash, skipped at the user's
+  request, used to catch this). Symptoms: EIO reading /private/var/tmp/*.txt and on
+  writing /redwood/bin/spesrun in a clone, fsck "Invalid number of allocation blocks
+  (4294967295, 0)". The 20261026f copy (before all34) fscks OK; the phone was never
+  written from the bad copy (clone discarded before any delta). The "probe output
+  never flushed" conclusion in the entry below is therefore UNPROVEN: the files may
+  simply lie past 3.4 GB. Rule now: every copy must be exactly 17179869184 bytes
+  before use. Recopying.
+
 # all34 result: TURNIP RUNS ON THE A610; Metal device refused (Turnip reports Vulkan 1.0); probe files lost, 2026-10-26
 
 - Log research/spes-all34-boot.txt (1726223 B, flush #54): UI fine (frame 3940);
