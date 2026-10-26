@@ -1,3 +1,23 @@
+# all37 + batch 5: COREANIMATION RENDERS THROUGH METAL ON THE A610 (7/7 scenes); images/text flipped, 2026-10-26
+
+- Copy research/spes-phone-root-20261026j.img (resumed after an adb stall at 14.96 GB:
+  trimmed to whole MiB, dd skip=14271; 17179869184 B, fsck OK, SHA256 84260e52...).
+  Results research/probe-results-all37b/ (+ carender/*.ppm, carender-compare.png).
+- metalprobe (system device, no --bundle): PASS device, PASS clear, PASS iosurface
+  (surface 54, 0 of 4096 wrong), FAIL render: "foreign function" (MSL source ->
+  newLibraryWithSource path, not implemented by the frontend; same as compute).
+- carenderprobe ("device: Turnip Adreno (TM) 610 (Metal's discovery)"): PASS 7/7 scenes;
+  mean abs diff vs renderInContext: solid 0.13, image 18.34, text 7.08, clip 0.17, mask
+  0.19, blur 44.44, backdrop 13.51. Looked at: solid/clip/mask identical; blur/backdrop
+  differ because the CPU reference skips CAFilters (Metal shows the blur: correct);
+  image and text are VERTICALLY FLIPPED on Metal while CA-drawn geometry (red square
+  top-left) is right -> texture upload/sampling orientation (frontend or m2v), to find.
+  One "negronigl: USERPTR of 0x103514000 (+32768): errno 12" (ENOMEM) in carenderprobe.
+- layerprobe: tools/metallib-pack (commit 8a.. "Package hand-written AIR") +
+  userland/layerprobe-air/{bg_vs,bg_fs_color}.ll -> layerprobe.metallib (7692 B, parsed
+  by metal2vulkan) staged in research/metal-build/stage with redwood/bin/layerprobe.
+  Not installed yet (batch 6).
+
 # Batch 5 (metalprobe on the system device + carenderprobe) applied; all37 booted again, 2026-10-26
 
 - User approved batch 5. Base copy research/spes-phone-root-20261026i.img (phone stayed
