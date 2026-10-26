@@ -1,0 +1,26 @@
+GPU parameters Turnip asks for: FAULTS, SUSPENDS, TIMESTAMP, RAYTRACING, MAX_FREQ.
+
+all34 (vkprobe --clear): "tu_knl_drm_msm.cc:212: Failed to get initial fault count: -22",
+vkCreateDevice = -3: MSM_PARAM_FAULTS was not answered. Faults = 1 once the backend has faulted;
+suspends 0; timestamp = mach_absolute_time (19.2 MHz, as the GPU's always-on counter); raytracing
+0; max frequency 300 MHz (nominal GPLL0 clock, 0107).
+
+--- a/bsd/dev/spes_gpu_backend.h
++++ b/bsd/dev/spes_gpu_backend.h
+@@ -248,6 +248,16 @@
+  case 0x10:*value=14;return true;
+  case 0x12:*value=7;return true;
+  case 0x13:*value=0;return true;
++ /*
++  * What Turnip asks besides (tu_knl_drm_msm.cc): FAULTS at device creation ("Failed to get initial
++  * fault count: -22" without it, all34), SUSPENDS, TIMESTAMP (the GPU's always-on counter runs at
++  * 19.2 MHz like mach_absolute_time), RAYTRACING, MAX_FREQ (the GPU clock, nominal 300 MHz, 0107).
++  */
++ case 4:*value=300000000ull;return true;
++ case 5:*value=mach_absolute_time();return true;
++ case 9:*value=sg.faulted?1:0;return true;
++ case 0x0a:*value=0;return true;
++ case 0x11:*value=0;return true;
+  default:return false;
+  }
+ }
