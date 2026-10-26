@@ -82,9 +82,9 @@ ninja -C "$b/build"
 st="$b/stage"; rm -rf "$st"; bun="$st/System/Library/Extensions/NegroniMetal.bundle"; mkdir -p "$bun" "$st/redwood/bin"
 cp "$b/build/NegroniMetal" "$bun/NegroniMetal"
 sed -e 's/@NAME@/NegroniMetal/g' -e 's/@CLASS@/NegroniMTLDevice/g' "$met/plugin/Info.plist.in" > "$bun/Info.plist"
-echo 'metalprobe m2vtest' > "$bun/clients"
+echo 'metalprobe m2vtest carenderprobe' > "$bun/clients"
 cp "$turnip" "$bun/libvulkan_freedreno.dylib"
-for t in metalprobe m2vtest; do cp "$b/build/$t" "$st/redwood/bin/$t"; done
+for t in metalprobe m2vtest carenderprobe; do cp "$b/build/$t" "$st/redwood/bin/$t"; done
 codesign -f -s - "$bun/NegroniMetal" "$bun/libvulkan_freedreno.dylib" "$st/redwood/bin/"*
 shasum -a 256 "$bun/NegroniMetal" "$bun/libvulkan_freedreno.dylib" "$st/redwood/bin/"*
 echo "Built the Metal userland; nothing installed on the phone."
