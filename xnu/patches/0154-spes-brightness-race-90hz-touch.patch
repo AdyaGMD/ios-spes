@@ -1,0 +1,382 @@
+Display and input: brightness race fixed, 90 Hz, vsync from the panel, faster touch reads.
+
+all30 came up dark (lit only during the power-button fade): CoreBrightness's "0.00 nits" on
+IOMFBBrightnessLevel landed after AppleARMBacklight's level (all29 had the opposite order).
+While AppleARMBacklight is published that property no longer sets the panel.
+
+90 Hz (user): the k7_38_0c_0a panel's one DT timing is 90 frames a second (2432 lines), 60 being
+the same clocks with a long vertical front porch. setupRate() measures what INTF_1 sends
+(frame/line counters), and with sweetfb_rate (default 90; 0 = leave it) cuts a long porch back in
+INTF_1 and DSI0's VIDEO_MODE_TOTAL, re-measures, and restores the old timing if it is off. iOS is
+told the measured rate (TimingElements), and the vsync is armed for the panel's next frame start
+from the line counter instead of a free-running 16.7 ms timer.
+
+Input delay (user): the touch loop slept 10 ms a pass. Now the IRQ line is looked at every 1 ms
+(read at once when low, else every 8 ms) and the chip is read every 4 ms while a finger is down;
+sweettouchpoll=10 is the old pace. SweetFramebuffer logs the time from a new finger to the next
+swap (first 40).
+
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -408,12 +408,18 @@
+ 	return (sum & 0xffffu) == touch_be16(buf + len - 2);
+ }
+ 
++/* When the latest new finger was read (mach_absolute_time): SweetFramebuffer logs the time to the next swap. */
++volatile uint64_t sweet_touch_down_at;
++
+ static void
+ touch_report(uint32_t mask, const int *x, const int *y)
+ {
+ 	for (unsigned id = 0; id < TOUCH_MAX; ++id) {
+ 		uint32_t bit = 1u << id;
+ 		if (mask & bit) {
++			if (!(st.active & bit)) {
++				sweet_touch_down_at = mach_absolute_time();
++			}
+ 			if (!(st.active & bit) || x[id] != st.x[id] || y[id] != st.y[id]) {
+ 				sweet_hid_touch((int)id, 1, x[id], y[id]);
+ 				st.s_down++;
+@@ -2445,12 +2451,22 @@
+ 	}
+ 	st.kind = goodix ? TOUCH_GOODIX : TOUCH_FTS;
+ 	st.stage = "polling";
+-	printf("SWEET TOUCH: selected %s, 1080x2400, poll=10ms irq-hint=%d\n",
+-	    goodix ? "GT9896 Yellowstone" : "Focaltech 54:52", st.irq_hint);
+-	unsigned errors = 0, ticks = 0, polls = 0;
++	/*
++	 * Input delay (user, all29): the loop slept 10 ms a pass, so a touch waited up to 10 ms
++	 * before it was read and moves came at 100 Hz. Now: with the interrupt line usable, it is
++	 * looked at every 1 ms and the chip read as soon as it is low (and every 8 ms anyway, in case
++	 * the chip only pulses it); while a finger is down the chip is read every 4 ms. Without the
++	 * line: every 4 ms. Boot-arg sweettouchpoll=10 brings the old pace back.
++	 */
++	unsigned poll_ms = 0;
++	(void)PE_parse_boot_argn("sweettouchpoll", &poll_ms, sizeof(poll_ms));
++	printf("SWEET TOUCH: selected %s, 1080x2400, %s irq-hint=%d\n",
++	    goodix ? "GT9896 Yellowstone" : "Focaltech 54:52",
++	    poll_ms ? "fixed poll (sweettouchpoll)" : "irq line every 1 ms, 4 ms while down", st.irq_hint);
++	unsigned errors = 0, ticks = 0, polls = 0, idle_ms = 0;
+ 	while (!st.dead) {
+ 		/* Nonfatal RAM-root diagnostic: periodic input counters and coordinates. */
+-		if (st.diag == 3 && ++polls % 500u == 0) {
++		if (st.diag == 3 && ++polls % (poll_ms ? 500u : 10000u) == 0) {
+ 			printf("SPES TOUCH: frames=%u errors=%u down=%u up=%u last=%d,%d active=%#x\n",
+ 			    st.s_frames, st.s_errs, st.s_down, st.s_up,
+ 			    st.s_lastx, st.s_lasty, st.active);
+@@ -2463,10 +2479,18 @@
+ 			    st.s_raw[3], st.s_raw[4], st.s_raw[5], st.s_raw[6], st.s_raw[7],
+ 			    st.s_raw[8], st.s_raw[9], st.s_raw[10], st.s_raw[11]);
+ 		}
+-		/* Optional IRQ hint still reads every 100ms, and always while down. */
+-		if (!st.irq_hint || st.active ||
+-		    !(touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_IRQ)) & 1u) ||
+-		    (++ticks % 10u) == 0) {
++		bool read;
++		if (poll_ms != 0) {
++			/* the old pace: the IRQ hint still reads every 10 passes, and always while down */
++			read = !st.irq_hint || st.active ||
++			    !(touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_IRQ)) & 1u) || (++ticks % 10u) == 0;
++		} else if (st.active || !st.irq_hint) {
++			read = (idle_ms += 1) >= 4;
++		} else {
++			read = !(touch_rd(st.west, TOUCH_GPIO_IO(TOUCH_PIN_IRQ)) & 1u) || (idle_ms += 1) >= 8;
++		}
++		if (read) {
++			idle_ms = 0;
+ 			int err = st.kind == TOUCH_GOODIX ? touch_goodix() : touch_focaltech();
+ 			if (err) {
+ 				st.s_errs++;
+@@ -2481,7 +2505,7 @@
+ 				errors = 0;
+ 			}
+ 		}
+-		touch_wait(10);
++		touch_wait(poll_ms ? poll_ms : 1);
+ 	}
+ 	touch_report(0, st.x, st.y);
+ out:
+--- a/iokit/Kernel/arm/SweetFramebuffer.cpp
++++ b/iokit/Kernel/arm/SweetFramebuffer.cpp
+@@ -52,6 +52,24 @@
+ #define SWEET_SSPP_SRC_YSTRIDE0 0x24
+ #define SWEET_CTL_FLUSH         0x18
+ #define SWEET_CTL_FLUSH_VIG0    0x20001 /* VIG0 + CTL: latched at the next vsync */
++/*
++ * The panel's interface (DT qcom,sde-intf-off 0x6b800, type dsi: INTF_1) and its timing engine,
++ * as Linux dpu_hw_intf.c and HackiOS redwood_adreno.c display_probe read them: clocks a line in
++ * HSYNC_CTL[31:16], clocks a frame in VSYNC_PERIOD, and a frame and a line counter that count
++ * even with FRAME_LINE_COUNT_EN at 0. DSI0's video engine keeps the frame length too
++ * (VIDEO_MODE_TOTAL: v_total - 1 in [31:16]), so a porch change goes to both.
++ */
++#define SWEET_MDP_INTF1         0x05e6b800
++#define SWEET_INTF_EN           0x000
++#define SWEET_INTF_HSYNC_CTL    0x008
++#define SWEET_INTF_VSYNC_F0     0x00c
++#define SWEET_INTF_VSYNC_F1     0x010
++#define SWEET_INTF_V_START      0x01c
++#define SWEET_INTF_V_END        0x024
++#define SWEET_INTF_FRAME_COUNT  0x0ac
++#define SWEET_INTF_LINE_COUNT   0x0b0
++#define SWEET_CTL_INTF_FLUSH    0x110
++#define SWEET_DSI_VIDEO_TOTAL   0x02c
+ 
+ #if defined(SWEET)
+ #include <IOKit/IOService.h>
+@@ -115,6 +133,14 @@
+ 	uint64_t            fVsyncCount;
+ 
+ 	static void vsyncFired(OSObject *owner, IOTimerEventSource *sender);
++	void armVsync(IOTimerEventSource *sender);
++	void setupRate();
++	uint32_t measureRate(uint32_t vtotal);  /* mHz from the counters over 200 ms */
++	volatile uint32_t *fIntf;       /* INTF_1 timing engine, NULL if not running */
++	uint32_t      fRateHz;          /* what iOS is told and the vsync is paced at */
++	uint32_t      fVtotal;          /* lines a frame, porches included */
++	uint64_t      fFrameAbs, fLineAbs, fNextVsync;  /* mach_absolute_time units */
++	bool          fBacklightService;        /* AppleARMBacklight owns the panel level */
+ 
+ public:
+ 	uint64_t      fPhys;
+@@ -375,7 +401,9 @@
+ 		return false;
+ 	}
+ 	thread_deallocate(presenterThread);
+-	fVsync->setTimeoutUS(SWEET_FB_VSYNC_US);
++	setupRate();
++	fNextVsync = mach_absolute_time();
++	armVsync(fVsync);
+ 
+ 	publishModes();
+ 	setProperty(kIOUserClientClassKey, "IOMobileFramebufferUserClient");
+@@ -416,6 +444,7 @@
+ 		if (!bl->startBacklight()) {
+ 			IOLog("SWEET BL: setup failed\n");
+ 		} else {
++			fBacklightService = true;
+ 			IOLog("SWEET BL: AppleARMBacklight published (sweetbacklight=2)\n");
+ 		}
+ 	}
+@@ -549,7 +578,7 @@
+ 	OSDictionary *color = OSDictionary::withCapacity(8);
+ 	OSArray *timings = OSArray::withCapacity(1);
+ 	OSArray *colors = OSArray::withCapacity(1);
+-	const uint32_t rate = 60u << 16;        /* 16.16 */
++	const uint32_t rate = fRateHz << 16;    /* 16.16 */
+ 
+ 	if (timing != NULL && horizontal != NULL && vertical != NULL && color != NULL && timings != NULL && colors != NULL) {
+ 		sweet_set_number(color, "ID", SWEET_FB_COLOR_ID);
+@@ -579,7 +608,7 @@
+ 		timings->setObject(timing);
+ 		setProperty("TimingElements", timings);
+ 		setProperty("ColorElements", colors);
+-		IOLog("SWEET FB: modes published: %ux%u at 60 Hz\n", fLogicalW, fLogicalH);
++		IOLog("SWEET FB: modes published: %ux%u at %u Hz\n", fLogicalW, fLogicalH, fRateHz);
+ 	}
+ 	OSSafeReleaseNULL(timings);
+ 	OSSafeReleaseNULL(colors);
+@@ -615,7 +644,7 @@
+ 			fb->fPresentReady = fb->fDirty;
+ 			IOLockWakeup(fb->fLock, &fb->fPresentReady, true);
+ 			IOLockUnlock(fb->fLock);
+-			sender->setTimeoutUS(SWEET_FB_VSYNC_US);
++			fb->armVsync(sender);
+ 			return;
+ 		}
+ 		if (fb->fDirect && fb->fScanPhys != fb->fBootSrc) {
+@@ -642,7 +671,7 @@
+ 			}
+ 		}
+ 		IOLockUnlock(fb->fLock);
+-		sender->setTimeoutUS(SWEET_FB_VSYNC_US);
++		fb->armVsync(sender);
+ 		return;
+ 	}
+ 	if (fb->fDirty && (count % fb->fFlushTicks) == 0) {
+@@ -650,10 +679,148 @@
+ 		IOLockWakeup(fb->fLock, &fb->fPresentReady, true);
+ 	}
+ 	IOLockUnlock(fb->fLock);
+-	sender->setTimeoutUS(SWEET_FB_VSYNC_US);
++	fb->armVsync(sender);
++}
++
++/*
++ * The next vsync at the panel's next frame start: from the interface's line counter when it
++ * runs (so iOS's frame clock is the panel's, not a timer that drifts past it), else one frame
++ * after the last deadline (absolute, so the handler's own time does not stretch the period).
++ */
++void
++AppleCLCD::armVsync(IOTimerEventSource *sender)
++{
++	uint64_t now = mach_absolute_time(), next;
++	if (fIntf != NULL && fVtotal != 0 && fLineAbs != 0) {
++		uint32_t line = fIntf[SWEET_INTF_LINE_COUNT / 4];
++		uint64_t left = line < fVtotal ? (uint64_t)(fVtotal - line) * fLineAbs : fFrameAbs;
++		if (left < fFrameAbs / 4) {
++			left += fFrameAbs;              /* this frame starts too soon to be the next one */
++		}
++		next = now + left;
++	} else {
++		fNextVsync += fFrameAbs;
++		if (fNextVsync <= now) {
++			fNextVsync = now + fFrameAbs;
++		}
++		next = fNextVsync;
++	}
++	sender->wakeAtTime(next);
+ }
+ 
++uint32_t
++AppleCLCD::measureRate(uint32_t vtotal)
++{
++	uint32_t f[2], l[2];
++	uint64_t t[2];
++	for (int i = 0; i < 2; i++) {
++		f[i] = fIntf[SWEET_INTF_FRAME_COUNT / 4];
++		l[i] = fIntf[SWEET_INTF_LINE_COUNT / 4];
++		absolutetime_to_nanoseconds(mach_absolute_time(), &t[i]);
++		if (fIntf[SWEET_INTF_FRAME_COUNT / 4] != f[i]) {
++			i--;                            /* a frame began between the reads */
++			continue;
++		}
++		if (i == 0) {
++			IOSleep(200);
++		}
++	}
++	if (vtotal == 0 || t[1] <= t[0] || f[1] == f[0]) {
++		return 0;
++	}
++	uint64_t lines = (uint64_t)(f[1] - f[0]) * vtotal + l[1] - l[0];
++	return (uint32_t)(lines * 1000000000ull / (t[1] - t[0]) * 1000 / vtotal);
++}
++
++/*
++ * The panel (k7_38_0c_0a, DSI video + DSC) has one timing in the DT, 90 frames a second with
++ * 2400 + 32 lines, and reaches 60 by a longer vertical front porch (qcom,dsi-supported-dfps-list
++ * 90 60, dfps_immediate_porch_mode_vfp): same clocks, more lines. Boot-arg sweetfb_rate (default
++ * 90; 0 = leave the firmware's timing): when the firmware left the long porch, the frame is cut
++ * back to rate's length in the interface and in DSI0's video engine, at the start of a frame,
++ * then measured; anything but about that rate puts the old length back. The panel's own
++ * "dispparam-bc-90hz" brightness compensation is not sent (only a colour shade, per its name).
++ */
+ void
++AppleCLCD::setupRate(void)
++{
++	uint32_t want = 90;
++	(void)PE_parse_boot_argn("sweetfb_rate", &want, sizeof(want));
++	fRateHz = 60;
++	nanoseconds_to_absolutetime(SWEET_FB_VSYNC_US * 1000ull, &fFrameAbs);
++	vm_offset_t page = ml_io_map(SWEET_MDP_INTF1 & ~0xfffull, 0x1000);
++	if (page == 0) {
++		IOLog("SWEET FB: rate: no INTF_1 mapping; 60 Hz timer\n");
++		return;
++	}
++	volatile uint32_t *intf = (volatile uint32_t *)(page + (SWEET_MDP_INTF1 & 0xfff));
++	uint32_t en = intf[SWEET_INTF_EN / 4], line = intf[SWEET_INTF_HSYNC_CTL / 4] >> 16;
++	uint32_t period = intf[SWEET_INTF_VSYNC_F0 / 4];
++	uint32_t vstart = intf[SWEET_INTF_V_START / 4], vend = intf[SWEET_INTF_V_END / 4];
++	if (!(en & 1) || line == 0 || period < line || vend <= vstart) {
++		IOLog("SWEET FB: rate: INTF_1 not running (en %#x hsync %#x period %#x v %#x-%#x); 60 Hz timer\n",
++		    en, intf[SWEET_INTF_HSYNC_CTL / 4], period, vstart, vend);
++		return;
++	}
++	fIntf = intf;
++	uint32_t vtotal = period / line, active = (vend - vstart) / line + 1;
++	uint32_t dsiTotal = fDsi != NULL ? *(volatile uint32_t *)(fDsi + SWEET_DSI_VIDEO_TOTAL) : 0;
++	uint32_t mhz = measureRate(vtotal);
++	IOLog("SWEET FB: rate: panel sent %u.%03u frames/s: %u lines (%u shown), %u clocks a line; DSI total %#x\n",
++	    mhz / 1000, mhz % 1000, vtotal, active, line, dsiTotal);
++	uint32_t target = (want != 0 && mhz != 0) ? (uint32_t)((uint64_t)vtotal * mhz / (want * 1000ull)) : 0;
++	bool dsiMatches = fDsi != NULL && (dsiTotal >> 16) + 1 == vtotal;
++	if (want != 0 && mhz != 0 && mhz + 5000 < want * 1000 && target >= active + 32 && dsiMatches && fCtl0 != NULL) {
++		uint32_t oldDsi = dsiTotal;
++		while (intf[SWEET_INTF_LINE_COUNT / 4] > 64) {
++			IODelay(50);                    /* start of a frame: the change lands in the porch */
++		}
++		*(volatile uint32_t *)(fDsi + SWEET_DSI_VIDEO_TOTAL) = (dsiTotal & 0xffffu) | ((target - 1) << 16);
++		intf[SWEET_INTF_VSYNC_F0 / 4] = target * line;
++		intf[SWEET_INTF_VSYNC_F1 / 4] = target * line;
++		fCtl0[SWEET_CTL_INTF_FLUSH / 4] = 1u << 1;              /* INTF_1 */
++		fCtl0[SWEET_CTL_FLUSH / 4] = (1u << 31) | (1u << 17);   /* INTF + CTL */
++		IOSleep(50);
++		uint32_t now = measureRate(target);
++		if (now + 3000 < want * 1000 || now > want * 1000 + 3000) {
++			while (intf[SWEET_INTF_LINE_COUNT / 4] > 64) {
++				IODelay(50);
++			}
++			*(volatile uint32_t *)(fDsi + SWEET_DSI_VIDEO_TOTAL) = oldDsi;
++			intf[SWEET_INTF_VSYNC_F0 / 4] = period;
++			intf[SWEET_INTF_VSYNC_F1 / 4] = period;
++			fCtl0[SWEET_CTL_INTF_FLUSH / 4] = 1u << 1;
++			fCtl0[SWEET_CTL_FLUSH / 4] = (1u << 31) | (1u << 17);
++			IOSleep(50);
++			mhz = measureRate(vtotal);
++			IOLog("SWEET FB: rate: %u lines gave %u.%03u frames/s, not %u: old timing back (%u.%03u)\n", target,
++			    now / 1000, now % 1000, want, mhz / 1000, mhz % 1000);
++		} else {
++			vtotal = target;
++			mhz = now;
++			IOLog("SWEET FB: rate: frame cut to %u lines: %u.%03u frames/s\n", target, now / 1000, now % 1000);
++		}
++	} else if (want != 0 && mhz + 5000 < want * 1000) {
++		IOLog("SWEET FB: rate: %u Hz not set (target %u lines, active %u, DSI total %s, ctl %s)\n", want, target, active,
++		    dsiMatches ? "matches" : "differs", fCtl0 != NULL ? "mapped" : "unmapped");
++	}
++	if (mhz < 20000 || mhz > 130000) {
++		fIntf = NULL;                       /* nonsense: pace by the timer */
++		IOLog("SWEET FB: rate: measured rate unusable; 60 Hz timer\n");
++		return;
++	}
++	fVtotal = vtotal;
++	fRateHz = (mhz + 500) / 1000;
++	nanoseconds_to_absolutetime(1000000000000ull / mhz, &fFrameAbs);
++	fLineAbs = fFrameAbs / vtotal;
++	IOLog("SWEET FB: rate: vsync at the panel's frame start, %u Hz\n", fRateHz);
++}
++
++/* Touch -> frame: when the touch thread saw the latest new finger (bsd/dev/sweet_touch.c), 0 once logged. */
++extern "C" volatile uint64_t sweet_touch_down_at;
++static uint32_t sweet_touch_latency_logged;
++
++void
+ AppleCLCD::addClient(IOMobileFramebufferUserClient *client)
+ {
+ 	IOLockLock(fLock);
+@@ -696,6 +863,16 @@
+ void
+ AppleCLCD::swap(const uint8_t *rec)
+ {
++	uint64_t down = sweet_touch_down_at;
++	if (down != 0 && sweet_touch_latency_logged < 40) {
++		uint64_t ns = 0;
++		absolutetime_to_nanoseconds(mach_absolute_time() - down, &ns);
++		sweet_touch_down_at = 0;
++		if (ns < 1000000000ull) {
++			sweet_touch_latency_logged++;
++			IOLog("SWEET FB: touch -> next swap %llu.%01llu ms\n", ns / 1000000, ns / 100000 % 10);
++		}
++	}
+ 	AbsoluteTime deadline;
+ 	clock_interval_to_deadline(1000, kMillisecondScale, &deadline);
+ 	IOLockLock(fLock);
+@@ -1110,8 +1287,18 @@
+ 	level = level > 0x7ff ? 0x7ff : (level < 1 ? 1 : level);
+ 	static uint32_t asked;
+ 	if (asked++ < 12) {
+-		IOLog("SWEET FB: brightness %llu.%02llu nits -> level %#llx\n", v >> 16, ((v & 0xffff) * 100) >> 16, level);
++		IOLog("SWEET FB: brightness %llu.%02llu nits -> level %#llx%s\n", v >> 16, ((v & 0xffff) * 100) >> 16, level,
++		    fBacklightService ? ": ignored (AppleARMBacklight sets the level)" : "");
+ 	}
++	/*
++	 * With AppleARMBacklight the slider and fades come through IODisplayParameters; CoreBrightness
++	 * still writes "0.00 nits" here once at start. Whichever came last won: all29 ended bright
++	 * (this first, then the backlight's 0xe1), all30 dark (the other order; panel at level 1,
++	 * lit only during the power-button fade).
++	 */
++	if (fBacklightService) {
++		return kIOReturnSuccess;
++	}
+ 	IOLockLock(fLock);
+ 	fPanelLevel = (uint32_t)level;
+ 	bool off = fPowerOff;
