@@ -1,3 +1,9 @@
+# all38 temp-booted (0160 kernel + batch 6), 2026-10-26
+
+- Kernel xnu/out-0160 (CI run in research/all38-ci-run.txt); shim/out/spes-ios-graphics-all38.img
+  (all37 args). Results to read from the next full copy: /private/var/tmp/carenderprobe2.txt,
+  carender2/*.ppm, layerprobe.txt; kernel log: "RedwoodGPU: host import ..." lines, NMTL lines.
+
 # Image flip: lead = refused no-copy buffers; 0160 + batch 6 (layerprobe), 2026-10-26
 
 - all37b kernel log (carenderprobe): NegroniMetal "no-copy buffer refused: ... HostMemory,
