@@ -1,3 +1,31 @@
+# all31 result: vsync paced (user: "90 Hz seems to work"), 90 Hz NOT set (rounding); audio silent; Turnip opened the GPU; 0155 building, 2026-10-26
+
+- User (all31): "90hz seems to work, audio doesnt". Log research/spes-all31-boot.txt
+  (1231933 B, flush #21).
+- Display (observed): "panel sent 59.999 frames/s: 3648 lines (2400 shown),
+  832 clocks a line; DSI total 0xe3f033f" (DSI agrees: 0xe3f+1 = 3648), "90 Hz
+  not set (target 2431 lines, active 2400 ...)": truncation. Still 60 Hz; what
+  the user saw is the vsync paced by LINE_COUNT. Patch 0155 (commit 30b184f)
+  rounds -> 2432. CI 40249616738 running.
+- Touch (observed): "irq line every 1 ms, 4 ms while down"; touch -> next swap
+  over 40 touches: min 0.3, p25 7.4, median 24.8, p75 138, max 280 ms (upper
+  bound: a touch that changes nothing has no swap of its own).
+- Audio (observed): stream opened at t=5.41, /dev/redwood-audio opened by the
+  plug-in in all 4 mediaserverd runs, but no "the volume is" (virtual audio
+  device never took the Speaker; HackiOS: it sets the volume once when it does)
+  and no "playing". mediaserverd os_log not captured (its launchd job lacks
+  the console env). Next: patch the mediaserverd job like PosterBoard/pkd
+  (root write: ask).
+- Video (observed, symbolicated library): mediaserverd SIGBUS/SIGSEGV x3 in
+  /System/Library/VideoCodecs/H264SW.videocodec (unnamed functions), writing
+  to an address in shared-cache text (far 0x208e28040, map r-x tag 35) or
+  unmapped memory. No 2-plane IOSurface was created by anyone (WebKit.GPU only
+  BGRA). Cause open.
+- Turnip (observed): vkprobe ran ("exec vkprobe" line 6234), Turnip's drm layer
+  logged "negronigl: RedwoodGPU open, msm ABI, chip 0x6010001, GMEM 132 KiB,
+  max 0 MHz"; the rest of vkprobe's stdout was lost: the console tee covers only
+  sweetnull processes. Next image: sweetnull += vkprobe,spesrun.
+
 # all31 temp-booted with the Turnip probe installed, 2026-10-26
 
 - Snapshot research/spes-phone-root-20261026a.img SHA256 d9f574ab...
