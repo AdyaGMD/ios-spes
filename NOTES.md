@@ -1,3 +1,29 @@
+# all33 (second boot) result: UI fine at 60 Hz; still no sound; vkprobe output not captured; video crash = bad plane base, 2026-10-26
+
+- User: "still no sound". Log research/spes-all33b-boot.txt (1259758 B, flush #27).
+  UI OK (redwood-gl frame 4660), mediaserverd exec 6x.
+- Audio (observed): plug-in "the speaker is with the HAL (/dev/redwood-audio:
+  open)" in every mediaserverd run, but never "the volume is" nor "playing": iOS's
+  virtual audio device never takes the Speaker, even before any video. Our
+  identity = HackiOS's (iPhone10,3 / D22AP) [V], same plug-in source. Next guess
+  to check: device-tree nodes / IOKit services that VirtualAudio wants (HackiOS's
+  ADT audio nodes vs ours), and the HAL device properties it asks for ('cust',
+  'clok', 'cstb', 'taps', 'accs', 'auto' are answered "does not have").
+- Video (observed): 5x mediaserverd SIGBUS, same H264SW.videocodec func
+  0x1f0f4c894+128 [V symbolicated]: a row-copy loop `str q0, [x10, x3]` with
+  x10 = arg x7 (destination luma base) + y*stride, and the chroma destination from
+  [sp+0x10]: the decoder's output buffer has a bogus plane-0 base (points into the
+  shared cache) or one that is unmapped. No IOSurface create by mediaserverd is
+  logged around it (WebKit.GPU makes only BGRA), so the source of that buffer is
+  open.
+- vkprobe: exec'd twice (60 s and 150 s), no output, no crash. launchd's
+  StandardOutPath=/dev/console output of spesrun/vkprobe never reaches the console
+  tee in any boot (spesrun's own line never seen); negronigl's line did in all32
+  because log.c open()s /dev/console itself. Fix for the next batch: spesrun
+  open()s /dev/console and dup2()s it to 1 and 2 before exec (root write: spesrun).
+- launchd job edits to avoid: StandardOut/ErrorPath on mediaserverd stopped it
+  from ever being spawned (all32/all33 first boot).
+
 # Batch 1 applied (mediaserverd job back to stock, probe jobs kept); all33 temp-booted again, 2026-10-26
 
 - Snapshot research/spes-phone-root-20261026d.img SHA256 16b6a566... (device =

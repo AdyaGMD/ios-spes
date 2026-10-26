@@ -5,6 +5,7 @@
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <fcntl.h>
 #include <unistd.h>
 
 int
@@ -13,6 +14,18 @@ main(int argc, char **argv)
 	if (argc < 3) {
 		fprintf(stderr, "usage: spesrun SECONDS PROGRAM [ARG...]\n");
 		return 2;
+	}
+	/*
+	 * Output straight to the console: launchd's StandardOutPath=/dev/console output never reached
+	 * the kernel's console tee (all33), while a process's own open() of /dev/console does.
+	 */
+	int fd = open("/dev/console", O_WRONLY | O_NOCTTY);
+	if (fd >= 0) {
+		dup2(fd, 1);
+		dup2(fd, 2);
+		if (fd > 2) {
+			close(fd);
+		}
 	}
 	sleep((unsigned)atoi(argv[1]));
 	printf("spesrun: %s after %s s\n", argv[2], argv[1]);
