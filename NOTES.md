@@ -1,3 +1,9 @@
+# all39 temp-booted (0161 kernel, backboardd on Metal), 2026-10-26
+
+- Kernel xnu/out-0161 (CI run in research/all39-ci-run.txt, linked: pmap_is_modified/clear_modify/
+  valid_page resolve); shim/out/spes-ios-graphics-all39.img (all38 args). Compare "KB out of the cache
+  in N us a submission" with all38d (33-48 MB, 15-28 ms).
+
 # STAGE 4: THE iOS UI RUNS ON METAL (backboardd, all38 + batch 8); slow -> 0161, 2026-10-26
 
 - User: "works, blur, the red gradient in the lock screen is gone, visually pretty good, some glitches
