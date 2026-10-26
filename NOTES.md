@@ -1,3 +1,20 @@
+# all32/all33 hang at the Apple logo: mediaserverd never starts after its console-logging change; reverting, 2026-10-26
+
+- User (all33): Apple logo for 4+ min. Log research/spes-all33-boot.txt (223609 B).
+- Observed: "exec mediaserverd" 4x in all31, 0x in all32 and all33 (and no
+  PosterBoard, no "|mediaserverd|" line); backboardd drew 3 GL frames then
+  nothing in both (so all32's stall was not 90 Hz). launchd's own messages are
+  identical to all31's. The only change common to all32/all33 and absent in
+  all31: com.apple.mediaserverd with StandardOut/ErrorPath /dev/console +
+  OS_ACTIVITY_DT_MODE/CFLOG_FORCE_STDERR (same edit works for PosterBoard/pkd).
+  Why launchd does not spawn it: unknown. sweetnull 79 chars (buffer 128): fine.
+- Rollback of research/spes-vkprobe2-delta refused ("Device differs at block 0":
+  the all33 boot rewrote HFS block 0): nothing written. Fix in progress: fresh
+  snapshot research/spes-phone-root-20261026d.img, restore the mediaserverd job
+  exactly (keys of launchd.plist.msd.before), keep both vkprobe jobs, delta,
+  apply, boot all33 again (user: boot without asking).
+- Lesson: do not add console logging to mediaserverd's job.
+
 # all33 temp-booted (60 Hz, paced vsync) with vkprobe v2 jobs, 2026-10-26
 
 - all33 = kernel out-0155 + sweetfb_rate=0 (SHA256 ce0a2150...). Temp-booted.
