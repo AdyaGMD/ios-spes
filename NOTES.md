@@ -1,3 +1,18 @@
+# all31 temp-booted with the Turnip probe installed, 2026-10-26
+
+- Snapshot research/spes-phone-root-20261026a.img SHA256 d9f574ab...
+  (device = host). Clone research/spes-phone-root-turnip.img +
+  /redwood/lib/libvulkan_freedreno.dylib (f736dde2...), /redwood/bin/vkprobe
+  (ea2547d3...), /redwood/bin/spesrun (d248c3ed...), launchd.plist + job
+  /System/Library/LaunchDaemons/com.spes.vkprobe.plist (only change:
+  530 -> 531 jobs). Delta research/spes-turnip-delta: 29 MiB, verified,
+  applied with readback (install.log). Rollback: tools/apply-ios-root-delta.py
+  research/spes-turnip-delta --rollback --apply (from OrangeFox).
+- all31 temp-booted (hash verified). Look for in the log: "SWEET FB: rate:"
+  lines (90 Hz), "SWEET TOUCH: selected ... irq line every 1 ms", "touch ->
+  next swap", "stream: playing/stopped", "spesrun:" and "vkprobe:" lines
+  (~60 s after launchd starts the job). If 90 Hz misbehaves: all31s.
+
 # all31 + Turnip probe prepared (root change approved), 2026-10-26
 
 - CI 40247343127 SUCCESS: kernel xnu/out-0154 SHA256
