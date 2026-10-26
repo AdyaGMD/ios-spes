@@ -1,0 +1,81 @@
+spesgpu_mhz=600 or 785: the A610 on its own PLL (GPU_CC_PLL0, Zonda) with a CX corner raise.
+
+all40 measured 60-130 ms of GPU time per Metal UI frame at the 0107 clock (GPLL0/2, nominal 300 MHz).
+gpucc-khaje.c: gfx3d runs from GPU_CC_PLL0 out_main (post-divider 2) at 320..1260 MHz with
+vdd_cx rate_max LOW_L1 = 600 MHz, NOMINAL = 785 MHz. This programs PLL0 as clk_zonda_pll_configure +
+clk_zonda_pll_enable (gpu_cc_pll0_config values, L/alpha for VCO = 2 x clock: 600 -> l 62
+alpha 0x8000, 785 -> l 81 alpha 0xc555), waits for LOCK_DET, then selects RCG source 1 divider 1
+(cfg 0x101). Before that, rwcx vlvl goes to 192 (SVS_L1) or 256 (NOM) through spes_rpm_kvp (the
+link is up since step 5). 19/300 are unchanged; images choose with SPES_GPU_MHZ.
+
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -1327,8 +1327,8 @@
+ 	 */
+ 	uint32_t gpu_mhz = 19, gfx_cfg = 0;
+ 	(void)PE_parse_boot_argn("spesgpu_mhz", &gpu_mhz, sizeof(gpu_mhz));
+-	if (gpu_mhz != 19 && gpu_mhz != 300) {
+-		printf("SPES GPU: unsupported spesgpu_mhz=%u (19 or 300); stopping\n", gpu_mhz);
++	if (gpu_mhz != 19 && gpu_mhz != 300 && gpu_mhz != 600 && gpu_mhz != 785) {
++		printf("SPES GPU: unsupported spesgpu_mhz=%u (19, 300, 600 or 785); stopping\n", gpu_mhz);
+ 		return;
+ 	}
+ 	if (gpu_mhz == 300) {
+@@ -1338,6 +1338,49 @@
+ 			return;
+ 		}
+ 		gfx_cfg = 0x503u;
++	}
++	if (gpu_mhz == 600 || gpu_mhz == 785) {
++		/*
++		 * GPU_CC_PLL0 (Zonda, GPU_CC + 0), as gpucc-khaje.c + clk_zonda_pll_configure/enable: VCO = 2x the
++		 * GPU clock (out_main post-divider 2, user_ctl 0x01000101), gfx3d RCG source 1, divider 1.
++		 * The A610 is on CX (gfx3d vdd_class vdd_cx): rate_max LOW_L1 600 MHz, NOMINAL 785 MHz, so the
++		 * rwcx corner goes to SVS_L1 (192) or NOM (256) first. The VCO (1.2 / 1.57 GHz) is within MX
++		 * VDD_LOWER (1.8 GHz), which the probe's rwmx 64 already covers.
++		 */
++		uint32_t corner = gpu_mhz == 600 ? 192u : 256u;
++		if (spes_rpm_kvp(0, 0x78637772u /* "rwcx" */, 0, 0x6c766c76u /* "vlvl" */, corner) != 0) {
++			printf("SPES GPU: CX corner %u not acked; stopping\n", corner);
++			return;
++		}
++		uint32_t vco_khz = gpu_mhz * 2000u, l = vco_khz / 19200u,
++		    alpha = (uint32_t)((((uint64_t)(vco_khz % 19200u)) << 16) / 19200u);
++		touch_wr(cc, 0x04u, l);                 /* L_VAL */
++		touch_wr(cc, 0x08u, alpha);             /* ALPHA_VAL */
++		touch_wr(cc, 0x10u, 0x08200800u);       /* CONFIG_CTL */
++		touch_wr(cc, 0x14u, 0x05022001u);       /* CONFIG_CTL_U */
++		touch_wr(cc, 0x18u, 0x00000010u);       /* CONFIG_CTL_U1 */
++		touch_wr(cc, 0x0cu, 0x01000101u);       /* USER_CTL: out_main, post-divider 2 */
++		touch_wr(cc, 0x00u, touch_rd(cc, 0x00u) & ~3u);  /* MODE: BYPASSNL, OUTCTRL off */
++		touch_wr(cc, 0x28u, 0u);                /* OPMODE: STANDBY */
++		touch_wr(cc, 0x00u, touch_rd(cc, 0x00u) | 4u);   /* RESET_N */
++		touch_wr(cc, 0x00u, touch_rd(cc, 0x00u) | 2u);   /* BYPASSNL */
++		touch_wait(1);
++		touch_wr(cc, 0x28u, 1u);                /* OPMODE: RUN */
++		bool locked = false;
++		for (int i = 0; i < 100 && !locked; ++i) {
++			locked = (touch_rd(cc, 0x00u) & (1u << 31)) != 0;
++			if (!locked) touch_wait(1);
++		}
++		if (!locked) {
++			printf("SPES GPU: GPU PLL0 no lock (mode=%#x l=%u alpha=%#x); stopping\n",
++			    touch_rd(cc, 0x00u), l, alpha);
++			return;
++		}
++		touch_wr(cc, 0x0cu, touch_rd(cc, 0x0cu) | 0xfu);  /* PLL outputs */
++		touch_wr(cc, 0x00u, touch_rd(cc, 0x00u) | 1u);    /* OUTCTRL */
++		printf("SPES GPU: GPU PLL0 locked: VCO %u kHz (l=%u alpha=%#x), CX corner %u\n",
++		    vco_khz, l, alpha, corner);
++		gfx_cfg = 0x101u;
+ 	}
+ 	touch_wr(cc, 0x1020, gfx_cfg);
+ 	touch_wr(cc, 0x101c, 3u); /* ROOT_EN=1, UPDATE=1 */
+@@ -1358,6 +1401,7 @@
+ 		return;
+ 	}
+ 	printf("SPES GPU: GFX clock selected %s cfg=%#x (not a frequency measurement)\n",
++	    gpu_mhz == 785 ? "GPU PLL0, 785 MHz" : gpu_mhz == 600 ? "GPU PLL0, 600 MHz" :
+ 	    gpu_mhz == 300 ? "GPLL0 / 2, nominal 300 MHz" : "CXO 19.2 MHz", gfx_cfg);
+ 
+ 	/* Step 10: Ungate graphics core branch clocks */
