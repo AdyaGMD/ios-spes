@@ -1,0 +1,4 @@
+orientprobe: build with the iOS 16.5 SDK (clang -target arm64-apple-ios16.0 -fobjc-arc -framework Foundation -framework
+Metal), ad-hoc sign. Its library: tools/metallib-pack orientprobe.metallib vertex:colored_vertex:runtime_examples.air
+fragment:colored_fragment:runtime_examples.air fragment:sampled_fragment:runtime_examples.air (the AIR assembled by
+tools/build-spes-metal-macos.sh from metal2vulkan's runtime_examples.ll fixture).
