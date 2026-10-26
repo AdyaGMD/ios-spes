@@ -31,7 +31,7 @@ if [[ ! -f "$b/src/.patched" ]]; then
   grep -q 'value=1;return true' "$b/0003-spes-a610-device-answers.patch" && grep -q 'value=16384' "$b/0003-spes-a610-device-answers.patch"
   for p in "$met"/patches/flame/*.patch; do
     case "$(basename "$p")" in 0003-*) p="$b/0003-spes-a610-device-answers.patch" ;; esac
-    (cd "$fs/phone/metal2" && patch -s -p2 < "$p" 2>/dev/null) || (cd "$fs" && patch -s -p1 < "$p"); echo "flame: $(basename "$p")"
+    patch -s -p1 --batch --no-backup-if-mismatch -d "$fs" < "$p"; echo "flame: $(basename "$p")"
   done
   touch "$b/src/.patched"
 fi
