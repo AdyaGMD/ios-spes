@@ -45,7 +45,13 @@
   job builds it) + userland/metal-patches/m2v/0001 (alignment answers 256; build script applies
   userland/metal-patches/m2v/*.patch; research/metal-build rebuilt 01:46, runtime recompiled).
   Batch 10 = new NegroniMetal binary + _CodeSignature (keep the phone's clients file); fresh copy
-  research/spes-phone-root-20261027b.img in progress (phone in recovery).
+  research/spes-phone-root-20261027b.img (17179869184 bytes).
+- all45: CI run 40434522462, artifact 12703253931, xnu/out-0166 SHA OK; image sha256 7d9031b5... (785 MHz,
+  DDR vote, census, 256-byte surface rows). Batch 10 (research/spes-batch10-delta, 45 MiB: NegroniMetal
+  binary 421b5154... + _CodeSignature; clients unchanged incl. backboardd) applied and read back
+  verified; all45 booted 2026-10-27. Copy 20261027a deleted; 20261027b is the rollback base.
+- Check in the log: census blits/px per frame (all44: ~2500 / 25-40 Mpx), GPU time, surface bpr
+  values ("SWEET SURF: ... bpr" should be multiples of 256).
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
