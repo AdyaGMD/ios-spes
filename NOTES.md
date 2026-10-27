@@ -8,7 +8,9 @@
   bins, each replaying the commands. Test: TU_DEBUG=noconform,sysmem (env file) as root batch 9.
 - A quick delta against copy m + batch8 replay was refused ("Device differs at block 0", nothing
   written): the HFS header changes at runtime, so a fresh full copy (research/spes-phone-root-20261027a.img)
-  is running; then clone, edit /private/var/db/negronimetal/env, delta, apply, boot all42.
+  done (COPY-OK, 17179869184 bytes). Batch 9 (research/spes-batch9-delta, 15 MiB) applied and read back
+  verified 2026-10-27: env = TU_DEBUG=noconform,sysmem. all42 booted on it. Base copies m and g deleted;
+  20261027a is the rollback base. Compare GPU time with the all42 numbers above.
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
