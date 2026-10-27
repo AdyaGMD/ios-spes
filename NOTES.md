@@ -69,6 +69,12 @@
   775 MHz. Likely bandwidth: blended full-screen layers on linear, uncompressed 1125x2436 targets.
   Ideas: tell clears from copies in the census (RB_2D_BLIT_CNTL solid colour bit), measure DDR effect
   now that copies are gone, render scale (@3x 1125x2436 vs @2x), 1115 MHz (needs TURBO CX corner).
+- User: all45 on sysmem is "better than all43" (2026-10-27).
+- 0167 (CI run 40439245749): spesgpu_mhz=1025 (rwcx 384 TURBO) and 1115 (VCO 2229.6 MHz, rwcx 416
+  TURBO_NO_CPR), both with rwmx 128 (SVS: VCO past MX VDD_LOWER's 1.8 GHz). Live FDT confirms rwcx =
+  pm6125_s3_level and rwmx = pm6125_s5_level, vlvl 16..512. Census: CP_BLITs with RB_2D_BLIT_CNTL
+  (0x8c00) bit 7 SOLID_COLOR counted as clears. Background job builds all46 (1025) and all47 (1115),
+  all45 args otherwise; not booted yet.
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
