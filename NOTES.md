@@ -75,7 +75,7 @@
   pm6125_s3_level and rwmx = pm6125_s5_level, vlvl 16..512. Census: CP_BLITs with RB_2D_BLIT_CNTL
   (0x8c00) bit 7 SOLID_COLOR counted as clears. Background job builds all46 (1025) and all47 (1115),
   all45 args otherwise. Artifact 12705397326, xnu/out-0167 SHA OK. all46 sha256 090c9f5e..., all47
-  sha256 b42f030a...; built, not booted (user still on all45).
+  sha256 b42f030a...; all47 booted 2026-10-27.
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
