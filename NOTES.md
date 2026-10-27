@@ -83,7 +83,9 @@
   client): 787x1705 bpr 3152/3200, 1125x2436 bpr 4512, 1065x282 bpr 4288, small ones.
 - 0168 (CI run 40477034108): SweetSurface rounds a client's IOSurfaceBytesPerRow up to 256 for
   single-plane kernel-allocated surfaces (spessurfround=0 disables). all48 = 0168 kernel at 785 MHz,
-  background job builds and boots it (phone in recovery).
+  CI run 40477034108 OK, artifact 12721188554, xnu/out-0168 SHA OK; all48 sha256 1e1ec358...; booted
+  2026-10-27 (once the user reconnected the phone in fastboot). Check "SWEET SURF: ... bpr" all
+  multiples of 256, census copies per frame (all47 ~19 Mpx), no garbled images.
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
