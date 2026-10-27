@@ -1,4 +1,14 @@
-# all41 temp-booted (0164 kernel: GPU clock measured + DDR vote, 300 MHz), all42 built (600 MHz), 2026-10-26
+# all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
+
+- all41 result (log research/spes-all41-boot.txt): DDR vote "request set 0 0x326b6c63/0 0x7a484b=2133000:
+  acked". GPU clock MEASURED 299-300 MHz (cycles vs always-on), so 0107 is right. GPU time: idle redraw
+  56-57 ms (all40 ~60), in use 114 ms avg over 22 submissions => DDR barely matters; ~34M GPU cycles a
+  frame. The work per frame is the problem; clock is the lever we have now.
+- all42 = 0164 kernel, SPES_GPU_MHZ=600 (sha256 453076f5...), booted 2026-10-27. Check "GPU PLL0 locked",
+  "core clock measured ~600 MHz", GPU time per submission (expect ~half).
+- If 600 is stable: try 785 (rwcx 256). Beyond that the GPU's work per frame (34M cycles at 1125x2436:
+  ~12 cycles/pixel) needs looking at: Turnip sysmem vs GMEM, load/store actions in metal2vulkan,
+  blur passes.
 
 - 0163 CI run 40421199803 was cancelled (xnu.yml keeps one run; 0164's dispatch replaced it). Kernel
   xnu/out-0164 = CI run 40421469147, artifact 12699255101, SHA OK (contains 0162-0164).
