@@ -61,6 +61,14 @@
   (same 26 bytes; '#' lines are ignored by load_env). Image = copy 20261027b + batch10 replay; the env
   data block is the only 4K-aligned hit (offset 14320181248). Verified and applied without a fresh copy;
   all45 booted again. Trick for small same-size edits: patch raw bytes, 1-block delta.
+- GMEM result (log research/spes-all45b-boot.txt, env TU_DEBUG=noconform): WORSE. 61-98 ms a
+  submission (sysmem ~49). Census: ~800 GMEM bins + resolves a frame, draws replayed per bin
+  (~13000 draws a frame): 128 KB GMEM at 1125x2436 is far too many bins. Batch 11 ROLLED BACK
+  (--rollback, block 13656 read back verified): env is TU_DEBUG=noconform,sysmem again; all45 booted.
+- Where sysmem stands: ~68 draws + ~20 full-screen-ish blits (clears or copies) a frame, ~49 ms at
+  775 MHz. Likely bandwidth: blended full-screen layers on linear, uncompressed 1125x2436 targets.
+  Ideas: tell clears from copies in the census (RB_2D_BLIT_CNTL solid colour bit), measure DDR effect
+  now that copies are gone, render scale (@3x 1125x2436 vs @2x), 1115 MHz (needs TURBO CX corner).
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
