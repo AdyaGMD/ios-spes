@@ -1,0 +1,29 @@
+IOSurface rows aligned to 256 bytes, Turnip's linear pitch for 4-byte texels.
+
+all44's census (0165): per Metal UI frame ~50-150 draws of ~1500 vertices but ~2500 CP_BLITs over
+25-40 Mpx (10-15 screens), ~13 sysmem passes. metal2vulkan aliases an IOSurface as a linear VkImage
+only where the image Turnip makes sits exactly on the surface's rows (linear_plan.rs `aliases`;
+flame bridge 0101 already lets padded rendered-to surfaces alias). Turnip pitches linear 4-byte
+images to 256 (fd6_layout.c), our surfaces were 64-aligned (and 16 where CoreAnimation follows
+Metal's iosurfaceTextureAlignmentBytes, fixed in userland/metal-patches/m2v/0001), so each surface
+drawn into was a shadow copied in before and out after every render pass. SWEET_SURFACE_ROW_ALIGN
+(the IOSurface limits the framework sizes rows by, and the kernel's own defaults) is now 256.
+
+--- a/iokit/Kernel/arm/SweetSurface.cpp
++++ b/iokit/Kernel/arm/SweetSurface.cpp
+@@ -71,7 +71,14 @@
+ #define SWEET_SURFACE_MAX_DIM           16384
+ #define SWEET_SURFACE_MAX_ALLOC         (256u << 20)
+ #define SWEET_SURFACE_MAX_PROPS         (64u << 10)
+-#define SWEET_SURFACE_ROW_ALIGN         64
++/*
++ * 256: Turnip's row pitch for a linear image of 4-byte texels (Mesa fd6_layout.c, pitchalign
++ * cpp_shift + 6). metal2vulkan renders straight into an IOSurface only where the surface's rows sit
++ * on that pitch; at 64 (1065 px: 4288 vs 4352) every surface CoreAnimation drew into was a shadow
++ * copied in and out of each render pass (all44 census: 25-40 Mpx of CP_BLIT a frame). Scanout takes
++ * the surface's own stride.
++ */
++#define SWEET_SURFACE_ROW_ALIGN         256
+ #define SWEET_SURFACE_TIMESTAMPS        0x800   /* offset in the state page */
+ #define SWEET_SURFACE_STATE_SEED        0xc     /* u32 in the state page */
+ #define kIOSurfaceLockReadOnly          0x1

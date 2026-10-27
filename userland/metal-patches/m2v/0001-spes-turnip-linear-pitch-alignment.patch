@@ -1,0 +1,39 @@
+--- a/crates/metal2vulkan-runtime/src/private_properties.rs
++++ b/crates/metal2vulkan-runtime/src/private_properties.rs
+@@ -36,6 +36,13 @@
+     RowAudit, RowState,
+ };
+ use crate::linear_plan::LINEAR_ALIGNMENT;
++
++/// spes (Turnip on the Adreno 610): the row pitch Turnip gives a linear image of 4-byte texels
++/// (fd6_layout.c: pitchalign = cpp_shift + 6, 256 bytes). CoreAnimation sizes the IOSurfaces it
++/// renders into by `iosurfaceTextureAlignmentBytes`; at 16 their rows (787 px: 3152 bytes) never
++/// sat on Turnip's (3328), so each was a shadow copied in and out of every render pass (all44:
++/// 25-40 Mpx of CP_BLIT a frame). A multiple of `LINEAR_ALIGNMENT`, so validation is unchanged.
++pub(crate) const TURNIP_LINEAR_PITCH_ALIGNMENT: u64 = LINEAR_ALIGNMENT * 16;
+ use crate::metal_level::MetalLevel;
+ use crate::render_state::MAX_VIEWPORTS;
+ use crate::texture_descriptor::{largest_side, MAX_ARRAY_LENGTH};
+@@ -619,7 +626,7 @@
+             C::DeviceLinearTextureAlignmentBytes
+             | C::LinearTextureAlignmentBytes
+             | C::IosurfaceTextureAlignmentBytes
+-            | C::IosurfaceReadOnlyTextureAlignmentBytes => LINEAR_ALIGNMENT,
++            | C::IosurfaceReadOnlyTextureAlignmentBytes => TURNIP_LINEAR_PITCH_ALIGNMENT,
+             C::MaxVertexBuffers
+             | C::MaxFragmentBuffers
+             | C::MaxComputeBuffers
+--- a/crates/metal2vulkan-runtime/src/capabilities.rs
++++ b/crates/metal2vulkan-runtime/src/capabilities.rs
+@@ -333,7 +333,10 @@
+         &self,
+         format: PixelFormat,
+     ) -> Result<u64, Error> {
+-        linear_alignment(format, self.metal_level).map_err(|problem| {
++        // spes: Turnip's linear pitch (`private_properties::TURNIP_LINEAR_PITCH_ALIGNMENT`).
++        linear_alignment(format, self.metal_level)
++            .map(|a| a.max(crate::private_properties::TURNIP_LINEAR_PITCH_ALIGNMENT))
++            .map_err(|problem| {
+             invalid(
+                 "minimum_linear_texture_alignment_for_pixel_format",
+                 Problem::BufferTexture(problem),

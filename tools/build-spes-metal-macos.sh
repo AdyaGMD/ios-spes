@@ -34,6 +34,8 @@ assert s.count(a)==1
 p.write_text(s.replace(a,'(unsigned long long)([[(id)d valueForKey:@"recommendedMaxWorkingSetSize"] unsignedLongLongValue] >> 20)'))
 PY
   for p in "$met"/patches/m2v/*.patch; do git -C "$m2v" apply --whitespace=nowarn "$p"; echo "m2v: iOSPlus10 $(basename "$p")"; done
+  # ours (userland/metal-patches/m2v): Turnip-on-A610 answers
+  for p in "$root"/userland/metal-patches/m2v/*.patch; do git -C "$m2v" apply --whitespace=nowarn "$p"; echo "m2v: spes $(basename "$p")"; done
   # A610 (Mesa freedreno_devices.py GPUId(610): num_ccu 1, cs_shared_mem_size 16 KiB) instead of the A730's 4 and 32 KiB
   sed -e 's/A730 answers/A610 answers/; s/Adreno 730/Adreno 610/; s/FD730: num_ccu 4 = num_sp_cores/FD610: num_ccu 1 = num_sp_cores/' \
       -e 's/"gpuCoreCount")){\*value=4;/"gpuCoreCount")){*value=1;/; s/\*value=32768;/*value=16384;/; s/32 KiB/16 KiB/' \
