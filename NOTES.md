@@ -33,6 +33,19 @@
 - User re-enabled Actions. 0165 CI run 40433055792, artifact 12702673716, xnu/out-0165 SHA OK. all44 =
   all43 args (785 MHz, DDR vote) + census; sha256 f513b405...; booted 2026-10-27. Read the
   "SPES GPU: census:" lines next to the GPU-time lines.
+- all44 census (log research/spes-all44-boot.txt): per 5 s in use ~1600-12500 draws (27K-340K vertices),
+  0-190 tiny dispatches, but 36K-216K CP_BLITs over 0.9-2.6 Gpx, 224-1431 sysmem passes. Per frame
+  ~2500 blits / 25-40 Mpx = 10-15 screens copied, almost nothing drawn. => SHADOW COPIES:
+  metal2vulkan aliases an IOSurface as a linear VkImage only if Turnip's linear pitch equals the
+  surface's rows. Turnip: pitchalign cpp_shift+6 = 256 B for 4-byte texels (fd6_layout.c). Our surfaces:
+  64-aligned (SweetSurface SWEET_SURFACE_ROW_ALIGN, limits selector) and 16 where CA follows Metal's
+  iosurfaceTextureAlignmentBytes (log: 787x1705 bpr 3152/3200, 1125 bpr 4544; Turnip wants 3328/4608).
+  flame bridge 0101 (padded writers alias) is already applied; the pitch mismatch defeated it.
+- Fix: kernel 0166 SWEET_SURFACE_ROW_ALIGN 256 (CI run 40434522462 -> all45 = all44 args, background
+  job builds it) + userland/metal-patches/m2v/0001 (alignment answers 256; build script applies
+  userland/metal-patches/m2v/*.patch; research/metal-build rebuilt 01:46, runtime recompiled).
+  Batch 10 = new NegroniMetal binary + _CodeSignature (keep the phone's clients file); fresh copy
+  research/spes-phone-root-20261027b.img in progress (phone in recovery).
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
