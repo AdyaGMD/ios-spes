@@ -1,3 +1,15 @@
+# all42 result + batch 9 in progress (TU_DEBUG sysmem), 2026-10-27
+
+- all42 (log research/spes-all42-boot.txt): "GPU PLL0 locked: VCO 1200000 kHz (l=62 alpha=0x8000), CX
+  corner 192", rwcx 192 acked, clock MEASURED 590 MHz, no GPU faults. User: "faster but not as fast as
+  how opengl es felt". GPU time still 18-114 ms a submission (up to ~70M cycles a frame); best windows
+  191 submissions/5 s at 18.6 ms.
+- Theory: per-frame GPU work is the problem. A610 GMEM is 128 KB, so a 1125x2436 frame is hundreds of
+  bins, each replaying the commands. Test: TU_DEBUG=noconform,sysmem (env file) as root batch 9.
+- A quick delta against copy m + batch8 replay was refused ("Device differs at block 0", nothing
+  written): the HFS header changes at runtime, so a fresh full copy (research/spes-phone-root-20261027a.img)
+  is running; then clone, edit /private/var/db/negronimetal/env, delta, apply, boot all42.
+
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
 - all41 result (log research/spes-all41-boot.txt): DDR vote "request set 0 0x326b6c63/0 0x7a484b=2133000:
