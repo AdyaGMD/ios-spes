@@ -1,0 +1,110 @@
+spesgpu_mhz=1025 and 1115 (CX TURBO / TURBO_NO_CPR, MX SVS); the census tells clears from copies.
+
+all45 (sysmem, shadow copies gone): ~49 ms of GPU time a frame at 775 MHz, ~70 draws and ~20 large
+CP_BLITs, user: "better than all43". gpucc-khaje rate_max: VDD_L2_HIGH 1025 MHz, HIGH_L1 1114.8 MHz.
+Live FDT: rwcx = pm6125_s3_level, rwmx = pm6125_s5_level (vlvl, levels 16..512); TURBO 384,
+TURBO_NO_CPR 416. A VCO past 1.8 GHz needs MX VDD_LOW (SVS 128). The census now counts CP_BLITs with
+RB_2D_BLIT_CNTL (0x8c00) SOLID_COLOR (bit 7) as clears, with their pixels.
+
+--- a/bsd/dev/spes_gpu_backend.h
++++ b/bsd/dev/spes_gpu_backend.h
+@@ -214,8 +214,8 @@
+  */
+ extern vm_map_address_t phystokv(uint64_t pa);   /* osfmk/arm pmap (pmap_paddr_t = uint64_t) */
+ static struct {
+- uint64_t words, draws, vertices, indirect, dispatches, groups, blits, pixels, ibs;
+- uint32_t mode[16], dst_tl, dst_br, bad;
++ uint64_t words, draws, vertices, indirect, dispatches, groups, blits, pixels, ibs, fills, fill_pixels;
++ uint32_t mode[16], dst_tl, dst_br, blit_cntl, bad;
+ } sgc;
+ static int sg_census=-1;
+ static bool spes_gpu_word(uint64_t address,uint32_t *value){
+@@ -234,7 +234,9 @@
+    uint32_t reg=(h>>8)&0x7ffff,n=h&0x7f;
+    for(uint32_t k=0;k<n;++k){
+     uint32_t r=reg+k,x;
+-    if((r==0x8405 || r==0x8406) && spes_gpu_word(address+(i+1+k)*4ull,&x)){if(r==0x8405)sgc.dst_tl=x;else sgc.dst_br=x;}
++    if((r==0x8405 || r==0x8406 || r==0x8c00) && spes_gpu_word(address+(i+1+k)*4ull,&x)){
++     if(r==0x8405)sgc.dst_tl=x;else if(r==0x8406)sgc.dst_br=x;else sgc.blit_cntl=x;
++    }
+    }
+    i+=1+n;sgc.words+=n;continue;
+   }
+@@ -249,7 +251,11 @@
+   case 0x2c:{                                                             /* CP_BLIT */
+    ++sgc.blits;
+    uint32_t w=((sgc.dst_br&0xffff)-(sgc.dst_tl&0xffff))+1,hh=((sgc.dst_br>>16)-(sgc.dst_tl>>16))+1;
+-   if(sgc.dst_br>=sgc.dst_tl && w<=16384 && hh<=16384)sgc.pixels+=(uint64_t)w*hh;
++   if(sgc.dst_br>=sgc.dst_tl && w<=16384 && hh<=16384){
++    sgc.pixels+=(uint64_t)w*hh;
++    /* RB_2D_BLIT_CNTL (0x8c00) bit 7 SOLID_COLOR: a clear, not a copy */
++    if(sgc.blit_cntl&0x80){++sgc.fills;sgc.fill_pixels+=(uint64_t)w*hh;}
++   }
+    break;}
+   case 0x65:++sgc.mode[v[0]&15];break;                                    /* CP_SET_MARKER */
+   case 0x3f:                                                              /* CP_INDIRECT_BUFFER */
+@@ -262,8 +268,9 @@
+ static void spes_gpu_census_report(void){
+  if(!sgc.ibs)return;
+  printf("SPES GPU: census: %llu IBs %llu words; %llu draws %llu vertices, %llu indirect; %llu dispatches "
+-     "%llu groups; %llu blits %llu px; markers sysmem %u binning %u gmem %u resolve %u compute %u; %u unread\n",
++     "%llu groups; %llu blits %llu px (%llu clears %llu px); markers sysmem %u binning %u gmem %u resolve %u compute %u; %u unread\n",
+      sgc.ibs,sgc.words,sgc.draws,sgc.vertices,sgc.indirect,sgc.dispatches,sgc.groups,sgc.blits,sgc.pixels,
++     sgc.fills,sgc.fill_pixels,
+      sgc.mode[1],sgc.mode[2],sgc.mode[4],sgc.mode[6],sgc.mode[8],sgc.bad);
+  memset(&sgc,0,sizeof(sgc));
+ }
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -1327,8 +1327,8 @@
+ 	 */
+ 	uint32_t gpu_mhz = 19, gfx_cfg = 0;
+ 	(void)PE_parse_boot_argn("spesgpu_mhz", &gpu_mhz, sizeof(gpu_mhz));
+-	if (gpu_mhz != 19 && gpu_mhz != 300 && gpu_mhz != 600 && gpu_mhz != 785) {
+-		printf("SPES GPU: unsupported spesgpu_mhz=%u (19, 300, 600 or 785); stopping\n", gpu_mhz);
++	if (gpu_mhz != 19 && gpu_mhz != 300 && gpu_mhz != 600 && gpu_mhz != 785 && gpu_mhz != 1025 && gpu_mhz != 1115) {
++		printf("SPES GPU: unsupported spesgpu_mhz=%u (19, 300, 600, 785, 1025 or 1115); stopping\n", gpu_mhz);
+ 		return;
+ 	}
+ 	if (gpu_mhz == 300) {
+@@ -1339,7 +1339,7 @@
+ 		}
+ 		gfx_cfg = 0x503u;
+ 	}
+-	if (gpu_mhz == 600 || gpu_mhz == 785) {
++	if (gpu_mhz >= 600) {
+ 		/*
+ 		 * GPU_CC_PLL0 (Zonda, GPU_CC + 0), as gpucc-khaje.c + clk_zonda_pll_configure/enable: VCO = 2x the
+ 		 * GPU clock (out_main post-divider 2, user_ctl 0x01000101), gfx3d RCG source 1, divider 1.
+@@ -1347,12 +1347,21 @@
+ 		 * rwcx corner goes to SVS_L1 (192) or NOM (256) first. The VCO (1.2 / 1.57 GHz) is within MX
+ 		 * VDD_LOWER (1.8 GHz), which the probe's rwmx 64 already covers.
+ 		 */
+-		uint32_t corner = gpu_mhz == 600 ? 192u : 256u;
++		/*
++		 * 1025 (VDD_L2_HIGH) and 1114.8 MHz (HIGH_L1): live FDT rwcx = pm6125_s3_level (levels to 512);
++		 * TURBO 384 and TURBO_NO_CPR 416 (qcom,rpm-smd-regulator.h). Their VCO (2.05 / 2.23 GHz) is past
++		 * MX VDD_LOWER's 1.8 GHz, so rwmx (pm6125_s5_level) goes to SVS 128 (VDD_LOW, 2.4 GHz) too.
++		 */
++		uint32_t corner = gpu_mhz == 600 ? 192u : gpu_mhz == 785 ? 256u : gpu_mhz == 1025 ? 384u : 416u;
+ 		if (spes_rpm_kvp(0, 0x78637772u /* "rwcx" */, 0, 0x6c766c76u /* "vlvl" */, corner) != 0) {
+ 			printf("SPES GPU: CX corner %u not acked; stopping\n", corner);
+ 			return;
+ 		}
+-		uint32_t vco_khz = gpu_mhz * 2000u, l = vco_khz / 19200u,
++		if (gpu_mhz > 900 && spes_rpm_kvp(0, 0x786d7772u /* "rwmx" */, 0, 0x6c766c76u, 128u) != 0) {
++			printf("SPES GPU: MX level 128 not acked; stopping\n");
++			return;
++		}
++		uint32_t vco_khz = gpu_mhz == 1115 ? 2229600u : gpu_mhz * 2000u, l = vco_khz / 19200u,
+ 		    alpha = (uint32_t)((((uint64_t)(vco_khz % 19200u)) << 16) / 19200u);
+ 		touch_wr(cc, 0x04u, l);                 /* L_VAL */
+ 		touch_wr(cc, 0x08u, alpha);             /* ALPHA_VAL */
+@@ -1401,6 +1410,7 @@
+ 		return;
+ 	}
+ 	printf("SPES GPU: GFX clock selected %s cfg=%#x (not a frequency measurement)\n",
++	    gpu_mhz == 1115 ? "GPU PLL0, 1114.8 MHz" : gpu_mhz == 1025 ? "GPU PLL0, 1025 MHz" :
+ 	    gpu_mhz == 785 ? "GPU PLL0, 785 MHz" : gpu_mhz == 600 ? "GPU PLL0, 600 MHz" :
+ 	    gpu_mhz == 300 ? "GPLL0 / 2, nominal 300 MHz" : "CXO 19.2 MHz", gfx_cfg);
+ 
