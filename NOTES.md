@@ -76,6 +76,14 @@
   (0x8c00) bit 7 SOLID_COLOR counted as clears. Background job builds all46 (1025) and all47 (1115),
   all45 args otherwise. Artifact 12705397326, xnu/out-0167 SHA OK. all46 sha256 090c9f5e..., all47
   sha256 b42f030a...; all47 booted 2026-10-27.
+- all47 result (log research/spes-all47-boot.txt): rwcx 416 + rwmx 128 acked, PLL0 VCO 2229600 kHz
+  (l=116 alpha=0x2000), clock MEASURED 1110-1114 MHz, no faults. GPU time 35-75 ms a frame: no better
+  than 775 MHz => memory-bound; 785 is the sensible clock. Census (clears split): busy frames
+  ~8 Mpx clears + ~19 Mpx copies. Still-misaligned surfaces, all from SpringBoard (not a Metal
+  client): 787x1705 bpr 3152/3200, 1125x2436 bpr 4512, 1065x282 bpr 4288, small ones.
+- 0168 (CI run 40477034108): SweetSurface rounds a client's IOSurfaceBytesPerRow up to 256 for
+  single-plane kernel-allocated surfaces (spessurfround=0 disables). all48 = 0168 kernel at 785 MHz,
+  background job builds and boots it (phone in recovery).
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
