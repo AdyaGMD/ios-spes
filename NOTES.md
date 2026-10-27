@@ -11,6 +11,12 @@
   done (COPY-OK, 17179869184 bytes). Batch 9 (research/spes-batch9-delta, 15 MiB) applied and read back
   verified 2026-10-27: env = TU_DEBUG=noconform,sysmem. all42 booted on it. Base copies m and g deleted;
   20261027a is the rollback base. Compare GPU time with the all42 numbers above.
+- Result (log research/spes-all42b-boot.txt, env TU_DEBUG=noconform,sysmem confirmed): GPU time 44-105 ms
+  a submission, same as GMEM; GPU saturated (83 x 56 ms in 5 s). Binning is NOT the cost; the frames
+  hold that much work. sysmem left in place for now (neutral).
+- all43 built = all42 + SPES_GPU_MHZ=785 (rwcx 256), sha256 dc3e1569..., not booted yet. all42 booted
+  again for the user to toggle Settings > Accessibility > Display & Text Size > Reduce Transparency
+  (removes CoreAnimation blurs) to measure blur cost.
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
