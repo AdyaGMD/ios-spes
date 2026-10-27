@@ -1,0 +1,97 @@
+A census of what each GPU submission asks for (spesgpucensus, default 1).
+
+all42 at 590 MHz: 44-105 ms of GPU time per Metal UI submission, GPU saturated; TU_DEBUG=sysmem made no
+difference (so not GMEM binning) and Reduce Transparency no clear change (so not mainly blur). Before
+guessing further: read the PM4 of every submitted IB and the IB2s it calls (through the GPU page table,
+phystokv per page; read-only) and print per stats period the draws and vertices, indirect draws,
+compute dispatches and workgroups, CP_BLITs and their pixels (GRAS_2D_DST_TL/BR), and CP_SET_MARKER
+render modes (sysmem passes, binning, GMEM bins, resolves, compute).
+
+--- a/bsd/dev/spes_gpu_backend.h
++++ b/bsd/dev/spes_gpu_backend.h
+@@ -205,6 +205,68 @@
+  return 8;
+ }
+ static int sg_time=-1;
++/*
++ * What the GPU is asked to do (spesgpucensus, default 1): the PM4 in every submitted IB and the IB2s
++ * they call, read through the GPU page table (phystokv of each page). Per stats period: draws and
++ * their vertices, indirect draws, compute dispatches and workgroups, 2D blits and their pixels
++ * (GRAS_2D_DST_TL/BR 0x8405/0x8406), CP_SET_MARKER render modes (1 sysmem pass, 2 binning, 4 GMEM
++ * bin, 6 resolve, 8 compute). Read-only; it never changes what is queued.
++ */
++extern vm_map_address_t phystokv(uint64_t pa);   /* osfmk/arm pmap (pmap_paddr_t = uint64_t) */
++static struct {
++ uint64_t words, draws, vertices, indirect, dispatches, groups, blits, pixels, ibs;
++ uint32_t mode[16], dst_tl, dst_br, bad;
++} sgc;
++static int sg_census=-1;
++static bool spes_gpu_word(uint64_t address,uint32_t *value){
++ uint64_t *leaf=spes_gpu_leaf(address,false);
++ if(!leaf || !(*leaf&1))return false;
++ *value=*(volatile uint32_t *)(phystokv((*leaf&0xffffff000ull)|(address&4095)));
++ return true;
++}
++static void spes_gpu_census(uint64_t address,uint32_t words,unsigned depth){
++ ++sgc.ibs;
++ for(uint32_t i=0;i<words;){
++  uint32_t h,v[5]={0};
++  if(!spes_gpu_word(address+i*4ull,&h)){++sgc.bad;return;}
++  ++sgc.words;
++  if((h>>28)==4){                                   /* PKT4: registers */
++   uint32_t reg=(h>>8)&0x7ffff,n=h&0x7f;
++   for(uint32_t k=0;k<n;++k){
++    uint32_t r=reg+k,x;
++    if((r==0x8405 || r==0x8406) && spes_gpu_word(address+(i+1+k)*4ull,&x)){if(r==0x8405)sgc.dst_tl=x;else sgc.dst_br=x;}
++   }
++   i+=1+n;sgc.words+=n;continue;
++  }
++  if((h>>28)!=7){++sgc.bad;return;}                 /* not PKT7: stop reading this IB */
++  uint32_t op=(h>>16)&0x7f,n=h&0x3fff;
++  for(uint32_t k=0;k<n && k<5;++k)(void)spes_gpu_word(address+(i+1+k)*4ull,&v[k]);
++  switch(op){
++  case 0x38:++sgc.draws;sgc.vertices+=(uint64_t)(v[1]?v[1]:1)*v[2];break;  /* CP_DRAW_INDX_OFFSET */
++  case 0x28:case 0x29:case 0x2a:++sgc.indirect;break;                     /* CP_DRAW_INDIRECT* */
++  case 0x33:++sgc.dispatches;sgc.groups+=(uint64_t)v[1]*v[2]*v[3];break;  /* CP_EXEC_CS */
++  case 0x41:++sgc.dispatches;break;                                       /* CP_EXEC_CS_INDIRECT */
++  case 0x2c:{                                                             /* CP_BLIT */
++   ++sgc.blits;
++   uint32_t w=((sgc.dst_br&0xffff)-(sgc.dst_tl&0xffff))+1,hh=((sgc.dst_br>>16)-(sgc.dst_tl>>16))+1;
++   if(sgc.dst_br>=sgc.dst_tl && w<=16384 && hh<=16384)sgc.pixels+=(uint64_t)w*hh;
++   break;}
++  case 0x65:++sgc.mode[v[0]&15];break;                                    /* CP_SET_MARKER */
++  case 0x3f:                                                              /* CP_INDIRECT_BUFFER */
++   if(depth<2 && n>=3)spes_gpu_census(v[0]|((uint64_t)v[1]<<32),v[2]&0xfffff,depth+1);
++   break;
++  }
++  i+=1+n;sgc.words+=n;
++ }
++}
++static void spes_gpu_census_report(void){
++ if(!sgc.ibs)return;
++ printf("SPES GPU: census: %llu IBs %llu words; %llu draws %llu vertices, %llu indirect; %llu dispatches "
++     "%llu groups; %llu blits %llu px; markers sysmem %u binning %u gmem %u resolve %u compute %u; %u unread\n",
++     sgc.ibs,sgc.words,sgc.draws,sgc.vertices,sgc.indirect,sgc.dispatches,sgc.groups,sgc.blits,sgc.pixels,
++     sgc.mode[1],sgc.mode[2],sgc.mode[4],sgc.mode[6],sgc.mode[8],sgc.bad);
++ memset(&sgc,0,sizeof(sgc));
++}
+ uint32_t redwood_gpu_submit(const uint64_t *addresses,const uint32_t *words,uint32_t count) {
+  if(!redwood_gpu_ready() || sg.fence==0xffffffffu)return 0;
+  if(!count || count>SPES_GPU_MAX_IBS)return spes_gpu_reject("count",count,0,0);
+@@ -228,6 +290,8 @@
+   commands[n++]=0x70bf8003;commands[n++]=(uint32_t)addresses[i];
+   commands[n++]=(uint32_t)(addresses[i]>>32);commands[n++]=words[i];
+  }
++ if(sg_census<0){uint32_t v=1;(void)PE_parse_boot_argn("spesgpucensus",&v,sizeof(v));sg_census=v!=0;}
++ if(sg_census)for(unsigned i=0;i<count;++i)spes_gpu_census(addresses[i],words[i],0);
+  uint32_t fence=sg.fence+1;
+  commands[n++]=0x70268000;
+  if(sg_time)n+=spes_gpu_stamp(commands+n,fence,1);
+@@ -277,6 +341,7 @@
+   ++by[k];
+  }
+  sg.timed_through=done;
++ spes_gpu_census_report();
+  /* cycles per 19.2 MHz tick * 19.2 = MHz */
+  if(ticks)printf("SPES GPU: core clock measured %llu MHz over %u submissions (%llu cycles in %llu us)\n",
+      (unsigned long long)(cycles*192/(ticks*10)),*submissions,(unsigned long long)cycles,
