@@ -52,6 +52,15 @@
   verified; all45 booted 2026-10-27. Copy 20261027a deleted; 20261027b is the rollback base.
 - Check in the log: census blits/px per frame (all44: ~2500 / 25-40 Mpx), GPU time, surface bpr
   values ("SWEET SURF: ... bpr" should be multiples of 256).
+- all45 result (log research/spes-all45-boot.txt): surfaces now 1125x2436 bpr 4608 etc. Shadow copies
+  GONE: ~20 blits a frame (all44 ~2500), but each ~1.1 Mpx (736 Mpx / 662 blits in 6 s, ~10 sysmem
+  passes a frame): full-screen CLEARS, which TU_DEBUG=sysmem (batch 9) makes CP_BLITs; in GMEM they
+  are free. GPU time still ~49 ms a submission (the user did not report feel).
+- Batch 11 (research/spes-batch11-delta, ONE MiB block): env bytes edited in place in the image
+  (no mount, so no HFS metadata change): "TU_DEBUG=noconform,sysmem\n" -> "TU_DEBUG=noconform\n#sysme\n"
+  (same 26 bytes; '#' lines are ignored by load_env). Image = copy 20261027b + batch10 replay; the env
+  data block is the only 4K-aligned hit (offset 14320181248). Verified and applied without a fresh copy;
+  all45 booted again. Trick for small same-size edits: patch raw bytes, 1-block delta.
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
