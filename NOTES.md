@@ -30,6 +30,9 @@
   stalls on memory. SMMU MAIR0 0xf404ff44, PTEs AttrIndx 0 = Normal non-cacheable (fine). Suspect
   memory latency (linear IOSurface sampling, TLB misses); the census (0165) should tell. all43 re-booted
   for the user as the fastest image so far. Actions still refused (HTTP 422) at 2026-10-27.
+- User re-enabled Actions. 0165 CI run 40433055792, artifact 12702673716, xnu/out-0165 SHA OK. all44 =
+  all43 args (785 MHz, DDR vote) + census; sha256 f513b405...; booted 2026-10-27. Read the
+  "SPES GPU: census:" lines next to the GPU-time lines.
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
