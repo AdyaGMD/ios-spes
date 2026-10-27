@@ -24,6 +24,12 @@
   CI NOT RUN: `gh workflow run` -> HTTP 422 "Actions has been disabled for this repository", although
   the actions/permissions API says enabled and the workflow is active. Needs the user to check GitHub
   (repo Settings > Actions, or an account-level block). Then build all44 = all43 args + 0165 kernel.
+- all43 result (log research/spes-all43-boot.txt): rwcx 256 acked, "GPU PLL0 locked: VCO 1570000 kHz (l=81
+  alpha=0xc555), CX corner 256", clock MEASURED 772-775 MHz, no faults. Still saturated: 38-72 ms a
+  submission at 38-70 submissions/5 s. Cycles per submission GROW with clock (300: ~34M, 775: ~46M) =>
+  stalls on memory. SMMU MAIR0 0xf404ff44, PTEs AttrIndx 0 = Normal non-cacheable (fine). Suspect
+  memory latency (linear IOSurface sampling, TLB misses); the census (0165) should tell. all43 re-booted
+  for the user as the fastest image so far. Actions still refused (HTTP 422) at 2026-10-27.
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
