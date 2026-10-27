@@ -17,6 +17,13 @@
 - all43 built = all42 + SPES_GPU_MHZ=785 (rwcx 256), sha256 dc3e1569..., not booted yet. all42 booted
   again for the user to toggle Settings > Accessibility > Display & Text Size > Reduce Transparency
   (removes CoreAnimation blurs) to measure blur cost.
+- Reduce Transparency boot (log research/spes-all42c-boot.txt): 52-91 ms a submission, no clear drop
+  (the log does not show when the toggle happened). all43 (785 MHz) booted 2026-10-27, untested.
+- 0165 (commit 8e072e5, pushed): PM4 census per stats period ("SPES GPU: census: ... draws ... vertices
+  ... dispatches ... blits ... px; markers sysmem/binning/gmem/resolve/compute"). Compile-checked.
+  CI NOT RUN: `gh workflow run` -> HTTP 422 "Actions has been disabled for this repository", although
+  the actions/permissions API says enabled and the workflow is active. Needs the user to check GitHub
+  (repo Settings > Actions, or an account-level block). Then build all44 = all43 args + 0165 kernel.
 
 # all42 temp-booted (GPU PLL0 600 MHz + DDR vote), 2026-10-27
 
