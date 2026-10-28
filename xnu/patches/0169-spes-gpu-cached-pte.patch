@@ -10,29 +10,25 @@ uncached.
 
 --- a/bsd/dev/spes_gpu_backend.h
 +++ b/bsd/dev/spes_gpu_backend.h
-@@ -12,6 +12,6 @@
- #define SPES_GPU_GRANULE 0x10000ull
+@@ -14,5 +14,5 @@
+ #define SPES_GPU_BUFFERS 2048u
  static struct {
 - bool ready, faulted;
 + bool ready, faulted, cacheable;
   vm_offset_t gpu, smmu, dma;
   uint32_t context, tail, fence;
-  uint64_t *l2, *tables[128];
-@@ -107,6 +107,6 @@ bool redwood_gpu_map(uint64_t address,uint64_t physical,bool ro) {
+@@ -108,5 +108,5 @@
   uint64_t *leaf=spes_gpu_leaf(address,true);
   if(!leaf || *leaf)return false;
 - *leaf=physical|0xe43ull|(ro?0x80ull:0);
 + *leaf=physical|0xe43ull|(sg.cacheable?4ull:0ull)|(ro?0x80ull:0); /* MAIR0[1]: cached */
   sg.buffers[owner].unmapped=false;
   to_memory((vm_offset_t)leaf,8);
-  return true;
-@@ -232,9 +232,13 @@ static bool spes_gpu_backend_start(vm_offset_t gpu,vm_offset_t smmu,uint32_t con
-  if(sg.ready || sg.faulted)return false;
-  for(unsigned i=256;i<256+SPES_GPU_TABLES;++i)if(l2[i])return false;
+@@ -397,7 +397,11 @@
+  uint32_t ddr=0;(void)PE_parse_boot_argn("spesddr_khz",&ddr,sizeof(ddr));
+  if(ddr)(void)spes_rpm_kvp(0,0x326b6c63u /* "clk2" */,0,0x007a484bu /* "KHz" */,ddr);
 + uint32_t cached = 0;
 + (void)PE_parse_boot_argn("spesgpu_cache", &cached, sizeof(cached));
-  sg.gpu=gpu;sg.smmu=smmu;sg.context=context;sg.dma=dma;sg.l2=l2;sg.tail=tail;
-  sg.fence=((volatile uint32_t *)(dma+0xc000))[9];
 + sg.cacheable=cached!=0;
   sg.ready=true;
   RedwoodGPUStart();
