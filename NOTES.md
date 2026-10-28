@@ -1,3 +1,31 @@
+# all48 garbled -> 0168 reverted; 0169 cached-PTE experiment, 2026-10-28
+
+- all48 log research/spes-all48-boot.txt (5790 lines, flush #16): every created
+  surface now has a 256-byte-aligned pitch, but the user reports garbled images.
+  GPU time is still ~37-92 ms a submission at 775 MHz; busy censuses are roughly
+  0.6 Gpx clears + 1.7 Gpx other CP_BLITs per 5 s. Do NOT treat the pitch change
+  as a performance win from this log; the workload differs.
+- 0168 was wrong for explicit client pitches. IOSurfaceRef.h only permits an
+  implementation-selected pitch when kIOSurfaceBytesPerRow was not supplied.
+  Overriding it lets a CPU/GL producer write at the requested pitch while Metal
+  samples the kernel's larger one (sheared/striped rows). 0166 and the m2v
+  alignment answers stay; commit 99a302a removes 0168.
+- Built and booted all48-noround (same 0168 kernel, spessurfround=0), image
+  shim/out/spes-ios-graphics-all48-noround.img SHA256
+  9a73ae7273e30da644146c53d6ab91340d6587f15f5b748106dda94041a64006.
+  The boot line is capped at 607 characters here: the first attempt silently
+  dropped spessurfround=0 after sweetscan=backbo. The rebuilt image removes the
+  unused sweetscan argument and the boot line now ends in spessurfround=0.
+  Await the user's image-correctness/speed report.
+- 0169 (commit d60c1c1, CI 40690358957): spesgpu_cache=1 changes only GPU-buffer
+  PTEs from SMMU MAIR0 AttrIndx 0 (Normal non-cacheable) to AttrIndx 1 (Normal
+  write-back); default off, ring/fence/page tables unchanged. Rationale: 1115 MHz
+  did not beat 785, DDR is already voted up, and linear texture/render-target
+  traffic is uncached. Local cross-compile passes; host suite 44/45 with an
+  unrelated pre-existing test compile error for touch-test identifiers.
+  Next image: 0169 kernel + all48 args + spesgpu_cache=1 (0168 no longer exists).
+  Check for corruption first, then GPU time/census against all48-noround.
+
 # all42 result + batch 9 in progress (TU_DEBUG sysmem), 2026-10-27
 
 - all42 (log research/spes-all42-boot.txt): "GPU PLL0 locked: VCO 1200000 kHz (l=62 alpha=0x8000), CX
