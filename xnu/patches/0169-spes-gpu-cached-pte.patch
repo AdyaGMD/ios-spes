@@ -1,0 +1,43 @@
+Experiment: cacheable SMMU mappings for GPU buffers (spesgpu_cache=1, default off).
+
+The backend gives every GPU buffer a stage-2 PTE with AttrIndx 0. The SMMU's MAIR0 is
+0xf404ff44, so that is Normal non-cacheable; AttrIndx 1 is Normal write-back cacheable.
+With all47/48 memory-bound despite the GPU clock, this tests whether uncached linear
+texture/render-target traffic is the limit. Turnip still emits its own CCU/UCHE cache
+maintenance, and the kernel pushes dirty CPU pages before submission and drains the GPU
+with CP_CACHE_FLUSH_TS. The ring, fence and page-table mappings made by the probe stay
+uncached.
+
+--- a/bsd/dev/spes_gpu_backend.h
++++ b/bsd/dev/spes_gpu_backend.h
+@@ -12,6 +12,6 @@
+ #define SPES_GPU_GRANULE 0x10000ull
+ static struct {
+- bool ready, faulted;
++ bool ready, faulted, cacheable;
+  vm_offset_t gpu, smmu, dma;
+  uint32_t context, tail, fence;
+  uint64_t *l2, *tables[128];
+@@ -107,6 +107,6 @@ bool redwood_gpu_map(uint64_t address,uint64_t physical,bool ro) {
+  uint64_t *leaf=spes_gpu_leaf(address,true);
+  if(!leaf || *leaf)return false;
+- *leaf=physical|0xe43ull|(ro?0x80ull:0);
++ *leaf=physical|0xe43ull|(sg.cacheable?4ull:0ull)|(ro?0x80ull:0); /* MAIR0[1]: cached */
+  sg.buffers[owner].unmapped=false;
+  to_memory((vm_offset_t)leaf,8);
+  return true;
+@@ -232,9 +232,13 @@ static bool spes_gpu_backend_start(vm_offset_t gpu,vm_offset_t smmu,uint32_t con
+  if(sg.ready || sg.faulted)return false;
+  for(unsigned i=256;i<256+SPES_GPU_TABLES;++i)if(l2[i])return false;
++ uint32_t cached = 0;
++ (void)PE_parse_boot_argn("spesgpu_cache", &cached, sizeof(cached));
+  sg.gpu=gpu;sg.smmu=smmu;sg.context=context;sg.dma=dma;sg.l2=l2;sg.tail=tail;
+  sg.fence=((volatile uint32_t *)(dma+0xc000))[9];
++ sg.cacheable=cached!=0;
+  sg.ready=true;
+  RedwoodGPUStart();
+- printf("SPES GPU: persistent backend ready; queued submissions, %llu MiB VA\n", SPES_GPU_SIZE >> 20);
++ printf("SPES GPU: persistent backend ready; queued submissions, %llu MiB VA, buffer PTEs %s\n",
++     SPES_GPU_SIZE >> 20, sg.cacheable ? "cacheable" : "non-cacheable");
+  return true;
+ }
