@@ -1,3 +1,28 @@
+# GPU performance investigation resumed, 2026-10-28
+
+- Read latest handoff; user reports some garbled images and slow UI, unsure of
+  image. Temporarily booted existing OrangeFox from confirmed Fastboot/spes.
+  Read `research/spes-latest-20261028-boot.txt`, flush 7: **all48-noround**,
+  spessurfround=0, 785 MHz, no spesgpu_cache. all49 is still untested.
+- Six active log windows: weighted ~51.88 ms/timed submission, ~12.22 submitted
+  batches/s; these are NOT displayed FPS. GPU measures ~775 MHz. CPU cache
+  maintenance generally <1 ms. Remaining image copies still substantial.
+- Found a concrete userland gate bug: Darwin Turnip advertises explicit image
+  modifiers but no DMA_BUF import; metal2vulkan incorrectly requires DMA_BUF
+  for its host-pointer explicit-pitch fallback. New local m2v patch 0002
+  separates those capabilities, preserving all layout/bounds/format checks.
+  Eligible 64-byte-aligned pitches can avoid shadows; 16-byte-only pitches
+  still fall back. Does not override client row pitch.
+- iOS release bridge compiled and NegroniMetal linked. 16 device tests pass;
+  layout suite has the SAME two failures before/after (existing padded-writer
+  alias policy); 16 other layout tests pass. Details in
+  docs/GPU-PERFORMANCE-20261028.md. No measured phone improvement yet.
+- Read-only fresh 16 GiB root copy in progress:
+  research/spes-phone-root-20261028.img. Phone is in OrangeFox. Prepare a
+  reversible NegroniMetal-only update; confirm destructive install after
+  preparing/validating its delta. Keep current clients/env/Mesa unchanged.
+  Start with uncached 785 MHz to isolate the userland change.
+
 # all48 garbled -> 0168 reverted; 0169 cached-PTE experiment, 2026-10-28
 
 - all48 log research/spes-all48-boot.txt (5790 lines, flush #16): every created
@@ -25,6 +50,14 @@
   unrelated pre-existing test compile error for touch-test identifiers.
   Next image: 0169 kernel + all48 args + spesgpu_cache=1 (0168 no longer exists).
   Check for corruption first, then GPU time/census against all48-noround.
+- First 0169 CI 40690358957 FAILED at git apply: the patch was based on the old
+  imported backend. Regenerated against 0157-0167, CI 40691030657 SUCCESS.
+  Kernel xnu/out-0169 SHA256 12d4f77736ec7d5fddff6512a1be290c93b2721ea62035c91b7a634bcef39ca7
+  (artifact 12816624363, eight range downloads; the single gh download stalled).
+  all49 built: shim/out/spes-ios-graphics-all49.img SHA256
+  3de5987d95d0dc4d61601876b6e1b879441730276d7bb47bdf97c46236b3d567,
+  785 MHz, cached buffer PTEs, no 0168. Not booted: the phone is running
+  all48-noround in iOS. Boot it after the user reports and returns to fastboot.
 
 # all42 result + batch 9 in progress (TU_DEBUG sysmem), 2026-10-27
 

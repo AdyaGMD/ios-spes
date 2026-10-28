@@ -1,0 +1,180 @@
+Enable explicit image pitches for imported host pointers without Linux dma-buf support.
+
+Turnip on Darwin advertises image_drm_format_modifier but deliberately no DMA_BUF
+import. Keep the DMA_BUF route gated; enable and track host modifier layouts separately.
+The existing driver layout, bounds, format, and allocation checks remain intact.
+
+--- a/crates/metal2vulkan-runtime/src/device/adopt.rs
++++ b/crates/metal2vulkan-runtime/src/device/adopt.rs
+@@ -225,6 +225,7 @@
+         // Nor whether the dma-buf route's were (`dma_buf.rs`): the consumer lists them.
+         let dma_buf = super::create::dma_buf_names(&listed).is_some();
+         let dma_buf_images = super::create::dma_buf_image_names(&listed).is_some();
++        let host_modifier_images = super::create::host_modifier_name(&listed).is_some();
+         let graphics_pipeline_library = super::create::graphics_pipeline_library(&listed, || {
+             // SAFETY: the consumer's physical device of its instance, which lists the
+             // extension (the consumer enabled it), at Vulkan 1.2 or later.
+@@ -262,6 +263,7 @@
+                 .any(|name| name.as_c_str() == ash::ext::pipeline_creation_feedback::NAME),
+             dma_buf,
+             dma_buf_images,
++            host_modifier_images,
+             calibration: gpu_time::Extension::among(&raw.device_extensions.into_iter().collect()),
+             gpu_times_from_host: raw.gpu_times_from_host,
+             // An adopted device keeps no execution record: validation makes its own devices.
+--- a/crates/metal2vulkan-runtime/src/device/create.rs
++++ b/crates/metal2vulkan-runtime/src/device/create.rs
+@@ -770,6 +770,13 @@
+         .then_some(names)
+ }
+ 
++/// Explicit host-pointer image layouts do not require Linux dma-buf imports.
++/// Vulkan 1.2 provides the modifier extension's dependencies.
++pub(crate) fn host_modifier_name(listed: &BTreeSet<CString>) -> Option<&'static CStr> {
++    let name = ash::ext::image_drm_format_modifier::NAME;
++    listed.contains(name).then_some(name)
++}
++
+ /// Whether a device of `description` the runtime creates under `options` enables
+ /// `VK_EXT_device_generated_commands`: where the description states it (the extension and its
+ /// `deviceGeneratedCommands`), `options` do not withhold it, and `set` enables
+@@ -1107,6 +1114,7 @@
+     // The runtime's own needs, outside the vocabulary, where listed (`dma_buf.rs`).
+     let dma_buf = dma_buf_names(&listed);
+     let dma_buf_images = dma_buf_image_names(&listed);
++    let host_modifier = host_modifier_name(&listed);
+     let extra: Vec<CString> = options
+         .device_extensions
+         .iter()
+@@ -1116,6 +1124,7 @@
+         .chain((creation_feedback && !feedback_asked).then(|| feedback_name.to_owned()))
+         .chain(dma_buf.into_iter().flatten().map(CStr::to_owned))
+         .chain(dma_buf_images.into_iter().flatten().map(CStr::to_owned))
++        .chain(host_modifier.map(CStr::to_owned))
+         .collect();
+     let mut enables = Enables::of(&set, api, &listed, &extra)?;
+     // The features of the caller's extensions whose structures the runtime knows, as the device
+@@ -1257,6 +1266,7 @@
+         creation_feedback: creation_feedback || feedback_asked,
+         dma_buf: dma_buf.is_some(),
+         dma_buf_images: dma_buf_images.is_some(),
++        host_modifier_images: host_modifier.is_some(),
+         sparse_features,
+         owned: true,
+         cache: cache.clone(),
+--- a/crates/metal2vulkan-runtime/src/device/mod.rs
++++ b/crates/metal2vulkan-runtime/src/device/mod.rs
+@@ -782,6 +782,8 @@
+     pub(super) dma_buf: bool,
+     /// It enables the route's image extensions (`create.rs`'s `dma_buf_image_names`), likewise.
+     pub(super) dma_buf_images: bool,
++    /// Explicit-pitch images over host-pointer imports, independent of dma-buf support.
++    pub(super) host_modifier_images: bool,
+     /// The sparse members of the core features it enables, outside `enabled`'s vocabulary
+     /// (`sparse/device.rs`).
+     pub(super) sparse_features: vk::PhysicalDeviceFeatures,
+@@ -827,6 +829,7 @@
+             creation_feedback,
+             dma_buf,
+             dma_buf_images,
++            host_modifier_images,
+             sparse_features,
+             owned,
+             cache,
+@@ -1042,6 +1045,7 @@
+                 instance.sink().is_some(),
+                 dma_buf,
+                 dma_buf_images,
++                host_modifier_images,
+             )
+         };
+         // SAFETY: as above; the loader serves `vkGetDeviceProcAddr` once the word is put back.
+--- a/crates/metal2vulkan-runtime/src/host_memory.rs
++++ b/crates/metal2vulkan-runtime/src/host_memory.rs
+@@ -513,6 +513,8 @@
+     /// Whether the device also enables the route's image extensions (`create.rs`'s
+     /// `dma_buf_image_names`), for images of textures over dma-buf pages (`dma_buf.rs`).
+     dma_buf_images: bool,
++    /// Explicit image layouts over host-pointer imports; needs no dma-buf import support.
++    host_modifier_images: bool,
+     /// The granule a dma-buf source's chunks split at, where the device assembles a buffer of
+     /// several (`dma_buf.rs`): the alignment of a sparse buffer made for dma-bufs. Asked once,
+     /// the first time a pointer is refused and a source called; `None` where the device makes no
+@@ -538,6 +540,7 @@
+     /// `device` is a live device of `physical`, made from `instance` with `enabled` enabled, and
+     /// `loader_word` is its loader word; made with the dma-buf route's extensions where `dma_buf`,
+     /// and its image extensions where `dma_buf_images` (`create.rs`).
++    /// The image modifier extension is enabled where `host_modifier_images`.
+     pub(super) unsafe fn new(
+         instance: &ash::Instance,
+         physical: vk::PhysicalDevice,
+@@ -549,6 +552,7 @@
+         debug_names: bool,
+         dma_buf: bool,
+         dma_buf_images: bool,
++        host_modifier_images: bool,
+     ) -> Result<Importer, Unsupported> {
+         if !enabled
+             .extensions
+@@ -603,6 +607,7 @@
+             names,
+             dma_buf,
+             dma_buf_images,
++            host_modifier_images,
+             sparse_granule: std::sync::OnceLock::new(),
+         })
+     }
+@@ -613,11 +618,12 @@
+         self.dma_buf.is_some()
+     }
+ 
+-    /// Whether the device makes images over dma-bufs of host pages (`dma_buf.rs`): it imports
+-    /// dma-bufs and enables `VK_EXT_image_drm_format_modifier` and `VK_EXT_queue_family_foreign`
+-    /// (`create.rs`'s `dma_buf_image_names`). A texture over host pages imported by their pointer
+-    /// may then be a `DRM_FORMAT_MOD_LINEAR` image at Metal's row pitch too (`texture.rs`'s
+-    /// `host_pitched_image`).
++    /// Explicit-pitch images over host-pointer imports, without requiring Linux dma-bufs.
++    pub(super) fn makes_host_modifier_images(&self) -> bool {
++        self.host_modifier_images
++    }
++
++    /// Images over dma-bufs still require the import and foreign-queue extensions.
+     pub(super) fn makes_dma_buf_images(&self) -> bool {
+         self.dma_buf_images
+     }
+--- a/crates/metal2vulkan-runtime/src/tests/device.rs
++++ b/crates/metal2vulkan-runtime/src/tests/device.rs
+@@ -47,6 +47,22 @@
+     }
+     assert!(out.len() > 3, "read {} committed profiles", out.len());
+     out
++}
++
++#[test]
++fn host_modifiers_do_not_require_linux_dma_buf_extensions() {
++    use crate::device::create::host_modifier_name;
++    let mut listed = BTreeSet::<CString>::new();
++    assert!(host_modifier_name(&listed).is_none());
++    listed.insert(c"VK_EXT_image_drm_format_modifier".to_owned());
++    assert!(host_modifier_name(&listed).is_some());
++    assert!(dma_buf_names(&listed).is_none());
++    assert!(dma_buf_image_names(&listed).is_none());
++    listed.insert(c"VK_EXT_queue_family_foreign".to_owned());
++    assert!(host_modifier_name(&listed).is_some());
++    assert!(dma_buf_image_names(&listed).is_none());
++    for name in DMA_BUF { listed.insert(name.to_owned()); }
++    assert!(dma_buf_image_names(&listed).is_some());
+ }
+ 
+ /// The dma-buf route's extensions: `VK_KHR_external_memory_fd` and
+--- a/crates/metal2vulkan-runtime/src/texture.rs
++++ b/crates/metal2vulkan-runtime/src/texture.rs
+@@ -2808,7 +2808,7 @@
+         let (row_pitch, slice_pitch) = (texels.row_pitch, texels.slice_pitch);
+         let raw_device = self.shared().vk();
+         let enabled = (self.shared().host_import.as_ref())
+-            .is_ok_and(|importer| importer.makes_dma_buf_images());
++            .is_ok_and(|importer| importer.makes_host_modifier_images());
+         if !enabled {
+             return Ok(Err(
+                 "the device enables no VK_EXT_image_drm_format_modifier for an image at Metal's \
