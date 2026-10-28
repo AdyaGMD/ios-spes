@@ -24,11 +24,20 @@
   79316ecf713a661ab33531430c97a433d498788fb1fc4e562436a4f8234310e1:
   existing 0169 kernel, 785 MHz, spesgpu_cache=0, six CPUs, 60 Hz. Verified the
   576-byte boot line contains every intended option (no truncation).
-- Read-only fresh 16 GiB root copy in progress:
-  research/spes-phone-root-20261028.img. Phone is in OrangeFox. Prepare a
-  reversible NegroniMetal-only update; confirm destructive install after
-  preparing/validating its delta. Keep current clients/env/Mesa unchanged.
-  Start with uncached 785 MHz to isolate the userland change.
+- Fresh 16 GiB root copy COMPLETE: research/spes-phone-root-20261028.img
+  (17179869184 bytes; SHA256 sidecar). APFS clone
+  research/spes-phone-root-20261028-hostpitch.img passed fsck_hfs, mounted with
+  owners off, NegroniMetal replaced and bundle ad-hoc signed; detached cleanly.
+  Clients, Info.plist and Mesa hashes unchanged. Library SHA256
+  6fe29617713763fa49fa83b2929ccb07dba27991edea68474791af10c395e340.
+- Batch 12 ready: research/spes-batch12-delta, 71 MiB changed blocks including
+  filesystem metadata, forward/rollback payloads. Verification against phone:
+  all 71 match (verify.log), NO WRITES. Asked user to approve install+temporary
+  all50 boot. Phone remains in OrangeFox. Do not install until answer arrives.
+  If approved: apply-ios-root-delta.py with --apply; then adb reboot bootloader,
+  confirm product spes, fastboot boot shim/out/spes-ios-graphics-all50-hostpitch.img.
+  Test correctness and scrolling; next log should show bounded
+  `SPES Metal: explicit host pitch alias` lines. GPU speed remains unverified.
 
 # all48 garbled -> 0168 reverted; 0169 cached-PTE experiment, 2026-10-28
 
