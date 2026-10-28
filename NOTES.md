@@ -17,6 +17,13 @@
   layout suite has the SAME two failures before/after (existing padded-writer
   alias policy); 16 other layout tests pass. Details in
   docs/GPU-PERFORMANCE-20261028.md. No measured phone improvement yet.
+- Fix committed as 5c33a41; follow-up adds a capped (16 per process) log after
+  explicit-pitch image binding succeeds: `SPES Metal: explicit host pitch alias`.
+  12 host-memory tests also pass. iOS release rebuilt with this trace.
+- New boot image shim/out/spes-ios-graphics-all50-hostpitch.img SHA256
+  79316ecf713a661ab33531430c97a433d498788fb1fc4e562436a4f8234310e1:
+  existing 0169 kernel, 785 MHz, spesgpu_cache=0, six CPUs, 60 Hz. Verified the
+  576-byte boot line contains every intended option (no truncation).
 - Read-only fresh 16 GiB root copy in progress:
   research/spes-phone-root-20261028.img. Phone is in OrangeFox. Prepare a
   reversible NegroniMetal-only update; confirm destructive install after

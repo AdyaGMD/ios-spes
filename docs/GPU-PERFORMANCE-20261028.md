@@ -54,6 +54,7 @@ cache already exists; it recognizes already-applied patches and fails on drift.
 ## Validation
 
 - ARM64 iOS release bridge compiled; NegroniMetal linked successfully.
+- Host-memory tests: 12 passed.
 - Runtime device tests: 16 passed, including the new host-modifier-without-
   DMA_BUF regression and existing DMA_BUF eligibility checks.
 - Layout tests: 16 passed, 2 failed **also without this patch**. Both failures
@@ -68,3 +69,7 @@ Keep the 785 MHz, uncached-PTE baseline first to isolate the userland change.
 Check image correctness, same scrolling workload, GPU timing and census copy
 pixels. If it helps, separately test all49's cached PTEs. Never call a successful
 compile a measured performance improvement.
+
+The first 16 successfully bound explicit-pitch aliases per process print
+`SPES Metal: explicit host pitch alias WIDTHxHEIGHT row=BYTES (no shadow copy)`.
+This establishes route selection; it does not prove total frame performance.

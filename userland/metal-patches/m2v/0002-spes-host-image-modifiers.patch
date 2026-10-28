@@ -169,7 +169,21 @@ The existing driver layout, bounds, format, and allocation checks remain intact.
  /// The dma-buf route's extensions: `VK_KHR_external_memory_fd` and
 --- a/crates/metal2vulkan-runtime/src/texture.rs
 +++ b/crates/metal2vulkan-runtime/src/texture.rs
-@@ -2808,7 +2808,7 @@
+@@ -2309,6 +2309,13 @@
+         }
+         if pitched {
+             self.shared().counts.pitched_host_image_made();
++            // Bound successfully: a short trace lets phone logs prove this route was used.
++            static SPES_PITCH_LOGS: std::sync::atomic::AtomicU32 =
++                std::sync::atomic::AtomicU32::new(0);
++            if SPES_PITCH_LOGS.fetch_add(1, std::sync::atomic::Ordering::Relaxed) < 16 {
++                eprintln!("SPES Metal: explicit host pitch alias {}x{} row={} (no shadow copy)",
++                    plan.extent[0], plan.extent[1], report.row_pitch);
++            }
+         }
+         let image = Image {
+             device: self.clone(),
+@@ -2808,7 +2815,7 @@
          let (row_pitch, slice_pitch) = (texels.row_pitch, texels.slice_pitch);
          let raw_device = self.shared().vk();
          let enabled = (self.shared().host_import.as_ref())
