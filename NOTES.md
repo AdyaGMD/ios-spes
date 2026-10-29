@@ -30,14 +30,17 @@
   owners off, NegroniMetal replaced and bundle ad-hoc signed; detached cleanly.
   Clients, Info.plist and Mesa hashes unchanged. Library SHA256
   6fe29617713763fa49fa83b2929ccb07dba27991edea68474791af10c395e340.
-- Batch 12 ready: research/spes-batch12-delta, 71 MiB changed blocks including
-  filesystem metadata, forward/rollback payloads. Verification against phone:
-  all 71 match (verify.log), NO WRITES. Asked user to approve install+temporary
-  all50 boot. Phone remains in OrangeFox. Do not install until answer arrives.
-  If approved: apply-ios-root-delta.py with --apply; then adb reboot bootloader,
-  confirm product spes, fastboot boot shim/out/spes-ios-graphics-all50-hostpitch.img.
-  Test correctness and scrolling; next log should show bounded
-  `SPES Metal: explicit host pitch alias` lines. GPU speed remains unverified.
+- Batch 12 INSTALLED after explicit user approval “Install and boot”. All 71
+  changed MiB blocks passed before checks and post-write readback; complete log
+  research/spes-batch12-delta/install.log. Forward/rollback payloads retained.
+- 2026-10-29: resumed after adb reboot bootloader. Fastboot product confirmed
+  spes; all50 image SHA256 matched the value above. Temporary fastboot boot
+  accepted: send 0.415 s, boot 0.288 s, total 0.708 s. No boot partition flashed.
+- Await hardware observation: iOS startup, image correctness, same scrolling
+  workload as before. User speed/corruption result is not known yet. After test,
+  retrieve saved log from recovery; look for `SPES Metal: explicit host pitch
+  alias`, compare GPU submission times and copy census to all48-noround.
+  all49 cached-PTE test remains untested; all50 deliberately leaves caching off.
 
 # all48 garbled -> 0168 reverted; 0169 cached-PTE experiment, 2026-10-28
 
