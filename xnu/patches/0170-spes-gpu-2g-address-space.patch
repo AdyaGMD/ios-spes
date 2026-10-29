@@ -1,0 +1,87 @@
+Expand the exhausted 512 MiB GPU VA arena to a dedicated 2 GiB window.
+
+all50 repeatedly reports no addresses left for image buffers. Allocate L2 tables
+for unused L1 slots 2/3; preserve all probe mappings and keep the public addresses
+below 4 GiB. Physical buffer memory remains allocated on demand.
+
+--- a/bsd/dev/spes_gpu_backend.h
++++ b/bsd/dev/spes_gpu_backend.h
+@@ -4,10 +4,11 @@
+  * Submissions are queued as HackiOS's redwood_adreno.c queues them: the ring is
+  * waited for when it is full, never the GPU; RedwoodGPU waits on fences.
+  */
+-#define SPES_GPU_BASE 0x20000000ull
+-/* 512 MiB, L2 entries 256-511 of the first GiB: 256 MiB ran out of runs for 13.9 MB screen
+- * surfaces once the faster CPU kept more of them alive (all11: "no addresses left"). */
+-#define SPES_GPU_SIZE 0x20000000ull
++/* Dedicated L1 entries 2 and 3: 2 GiB of GPU virtual addresses, not reserved RAM.
++ * Keep probe firmware/ring/target/framebuffer mappings in L1[0:1] untouched.
++ * All addresses remain below 4 GiB, including the final byte of the pool. */
++#define SPES_GPU_BASE 0x80000000ull
++#define SPES_GPU_SIZE 0x80000000ull
+ #define SPES_GPU_GRANULE 0x10000ull
+ #define SPES_GPU_GRANULES (SPES_GPU_SIZE / SPES_GPU_GRANULE)
+ #define SPES_GPU_TABLES (SPES_GPU_SIZE >> 21)
+@@ -96,8 +97,8 @@
+   memset((void *)memory,0,PAGE_SIZE);
+   to_memory(memory,PAGE_SIZE); /* child must be visible before parent */
+   sg.tables[index]=(uint64_t *)memory;
+-  sg.l2[256+index]=physical|3;
+-  to_memory((vm_offset_t)&sg.l2[256+index],8);
++  sg.l2[index]=physical|3;
++  to_memory((vm_offset_t)&sg.l2[index],8);
+  }
+  return sg.tables[index]?&sg.tables[index][(address>>12)&511]:NULL;
+ }
+@@ -378,11 +379,29 @@
+  default:return false;
+  }
+ }
++/* The probe owns L1[0:1]. Allocate two contiguous 4K L2 tables in one
++ * kernel page; install them only into previously empty root entries. */
++static bool spes_gpu_address_space(uint64_t *l1) {
++ if (!l1 || l1[2] || l1[3]) return false;
++ vm_offset_t memory=0;
++ if(kmem_alloc_contig(kernel_map,&memory,PAGE_SIZE,PAGE_MASK,0,0,
++     KMA_DATA|KMA_ZERO|KMA_PERMANENT,VM_KERN_MEMORY_IOKIT)!=KERN_SUCCESS)return false;
++ uint64_t physical=ptoa_64(pmap_find_phys(kernel_pmap,(addr64_t)memory));
++ if(!physical || physical>((1ull<<36)-PAGE_SIZE) || (physical&4095))return false;
++ memset((void *)memory,0,PAGE_SIZE);
++ to_memory(memory,PAGE_SIZE);
++ sg.l2=(uint64_t *)memory;
++ l1[2]=physical|3ull;
++ l1[3]=(physical+4096)|3ull;
++ to_memory((vm_offset_t)&l1[2],16);
++ return true;
++}
+ static bool spes_gpu_backend_start(vm_offset_t gpu,vm_offset_t smmu,uint32_t context,
+-    vm_offset_t dma,uint64_t *l2,uint32_t tail){
++    vm_offset_t dma,uint64_t *l1,uint32_t tail){
+  if(sg.ready || sg.faulted)return false;
+- for(unsigned i=256;i<256+SPES_GPU_TABLES;++i)if(l2[i])return false;
+- sg.gpu=gpu;sg.smmu=smmu;sg.context=context;sg.dma=dma;sg.l2=l2;sg.tail=tail;
++ if(!spes_gpu_address_space(l1))return false;
++ sg.gpu=gpu;sg.smmu=smmu;sg.context=context;sg.dma=dma;sg.tail=tail;
++ if(!spes_gpu_backend_sync())return false;
+  sg.fence=((volatile uint32_t *)(dma+0xc000))[9];
+  sg.timed_through=sg.fence;
+  /* GPU cycle counter for the submission times (as msm a6xx_hw_init: RBBM_PERFCTR_CNTL = 1). */
+@@ -399,6 +418,7 @@
+  uint32_t cached = 0;
+  (void)PE_parse_boot_argn("spesgpu_cache", &cached, sizeof(cached));
+  sg.cacheable=cached!=0;
++ (void)PE_parse_boot_argn("gpu_va", &gpu_va, sizeof(gpu_va));
+  sg.ready=true;
+  RedwoodGPUStart();
+  printf("SPES GPU: persistent backend ready; queued submissions, %llu MiB VA, buffer PTEs %s\n",
+--- a/bsd/dev/sweet_touch.c
++++ b/bsd/dev/sweet_touch.c
+@@ -2415,7 +2415,7 @@
+ 		passed = ok && released && reused && cleaned;
+ 	}
+ 	if (combined == 1 && passed &&
+-	    spes_gpu_backend_start(gpu, smmu, context, gpu_dma_va, l2, w)) return;
++	    spes_gpu_backend_start(gpu, smmu, context, gpu_dma_va, l1, w)) return;
+ 	touch_wr(gpu, 0x2020u, 3u);
+ }
+ 

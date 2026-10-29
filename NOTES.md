@@ -1,3 +1,25 @@
+# all50 result: address exhaustion; 0170 prepared, 2026-10-29
+
+- User: "I think it's faster", some rendering flickers; asks for more speed.
+  Retrieved research/spes-all50-boot.txt from temporary OrangeFox (flush 18).
+  **1175** `no addresses left` messages; backend has only 512 MiB GPU VA.
+  Late CPU cache pushes rise to 20-31 MiB / 9-13 ms per submission. Strong
+  address-pressure evidence; not proof of a leak or the flicker's cause.
+- No `explicit host pitch alias` messages in this log. Do not attribute the
+  subjective speed improvement to 0002 without evidence. Active-window timing
+  ~33.45 ms per retained timed submission / 16.43 submitted batches/s vs the
+  prior ~51.88 / 12.22, but workloads and timing-ring sample retention differ.
+  These are not display FPS or a controlled benchmark.
+- 0170 moves the service's GPU VA pool to [2 GiB,4 GiB), using previously empty
+  L1 entries 2/3 and two new L2 tables. Probe L1[0:1] stays untouched. Physical
+  RAM is allocated on demand as before. Public addresses remain <4 GiB.
+  gpu_va boot arg now actually parsed for existing address-usage diagnostics.
+- ASan/UBSan test executes actual patched allocation/mapping code: fills 2 GiB,
+  checks exhaustion and reuse, first/last pages and the L2 boundary, preserves
+  probe mappings, refuses occupied root entries/allocation failure. PASS.
+  Local ARM64 sweet_touch.c syntax check PASS. CI/build/boot still pending.
+  Phone is in OrangeFox; batch 12 remains installed. No root update planned.
+
 # GPU performance investigation resumed, 2026-10-28
 
 - Read latest handoff; user reports some garbled images and slow UI, unsure of
